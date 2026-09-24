@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+artifacts/
+src/**/bin/
+src/**/obj/
+vendor/dotnet/
+vendor/python-build/
+release/
+baseline-source.zip
+
+# Generated Inspector observations and handoff scratch files.
+misa_*_controls*.json
+misa_*_controls*.txt
+misa_uia_dump.request
+release/**/current-*.tmp

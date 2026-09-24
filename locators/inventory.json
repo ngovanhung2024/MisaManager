@@ -1,0 +1,56 @@
+{
+  "inventory.txtInventoryItemCode": {
+    "automationId": "txtInventoryItemCode",
+    "name": "M\u00e3 (*)",
+    "controlType": 50004,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.txtInventoryItemName": {
+    "automationId": "txtInventoryItemName",
+    "name": "T\u00ean (*)",
+    "controlType": 50004,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.cboStockID": {
+    "automationId": "cboStockID",
+    "name": "Kho ng\u1ea7m \u0111\u1ecbnh",
+    "controlType": 50003,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.cboInventoryAccount": {
+    "automationId": "cboInventoryAccount",
+    "name": "T\u00e0i kho\u1ea3n kho",
+    "controlType": 50003,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.cboRevenueAccount": {
+    "automationId": "cboRevenueAccount",
+    "name": "TK doanh thu",
+    "controlType": 50003,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.cboVATRate": {
+    "automationId": "cboVATRate",
+    "name": "Thu\u1ebf su\u1ea5t GTGT (%)",
+    "controlType": 50003,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.cboUnitID": {
+    "automationId": "cboUnitID",
+    "name": "\u0110VT ch\u00ednh",
+    "controlType": 50003,
+    "windowKind": "new_item",
+    "readOnly": false
+  },
+  "inventory.save": {
+    "name": "C\u1ea5t",
+    "controlType": 50000,
+    "windowKind": "new_item"
+  }
+}

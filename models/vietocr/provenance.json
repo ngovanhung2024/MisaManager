@@ -1,0 +1,47 @@
+{
+  "model": "vgg_seq2seq.pth",
+  "architecture": "VGG19-BN and attention GRU Seq2Seq",
+  "upstream_url": "https://github.com/pbcquoc/vietocr",
+  "upstream_commit": "fe8c3a7fc714aec57ab81cec844eb3adf0c1636c",
+  "weights_url": "https://vocr.vn/data/vietocr/vgg_seq2seq.pth",
+  "license": "Apache-2.0",
+  "license_file": "licenses/VietOCR-LICENSE.txt",
+  "asset_sha256": {
+    "base.yml": "9c8283fadb950f06f5d3400475f80d5355700ff315c9c48b7875e6ea66647d1c",
+    "vgg-seq2seq.yml": "0160ba8d442ae96f4c6095b92ac3521c59b83ce6eda9fd5459e8628a5586c3e8",
+    "vgg_seq2seq.pth": "0921503a41375a0584268e23ef3d414ea478a8fe8777865c7745d38f2d0bc5db",
+    "vocab.json": "9246ab1e90dc9d62b2762c458f864248c0ea31f827b0b1c0327e3239cf50624f"
+  },
+  "source_sha256": {
+    "vietocr/model/backbone/vgg.py": "1d3d0acf30a57e21d13102980cf9b00f38cbeb909c395b53306d8ecef35f66cd",
+    "vietocr/model/backbone/cnn.py": "aaf94a443c700ac17eea367ab6aab3137d118ac083e8117135977bd0e0d3426d",
+    "vietocr/model/seqmodel/seq2seq.py": "54e3def7b43bed1a7718f98dbd1ac8d3114b166c6794c1ef2ce93cc29244b003",
+    "vietocr/model/transformerocr.py": "1de77f29578a5abb9fd30bc4349cc3f4ad215649914f33f55177277148e00abe",
+    "vietocr/model/vocab.py": "582ff5c93d03774a26854f3c6f0efb3a6ba5256a0576b90ed18f03811cd866f6",
+    "vietocr/tool/translate.py": "da2b5bd5b17801491a06b0ea76f03ba92953a2dc6b9898d778fe04aa1a94916c"
+  },
+  "vocabulary_characters": 229,
+  "output_tokens": 233,
+  "special_tokens": {
+    "pad": 0,
+    "sos": 1,
+    "eos": 2,
+    "mask": 3
+  },
+  "preprocessing": {
+    "input": "native BGR -> RGB",
+    "height": 32,
+    "width": "int(32*w/h), round up to multiple of 10, clamp to [32,512]",
+    "resize": "PIL.LANCZOS",
+    "normalization": "divide by 255; no centering",
+    "batching": "equal resized widths; no extra right padding"
+  },
+  "decoding": {
+    "mode": "greedy autoregressive, no CTC collapse, no expected-text hints",
+    "max_characters": 128,
+    "confidence": "minimum raw token probability including EOS; 0 for missing EOS or invalid special tokens",
+    "consistency": "two complete matching passes, each >= 0.85"
+  },
+  "runtime": "PyTorch/CUDA only; local files; weights_only=True; strict state_dict",
+  "verification_status": "pending_live"
+}

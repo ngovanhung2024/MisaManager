@@ -1,0 +1,19 @@
+{
+  "model": "UI_latin_g2",
+  "architecture": "EasyOCR generation 2 VGG/BiLSTM/CTC",
+  "upstream": "https://github.com/JaidedAI/EasyOCR",
+  "upstream_commit": "363afb184047ce452e436f4224f3098422df872e",
+  "license": "Apache-2.0",
+  "license_file": "licenses/EasyOCR-LICENSE.txt",
+  "adaptation": "Second fine-tuning stage: 115200 generated samples with varied complete-glyph margins, grayscale channels and numeric runs. No simulator strings or captured screen images in training.",
+  "weights_sha256": "37654c9066ab6e9fde2545c35991eba88a5b8709aa38add34cf00a8a71c18894",
+  "vocabulary_sha256": "530f3f3f60c18df5cbf2ff99cd48d47f7df3f4cd30368f53d97cc47efc20b1ad",
+  "parent_sha256": "ab57d47491afd079bd4c7b47bfe6f3a515462304115e9ea492fed1e921b6631f",
+  "training_manifest": "models/easyocr-ui-v2/training.json",
+  "input": "float32 NCHW grayscale / 64 pixels; PIL BICUBIC; /255 then (x-.5)/.5; right-edge padding",
+  "output": "352 CTC probabilities; blank index 0",
+  "confidence": "raw minimum emitted character probability; matching two complete views each >= 0.85",
+  "behavioral_verification": false,
+  "runtime": "torch 2.7.1+cu126 CUDA only, source launcher, strict weights_only load",
+  "version": 2
+}

@@ -1,0 +1,12 @@
+{
+  "main.add": {
+    "name": "Th\u00eam",
+    "controlType": 50000,
+    "windowKind": "main"
+  },
+  "main.sales": {
+    "name": "B\u00e1n h\u00e0ng",
+    "controlType": 50019,
+    "windowKind": "main"
+  }
+}

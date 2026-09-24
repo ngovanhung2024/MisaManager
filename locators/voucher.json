@@ -1,0 +1,113 @@
+{
+  "voucher.cboAccountObjectID": {
+    "automationId": "cboAccountObjectID",
+    "name": "Kh\u00e1ch h\u00e0ng",
+    "controlType": 50003,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtAccountObjectName": {
+    "automationId": "txtAccountObjectName",
+    "name": "Ng\u01b0\u1eddi n\u1ed9p",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtAccountObjectTaxCode": {
+    "automationId": "txtAccountObjectTaxCode",
+    "name": "M\u00e3 s\u1ed1 thu\u1ebf",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtCompanyTaxCode": {
+    "automationId": "txtCompanyTaxCode",
+    "name": "M\u00e3 s\u1ed1 thu\u1ebf",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtTaxCode": {
+    "automationId": "txtTaxCode",
+    "name": "M\u00e3 s\u1ed1 thu\u1ebf",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtAccountObjectAddress": {
+    "automationId": "txtAccountObjectAddress",
+    "name": "\u0110\u1ecba ch\u1ec9",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.number": {
+    "automationId": "txtRefNo",
+    "name": "S\u1ed1 phi\u1ebfu thu",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": true
+  },
+  "voucher.txtJournalMemo": {
+    "automationId": "txtJournalMemo",
+    "name": "L\u00fd do n\u1ed9p",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": true
+  },
+  "voucher.dtePostedDate": {
+    "automationId": "dtePostedDate",
+    "name": "Ng\u00e0y h\u1ea1ch to\u00e1n",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.dteRefDate": {
+    "automationId": "dteRefDate",
+    "name": "Ng\u00e0y ch\u1ee9ng t\u1eeb",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtInvoiceSeries": {
+    "automationId": "txtInvoiceSeries",
+    "name": "K\u00fd hi\u1ec7u H\u0110",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.txtInvoiceNo": {
+    "automationId": "txtInvoiceNo",
+    "name": "S\u1ed1 h\u00f3a \u0111\u01a1n",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.dteInvoiceDate": {
+    "automationId": "dteInvoiceDate",
+    "name": "Ng\u00e0y h\u00f3a \u0111\u01a1n",
+    "controlType": 50004,
+    "windowKind": "sale",
+    "readOnly": false
+  },
+  "voucher.tab.receipt": {
+    "name": "Phi\u1ebfu thu",
+    "controlType": 50019,
+    "windowKind": "sale"
+  },
+  "voucher.tab.invoice": {
+    "name": "H\u00f3a \u0111\u01a1n",
+    "controlType": 50019,
+    "windowKind": "sale"
+  },
+  "voucher.tab.goods": {
+    "name": "1. H\u00e0ng ti\u1ec1n",
+    "controlType": 50019,
+    "windowKind": "sale"
+  },
+  "voucher.tab.tax": {
+    "name": "2. Thu\u1ebf",
+    "controlType": 50019,
+    "windowKind": "sale"
+  }
+}

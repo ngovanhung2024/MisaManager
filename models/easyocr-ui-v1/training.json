@@ -1,0 +1,23 @@
+{
+  "created_at": "2026-09-16T11:50:54.538018+00:00",
+  "purpose": "model training only",
+  "training_data": "random digits, symbols, syllables and Latin character sequences; generated in memory",
+  "excluded_inputs": "no simulator labels, expected action values, screenshots or invoice files",
+  "rasterizer": "GDI private memory bitmap; Tahoma, Segoe UI, Microsoft Sans Serif",
+  "parent_path": "C:\\misa\\models\\easyocr-latin\\latin_g2.pth",
+  "parent_sha256": "aaa95be1c4a9cb3496879bed7c520886ce1164f89e026f0c54488394e74e8c55",
+  "steps": 1800,
+  "batch_size": 32,
+  "learning_rate": 0.0001,
+  "seed": 260916,
+  "trainer_sha256": "be377aafeda86e163677a4b7e6f93bd2b1cf2f3a3f1ebee8601b5c1cebcbdc55",
+  "architecture_sha256": "6f13b0f4160ffbab53a0f44e4cb9bd64e6ed188cb061406d05f7cba5fb7fdcba",
+  "vocabulary_sha256": "530f3f3f60c18df5cbf2ff99cd48d47f7df3f4cd30368f53d97cc47efc20b1ad",
+  "torch": "2.7.1+cu126",
+  "device": "NVIDIA GeForce RTX 3060",
+  "confidence_policy": "unchanged raw minimum CTC probability",
+  "behavioral_verification": false,
+  "completed_at": "2026-09-16T11:52:12.404707+00:00",
+  "weights_sha256": "ab57d47491afd079bd4c7b47bfe6f3a515462304115e9ea492fed1e921b6631f",
+  "elapsed_seconds": 77.89
+}

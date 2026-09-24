@@ -1,0 +1,31 @@
+{
+  "model": "PP-OCRv6_medium_det",
+  "repository": "PaddlePaddle/PP-OCRv6_medium_det",
+  "revision": "8e0f56fb2ef86b461d99cfc7ac5c137738985f61",
+  "license": "apache-2.0",
+  "files": {
+    "inference.json": {
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det/resolve/8e0f56fb2ef86b461d99cfc7ac5c137738985f61/inference.json",
+      "sha256": "0f1a7ec35da36173529c7a60238b7f7919e3831929c3f700ad90ad4896adecd5",
+      "bytes": 312150
+    },
+    "inference.pdiparams": {
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det/resolve/8e0f56fb2ef86b461d99cfc7ac5c137738985f61/inference.pdiparams",
+      "sha256": "85218d2e3d98f5a21c58b4220627be923a97aee5db3cc71f39536ab31ac53960",
+      "bytes": 61960476
+    },
+    "inference.yml": {
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det/resolve/8e0f56fb2ef86b461d99cfc7ac5c137738985f61/inference.yml",
+      "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871",
+      "bytes": 886
+    }
+  },
+  "paddleocr_release": "v3.7.0",
+  "retrieved_at": "2026-09-16",
+  "format": "Paddle 3 PIR inference",
+  "official_release": "https://github.com/PaddlePaddle/PaddleOCR/releases/tag/v3.7.0",
+  "official_archive": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_medium_det_infer.tar",
+  "license_file": "licenses/PaddleOCR-LICENSE.txt",
+  "runtime": "paddlepaddle-gpu 3.3.0 Windows cp310 CUDA 12.6",
+  "verification": "Downloaded hashes match both official archive and PaddlePaddle Hugging Face files; no inference executed"
+}

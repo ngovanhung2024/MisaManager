@@ -1,0 +1,18 @@
+{
+  "scope": "saved artifact inspection only; no model forward pass or UI behavior verified",
+  "selected_folder": "C:\\misa\\models\\easyocr-ui-v3",
+  "model": "UI_latin_g2",
+  "output_classes": 352,
+  "runtime_vocabulary_classes": 352,
+  "state_dict_entries": 44,
+  "strict_load": "<All keys matched successfully>",
+  "all_tensors_finite": true,
+  "changed_entries": 38,
+  "weights_sha256": "25cf8a0181fd9e0be813ba975cd2c006e889948b938b900e621c6129c572de84",
+  "vocabulary_sha256": "530f3f3f60c18df5cbf2ff99cd48d47f7df3f4cd30368f53d97cc47efc20b1ad",
+  "parent_sha256": "37654c9066ab6e9fde2545c35991eba88a5b8709aa38add34cf00a8a71c18894",
+  "trainer_hash_matches": true,
+  "sampler_hash_matches": true,
+  "annotations_hash_matches": true,
+  "behavioral_verification": false
+}
