@@ -1,4 +1,12 @@
 .venv/
+models/
+training/
+out/
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.log
 __pycache__/
 *.py[cod]
 build/
