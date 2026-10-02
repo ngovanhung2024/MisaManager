@@ -6,30 +6,6 @@ namespace MisaManager.Automation;
 
 public sealed partial class NativeInputService
 {
-    // Catalog filters are already narrowed by an exact item name. R20 exposes
-    // this dialog as a non-scrollable custom grid, so read its visible native
-    // rows directly while still rejecting a newly scrollable result set.
-    public async Task<NativeTable> ReadCatalogTableAsync(NativeFrame frame, string gridId,
-        IReadOnlyList<string> columns, CancellationToken token)
-    {
-        var indexed = await dispatcher.RunAsync(() =>
-        {
-            GuardWorkflow(frame);
-            var grid = ResolveGrid(gridId);
-            return grid.Patterns.Grid.IsSupported && grid.Patterns.Table.IsSupported;
-        }, token);
-        if (indexed) return await ReadTableAsync(frame, gridId, columns, token);
-        return await dispatcher.RunAsync(() =>
-        {
-            GuardWorkflow(frame);
-            var grid = ResolveGrid(gridId);
-            if (grid.Patterns.Scroll.IsSupported && grid.Patterns.Scroll.Pattern.VerticallyScrollable.Value)
-                throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE",
-                    "Catalog result grid became scrollable; refusing a partial native result set.");
-            return ReadCustomTable(grid, columns, token);
-        }, token);
-    }
-
     // Complete reconciliation must not equate a viewport with the whole table.
     public async Task<NativeTable> ReadCompleteTableAsync(NativeFrame frame, string gridId,
         IReadOnlyList<string> columns, CancellationToken token)

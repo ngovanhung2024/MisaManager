@@ -73,12 +73,13 @@ public static class InvoiceValidation
                 if (line.Quantity is decimal quantity && line.UnitPrice is decimal price && line.AmountBeforeTax is decimal amount)
                 {
                     var amountDifference = Math.Abs(checked(quantity * price - (line.Discount ?? 0)) - amount);
-                    if (amountDifference != 0)
+                    // Source amounts are rounded to whole đồng; only a larger gap is worth a warning.
+                    if (amountDifference > 0.5m)
                         issues.Add(new("UNIT_PRICE_AMOUNT_DIFFERENCE", IssueSeverity.Warning, "Số lượng × đơn giá khác thành tiền nguồn; giữ nguyên giá trị nguồn để đối chiếu.", sourceWorksheet, line.Cells?.GetValueOrDefault("amount")?.Address, invoiceId, line.LineId));
                     var rateText = (line.TaxRate ?? "").TrimEnd('%').Trim();
                     if (!DecimalValue.TryParseInvariant(rateText, out var rate) || rate is < 0 or > 100)
                         Block("TAX_RATE_UNSUPPORTED", "Thuế suất thiếu hoặc chưa được hỗ trợ.", "Cần thuế suất phần trăm rõ ràng; thuế đặc biệt chưa được hỗ trợ.", line, "taxRate");
-                    else if (line.TaxAmount is decimal tax && checked(amount * rate / 100m) != tax)
+                    else if (line.TaxAmount is decimal tax && Math.Abs(checked(amount * rate / 100m) - tax) > 0.5m)
                         issues.Add(new("TAX_RATE_AMOUNT_DIFFERENCE", IssueSeverity.Warning, "Tiền thuế chi tiết không khớp phép tính thuế suất; giữ nguyên dữ liệu nguồn.", sourceWorksheet, line.Cells?.GetValueOrDefault("taxAmount")?.Address, invoiceId, line.LineId));
                     if (line.TotalWithTax is decimal total && line.TaxAmount is decimal lineTax && checked(amount + lineTax) != total)
                         Block("LINE_TOTAL_MISMATCH", "Tổng tiền có thuế khác thành tiền cộng tiền thuế.", "Kiểm tra tổng tiền có thuế của dòng.", line, "lineTotal");

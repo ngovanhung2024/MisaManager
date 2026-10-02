@@ -12,6 +12,7 @@ namespace MisaManager.App;
 public sealed partial class AppServices : IAsyncDisposable
 {
     public WorkbookReader WorkbookReader { get; } = new();
+    public ItemCatalogStore ItemCatalog { get; } = LoadItemCatalog();
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
     private readonly NativeDispatcher nativeOwner = new();
@@ -46,6 +47,7 @@ public sealed partial class AppServices : IAsyncDisposable
         eventStore = new RunEventStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "logs"));
         workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile);
         workflowGateway.FailureObserver = CaptureFailureUiAsync;
+        workflowGateway.ItemCatalog = ItemCatalog;
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
         Repairs = new(State);
         Drafts = new(State);
@@ -53,6 +55,19 @@ public sealed partial class AppServices : IAsyncDisposable
         Initialization = InitializeRuntimeAsync();
         Control = new ControlServer(new ControlDispatcher(DispatchAsync));
         Control.Start();
+    }
+
+    // Kept outside generation folders so rebuilds and "Xóa lịch sử" never drop created item codes.
+    private static ItemCatalogStore LoadItemCatalog()
+    {
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            ProductIdentity.TechnicalName, "item-catalog.json");
+        try { return new ItemCatalogStore(path); }
+        catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
+        {
+            File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
+            return new ItemCatalogStore(path);
+        }
     }
 
     private async Task InitializeRuntimeAsync()

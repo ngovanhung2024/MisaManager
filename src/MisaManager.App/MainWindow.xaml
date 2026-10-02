@@ -1,65 +1,105 @@
 <Window x:Class="MisaManager.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MISA Excel Manager" Width="420" MinWidth="340" MaxWidth="520" MinHeight="520" WindowStartupLocation="Manual"
+        Title="MISA Excel Manager" Width="440" MinWidth="360" MaxWidth="560" MinHeight="560" WindowStartupLocation="Manual"
         Topmost="True" ShowInTaskbar="True" ShowActivated="True" WindowState="Normal"
-        WindowStyle="SingleBorderWindow" ResizeMode="CanMinimize" Background="#FAFBFA"
-        FontFamily="Segoe UI" FontSize="12" Foreground="#263630"
-        UseLayoutRounding="True" SnapsToDevicePixels="True" Loaded="Window_Loaded" SizeChanged="Window_SizeChanged">
+        WindowStyle="SingleBorderWindow" ResizeMode="CanMinimize" Background="#F4F6FA"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12" Foreground="#111827"
+        TextOptions.TextFormattingMode="Display" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Loaded="Window_Loaded" SizeChanged="Window_SizeChanged">
   <Window.Resources>
-    <SolidColorBrush x:Key="Accent" Color="#19705B"/>
+    <SolidColorBrush x:Key="Primary" Color="#2563EB"/>
+    <SolidColorBrush x:Key="PrimarySoft" Color="#EFF4FF"/>
+    <SolidColorBrush x:Key="Success" Color="#15803D"/>
+    <SolidColorBrush x:Key="SuccessSoft" Color="#ECFDF3"/>
+    <SolidColorBrush x:Key="Danger" Color="#DC2626"/>
+    <SolidColorBrush x:Key="DangerSoft" Color="#FEF2F2"/>
+    <SolidColorBrush x:Key="Line" Color="#E4E8EF"/>
+    <SolidColorBrush x:Key="Muted" Color="#6B7280"/>
+    <SolidColorBrush x:Key="Faint" Color="#9CA3AF"/>
+    <!-- Reset the app-wide TextBlock margin for this window's own layout. -->
+    <Style TargetType="TextBlock"/>
+    <Style x:Key="Card" TargetType="Border">
+      <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+      <Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/><Setter Property="Padding" Value="12,10"/>
+    </Style>
+    <Style x:Key="Caption" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="10.5"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="{StaticResource Faint}"/>
+    </Style>
     <Style x:Key="RailButton" TargetType="Button">
-      <Setter Property="Padding" Value="8,3"/><Setter Property="FontSize" Value="11"/><Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#31463D"/>
-      <Setter Property="BorderBrush" Value="#DDE4DF"/><Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,6"/><Setter Property="FontSize" Value="12"/><Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#1F2937"/>
+      <Setter Property="BorderBrush" Value="#D6DBE4"/><Setter Property="BorderThickness" Value="1"/>
       <Setter Property="Cursor" Value="Hand"/><Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-        <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+        <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
           <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.8"/></Trigger>
-          <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.6"/></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.86"/></Trigger>
+          <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.7"/></Trigger>
           <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate></Setter.Value></Setter>
     </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource RailButton}">
+      <Setter Property="Background" Value="{StaticResource Primary}"/><Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Primary}"/><Setter Property="FontSize" Value="13.5"/><Setter Property="Padding" Value="14,10"/>
+    </Style>
+    <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource RailButton}">
+      <Setter Property="Padding" Value="0"/><Setter Property="Width" Value="40"/><Setter Property="FontSize" Value="15"/>
+    </Style>
     <Style TargetType="ListViewItem">
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListViewItem">
-        <Border x:Name="Selection" Background="Transparent" BorderThickness="2,0,0,1" BorderBrush="#E9EEEB" Padding="6,4">
+        <Border x:Name="Selection" Background="Transparent" BorderThickness="3,0,0,1" BorderBrush="#EEF1F5" Padding="8,6">
           <ContentPresenter/>
         </Border>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Selection" Property="Background" Value="#F1F5F2"/></Trigger>
-          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Selection" Property="Background" Value="#E9F3ED"/><Setter TargetName="Selection" Property="BorderBrush" Value="#19705B"/></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Selection" Property="Background" Value="#F7F9FC"/></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Selection" Property="Background" Value="{StaticResource PrimarySoft}"/><Setter TargetName="Selection" Property="BorderBrush" Value="{StaticResource Primary}"/></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="InvoiceItem" TargetType="ListBoxItem">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,4"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+        <Border x:Name="Frame" CornerRadius="9" BorderThickness="1.5" BorderBrush="Transparent" Background="Transparent">
+          <ContentPresenter/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="#C7D2E3"/></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="{StaticResource Primary}"/></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style TargetType="TabItem">
-      <Setter Property="Padding" Value="12,4"/><Setter Property="Foreground" Value="#7A877F"/>
+      <Setter Property="Padding" Value="12,5"/><Setter Property="Margin" Value="0,0,4,0"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabItem">
-        <Border x:Name="TabSurface" Padding="{TemplateBinding Padding}" Background="Transparent" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+        <Border x:Name="TabSurface" Padding="{TemplateBinding Padding}" Background="Transparent" CornerRadius="7">
           <ContentPresenter ContentSource="Header"/>
         </Border>
-        <ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True">
-          <Setter TargetName="TabSurface" Property="BorderBrush" Value="#19705B"/>
-          <Setter Property="Foreground" Value="#1D4C3D"/><Setter Property="FontWeight" Value="SemiBold"/>
-        </Trigger></ControlTemplate.Triggers>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="TabSurface" Property="Background" Value="#EAEEF4"/></Trigger>
+          <Trigger Property="IsSelected" Value="True">
+            <Setter TargetName="TabSurface" Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="#111827"/><Setter Property="FontWeight" Value="SemiBold"/>
+          </Trigger>
+        </ControlTemplate.Triggers>
       </ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style TargetType="ComboBox">
-      <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#DDE4DF"/><Setter Property="Padding" Value="6,2"/><Setter Property="MinHeight" Value="24"/>
+      <Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#D6DBE4"/><Setter Property="Padding" Value="8,4"/><Setter Property="MinHeight" Value="30"/>
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
         <Grid>
           <ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" Background="{TemplateBinding Background}">
             <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
-              <Border Background="{TemplateBinding Background}" BorderBrush="#DDE4DF" BorderThickness="1" CornerRadius="5">
-                <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#7A877F" StrokeThickness="1.2" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/>
+              <Border Background="{TemplateBinding Background}" BorderBrush="#D6DBE4" BorderThickness="1" CornerRadius="8">
+                <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#6B7280" StrokeThickness="1.4" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"/>
               </Border>
             </ControlTemplate></ToggleButton.Template>
           </ToggleButton>
-          <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" Margin="7,2,25,2" IsHitTestVisible="False" VerticalAlignment="Center"/>
+          <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" Margin="10,3,28,3" IsHitTestVisible="False" VerticalAlignment="Center"/>
           <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False">
-            <Border Background="White" BorderBrush="#DDE4DF" BorderThickness="1" CornerRadius="5" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="260">
+            <Border Background="White" BorderBrush="#D6DBE4" BorderThickness="1" CornerRadius="8" Margin="0,4,0,0" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="280">
               <ScrollViewer><ItemsPresenter/></ScrollViewer>
             </Border>
           </Popup>
@@ -68,21 +108,21 @@
       </ControlTemplate></Setter.Value></Setter>
     </Style>
     <DataTemplate x:Key="ComparisonTemplate">
-      <Border x:Name="ComparisonBorder" Padding="6,3" BorderThickness="0,0,0,1" BorderBrush="#E8EDE9" Background="White" ToolTip="{Binding Evidence}">
+      <Border x:Name="ComparisonBorder" Padding="8,5" BorderThickness="0,0,0,1" BorderBrush="#EEF1F5" Background="White" ToolTip="{Binding Evidence}">
         <StackPanel>
           <DockPanel>
-            <TextBlock x:Name="ComparisonMark" DockPanel.Dock="Right" Text="{Binding ResultLabel}" Foreground="#19705B" FontSize="10" Margin="8,0,0,0"/>
-            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextWrapping="Wrap" FontSize="11"/>
+            <TextBlock x:Name="ComparisonMark" DockPanel.Dock="Right" Text="{Binding ResultLabel}" Foreground="{StaticResource Success}" FontSize="10.5" FontWeight="SemiBold" Margin="8,0,0,0"/>
+            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextWrapping="Wrap" FontSize="11.5"/>
           </DockPanel>
-          <Grid Margin="0,2,0,0">
+          <Grid Margin="0,3,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <TextBlock Text="{Binding ExpectedValue}" TextWrapping="Wrap" Margin="0,0,8,0"/>
-            <TextBlock Grid.Column="1" Text="{Binding ActualValue}" TextWrapping="Wrap"/>
+            <TextBlock Text="{Binding ExpectedValue}" TextWrapping="Wrap" Margin="0,0,8,0" Foreground="#374151"/>
+            <TextBlock Grid.Column="1" Text="{Binding ActualValue}" TextWrapping="Wrap" Foreground="#374151"/>
           </Grid>
         </StackPanel>
       </Border>
       <DataTemplate.Triggers><DataTrigger Binding="{Binding Matched}" Value="False">
-        <Setter TargetName="ComparisonBorder" Property="Background" Value="#FFF4EF"/><Setter TargetName="ComparisonMark" Property="Foreground" Value="#B55737"/>
+        <Setter TargetName="ComparisonBorder" Property="Background" Value="{StaticResource DangerSoft}"/><Setter TargetName="ComparisonMark" Property="Foreground" Value="{StaticResource Danger}"/>
       </DataTrigger></DataTemplate.Triggers>
     </DataTemplate>
     <Style x:Key="ReadOnlyRow" TargetType="ListViewItem">
@@ -90,13 +130,63 @@
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListViewItem"><ContentPresenter/></ControlTemplate></Setter.Value></Setter>
     </Style>
   </Window.Resources>
-  <Grid Margin="8,6,8,5">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <Grid Grid.Row="1" Margin="0,0,0,3">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="1.35*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Button Style="{StaticResource RailButton}" Content="Mở Excel" IsEnabled="{Binding CanEditSource}" Click="ChooseWorkbook_Click" Margin="0,0,4,0"/>
-      <Button Grid.Column="1" Style="{StaticResource RailButton}" Content="{Binding AddLabel}" Command="{Binding AddCommand}" Click="Add_Click" Background="#19705B" Foreground="White" BorderBrush="#19705B" ToolTip="Nhập từ hóa đơn đang chọn. Khớp thì Cất, lệch thì bỏ và sang hóa đơn tiếp theo."/>
-      <Button Grid.Column="2" Style="{StaticResource RailButton}" Content="•••" Padding="8,3" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
+
+  <Grid Margin="12,10,12,8">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+    <!-- Header -->
+    <DockPanel Margin="2,0,2,10">
+      <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="9" Margin="0,0,10,0">
+        <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#3B82F6" Offset="0"/><GradientStop Color="#1D4ED8" Offset="1"/></LinearGradientBrush></Border.Background>
+        <TextBlock Text="M" Foreground="White" FontWeight="Bold" FontSize="17" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
+      <Border x:Name="RunBadge" DockPanel.Dock="Right" CornerRadius="11" Padding="10,3" VerticalAlignment="Center" Background="{StaticResource SuccessSoft}">
+        <StackPanel Orientation="Horizontal">
+          <Ellipse x:Name="RunDot" Width="7" Height="7" Fill="{StaticResource Success}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <TextBlock x:Name="RunBadgeText" Text="Sẵn sàng" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Success}"/>
+        </StackPanel>
+      </Border>
+      <StackPanel VerticalAlignment="Center">
+        <TextBlock Text="MISA Excel Manager" FontSize="15.5" FontWeight="SemiBold"/>
+        <TextBlock Text="Nhập hóa đơn bán hàng từ Excel vào MISA" FontSize="11" Foreground="{StaticResource Muted}"/>
+      </StackPanel>
+    </DockPanel>
+
+    <!-- Sources -->
+    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+      <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="1"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <DockPanel Margin="12,9">
+          <Button DockPanel.Dock="Right" Style="{StaticResource RailButton}" Content="Mở Excel" IsEnabled="{Binding CanEditSource}" Click="ChooseWorkbook_Click" ToolTip="Chọn file hóa đơn (hodon.xlsx)"/>
+          <Border DockPanel.Dock="Left" Width="30" Height="30" CornerRadius="8" Background="{StaticResource PrimarySoft}" Margin="0,0,10,0">
+            <TextBlock Text="HĐ" FontSize="10.5" FontWeight="Bold" Foreground="{StaticResource Primary}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+            <TextBlock Text="HÓA ĐƠN" Style="{StaticResource Caption}"/>
+            <TextBlock x:Name="WorkbookLabel" Text="Chưa chọn file Excel" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+        </DockPanel>
+        <Border Grid.Row="1" Background="#EEF1F5"/>
+        <DockPanel Grid.Row="2" Margin="12,9">
+          <Button DockPanel.Dock="Right" Style="{StaticResource RailButton}" Content="Mã hàng" IsEnabled="{Binding CanEditSource}" Click="ChooseCatalog_Click" ToolTip="Nạp file danh mục vật tư, hàng hóa (mã ↔ tên hàng) xuất từ MISA"/>
+          <Border DockPanel.Dock="Left" Width="30" Height="30" CornerRadius="8" Background="#F3EEFF" Margin="0,0,10,0">
+            <TextBlock Text="MH" FontSize="10.5" FontWeight="Bold" Foreground="#7C3AED" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+            <TextBlock Text="MÃ HÀNG" Style="{StaticResource Caption}"/>
+            <TextBlock x:Name="CatalogLabel" Text="Chưa nạp danh mục mã hàng" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="CatalogDetail" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Visibility="Collapsed"/>
+          </StackPanel>
+        </DockPanel>
+      </Grid>
+    </Border>
+
+    <!-- Action + counters -->
+    <Grid Grid.Row="2" Margin="0,10,0,10">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Button Style="{StaticResource PrimaryButton}" Content="{Binding AddLabel}" Command="{Binding AddCommand}" Click="Add_Click" ToolTip="Chạy lần lượt từ hóa đơn đang chọn. Khớp thì Cất (xanh), lệch thì Bỏ (đỏ) rồi sang hóa đơn tiếp theo. Esc để dừng."/>
+      <Button Grid.Column="1" Style="{StaticResource IconButton}" Content="•••" Margin="8,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
           <MenuItem Header="Đối chiếu hóa đơn hiện tại" Click="Reconcile_Click"/><MenuItem Header="Chọn phiên MISA" Click="SelectSession_Click"/>
           <MenuItem Header="Bổ sung dữ liệu nguồn" Click="CorrectDraft_Click"/><Separator/>
@@ -105,187 +195,251 @@
           <MenuItem Header="Developer" Click="Developer_Click"/><MenuItem Header="Reload app (candidate)" Click="Reload_Click"/>
         </ContextMenu></Button.ContextMenu>
       </Button>
+      <UniformGrid Grid.Row="1" Grid.ColumnSpan="2" Columns="3" Margin="0,10,0,0">
+        <Border Background="{StaticResource SuccessSoft}" CornerRadius="9" Padding="10,6" Margin="0,0,4,0">
+          <StackPanel><TextBlock x:Name="SavedCount" Text="0" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Success}"/><TextBlock Text="Thành công" FontSize="10.5" Foreground="{StaticResource Success}"/></StackPanel>
+        </Border>
+        <Border Background="{StaticResource DangerSoft}" CornerRadius="9" Padding="10,6" Margin="2,0,2,0">
+          <StackPanel><TextBlock x:Name="DiscardedCount" Text="0" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Danger}"/><TextBlock Text="Bị bỏ / lỗi" FontSize="10.5" Foreground="{StaticResource Danger}"/></StackPanel>
+        </Border>
+        <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="10,5" Margin="4,0,0,0">
+          <StackPanel><TextBlock x:Name="PendingCount" Text="0" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="Chưa nhập" FontSize="10.5" Foreground="{StaticResource Muted}"/></StackPanel>
+        </Border>
+      </UniformGrid>
     </Grid>
-    <TabControl Grid.Row="2" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,3,0,0">
+
+    <TabControl Grid.Row="3" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,8,0,0">
       <TabItem Header="Nhập liệu" IsSelected="True">
         <Grid>
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Expander x:Name="SourceExpander" IsExpanded="True" Margin="0,0,0,4">
-            <Expander.Header><TextBlock x:Name="WorkbookLabel" Text="Chọn file Excel để bắt đầu" Foreground="#65776D" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="295"/></Expander.Header>
-            <StackPanel Margin="0,3,0,0">
-              <ComboBox x:Name="SheetChoice" IsEnabled="{Binding CanEditSource}" SelectionChanged="SheetChoice_SelectionChanged" ToolTip="Trang tính" Margin="0,0,0,2"/>
-              <Border x:Name="MappingPanel" Visibility="Collapsed" Background="#FAF7EB" Padding="2,0" CornerRadius="4">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <Expander x:Name="SourceExpander" IsExpanded="False" Margin="0,0,0,6">
+            <Expander.Header><TextBlock Text="Trang tính &amp; cột dữ liệu" Foreground="{StaticResource Muted}" FontSize="11"/></Expander.Header>
+            <StackPanel Margin="0,6,0,0">
+              <ComboBox x:Name="SheetChoice" IsEnabled="{Binding CanEditSource}" SelectionChanged="SheetChoice_SelectionChanged" ToolTip="Trang tính" Margin="0,0,0,4"/>
+              <Border x:Name="MappingPanel" Visibility="Collapsed" Background="#FFFBEB" Padding="6,2" CornerRadius="8">
                 <Expander x:Name="MappingExpander" Header="Cột dữ liệu">
-                  <ScrollViewer MaxHeight="120"><ItemsControl x:Name="MappingItems" IsEnabled="{Binding CanEditSource}"><ItemsControl.ItemTemplate><DataTemplate>
-                    <Grid Margin="0,2"><Grid.ColumnDefinitions><ColumnDefinition Width="112"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <ScrollViewer MaxHeight="140"><ItemsControl x:Name="MappingItems" IsEnabled="{Binding CanEditSource}"><ItemsControl.ItemTemplate><DataTemplate>
+                    <Grid Margin="0,2"><Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                       <TextBlock Text="{Binding Label}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
                       <ComboBox Grid.Column="1" ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DisplayMemberPath="Display" AutomationProperties.Name="{Binding Label}" AutomationProperties.AutomationId="{Binding Key}"/>
                     </Grid>
                   </DataTemplate></ItemsControl.ItemTemplate></ItemsControl></ScrollViewer>
                 </Expander>
               </Border>
-              <ComboBox x:Name="InvoiceList" IsEnabled="{Binding CanEditSource}" Margin="0,2,0,0" SelectionChanged="InvoiceList_SelectionChanged" ToolTip="Chọn hóa đơn">
-                <ComboBox.ItemTemplate><DataTemplate>
-                  <TextBlock Text="{Binding DisplayIdentity}" FontWeight="SemiBold" FontSize="11" TextWrapping="Wrap" ToolTip="{Binding DisplaySummary}"/>
-                </DataTemplate></ComboBox.ItemTemplate>
-              </ComboBox>
             </StackPanel>
           </Expander>
-          <Border Grid.Row="1" x:Name="IssuePanel" Visibility="Collapsed" Background="#FFF4EF" Padding="5,3" CornerRadius="5" Margin="0,0,0,4">
+
+          <ListBox Grid.Row="1" x:Name="InvoiceList" MaxHeight="250" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"
+                   Background="Transparent" BorderThickness="0" Padding="0" ItemContainerStyle="{StaticResource InvoiceItem}"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" Margin="0,0,0,6">
+            <ListBox.ItemTemplate><DataTemplate>
+              <Border x:Name="Row" CornerRadius="8" Background="White" BorderBrush="#E4E8EF" BorderThickness="1">
+                <DockPanel>
+                  <Border x:Name="Stripe" DockPanel.Dock="Left" Width="4" CornerRadius="8,0,0,8" Background="#D6DBE4"/>
+                  <Border x:Name="Badge" DockPanel.Dock="Right" CornerRadius="9" Padding="8,2" Margin="6,0,10,0" VerticalAlignment="Center" Background="#F3F4F6">
+                    <TextBlock x:Name="BadgeText" Text="{Binding DisplayStatus}" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+                  </Border>
+                  <StackPanel Margin="10,6,0,6">
+                    <TextBlock Text="{Binding DisplayIdentity}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding DisplaySummary}" FontSize="10.5" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+                  </StackPanel>
+                </DockPanel>
+              </Border>
+              <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding StatusKind}" Value="saved">
+                  <Setter TargetName="Row" Property="Background" Value="{StaticResource SuccessSoft}"/><Setter TargetName="Row" Property="BorderBrush" Value="#ABEFC6"/>
+                  <Setter TargetName="Stripe" Property="Background" Value="{StaticResource Success}"/>
+                  <Setter TargetName="Badge" Property="Background" Value="#D1FADF"/><Setter TargetName="BadgeText" Property="Foreground" Value="{StaticResource Success}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding StatusKind}" Value="discarded">
+                  <Setter TargetName="Row" Property="Background" Value="{StaticResource DangerSoft}"/><Setter TargetName="Row" Property="BorderBrush" Value="#FECACA"/>
+                  <Setter TargetName="Stripe" Property="Background" Value="{StaticResource Danger}"/>
+                  <Setter TargetName="Badge" Property="Background" Value="#FEE2E2"/><Setter TargetName="BadgeText" Property="Foreground" Value="{StaticResource Danger}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding StatusKind}" Value="running">
+                  <Setter TargetName="Row" Property="Background" Value="{StaticResource PrimarySoft}"/><Setter TargetName="Row" Property="BorderBrush" Value="#BFD3FE"/>
+                  <Setter TargetName="Stripe" Property="Background" Value="{StaticResource Primary}"/>
+                  <Setter TargetName="Badge" Property="Background" Value="#DBE7FE"/><Setter TargetName="BadgeText" Property="Foreground" Value="{StaticResource Primary}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding StatusKind}" Value="attention">
+                  <Setter TargetName="Stripe" Property="Background" Value="#D97706"/>
+                  <Setter TargetName="Badge" Property="Background" Value="#FEF3C7"/><Setter TargetName="BadgeText" Property="Foreground" Value="#B45309"/>
+                </DataTrigger>
+              </DataTemplate.Triggers>
+            </DataTemplate></ListBox.ItemTemplate>
+          </ListBox>
+
+          <Border Grid.Row="2" x:Name="IssuePanel" Visibility="Collapsed" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" Padding="10,7" CornerRadius="8" Margin="0,0,0,6">
             <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition x:Name="IssueRow" Height="Auto"/></Grid.RowDefinitions>
               <TextBlock x:Name="SelectedTitle" FontWeight="SemiBold" TextWrapping="Wrap"/>
               <ListView Grid.Row="1" x:Name="IssueGrid" MaxHeight="95" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListView.ItemTemplate><DataTemplate>
-                <StackPanel Margin="0,4,0,0"><TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="11"/><TextBlock Text="{Binding Resolution}" TextWrapping="Wrap" Foreground="#98674D" FontSize="10"/></StackPanel>
+                <StackPanel Margin="0,4,0,0"><TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="11"/><TextBlock Text="{Binding Resolution}" TextWrapping="Wrap" Foreground="#9A3412" FontSize="10.5"/></StackPanel>
               </DataTemplate></ListView.ItemTemplate></ListView>
             </Grid>
           </Border>
-          <StackPanel Grid.Row="2" x:Name="EntryHeading" Margin="0,0,0,3" Visibility="Collapsed">
+
+          <StackPanel Grid.Row="3" x:Name="EntryHeading" Margin="2,2,2,6" Visibility="Collapsed">
             <TextBlock x:Name="EntryTitle" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            <TextBlock x:Name="ActivityLabel" FontSize="10" Foreground="#65776D" Margin="0,1,0,3" TextWrapping="Wrap"/>
-            <ProgressBar x:Name="EntryProgress" Height="2" Foreground="#19705B" Background="#E6ECE7" BorderThickness="0" Maximum="100"/>
+            <TextBlock x:Name="ActivityLabel" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,2,0,6" TextWrapping="Wrap"/>
+            <ProgressBar x:Name="EntryProgress" Height="4" Foreground="{StaticResource Primary}" Background="#E5E9F0" BorderThickness="0" Maximum="100"/>
           </StackPanel>
-          <Grid Grid.Row="3">
-            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <StackPanel x:Name="EntryEmpty" Margin="10,28,10,0" VerticalAlignment="Top">
-              <TextBlock Text="Dữ liệu rõ ràng, từng bước." FontWeight="SemiBold" FontSize="16" Foreground="#52695D"/>
-              <TextBlock Text="Mở file Excel, chọn hóa đơn rồi bấm Thêm vào MISA." TextWrapping="Wrap" Foreground="#7A877F" Margin="0,8,0,0"/>
-              <TextBlock Text="Trường đang nhập sẽ được tô sáng tại đây." TextWrapping="Wrap" Foreground="#7A877F" Margin="0,6,0,0"/>
-            </StackPanel>
-             <ListView x:Name="EntryList" Visibility="Collapsed" Background="White" BorderThickness="0" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-               <ListView.ItemTemplate><DataTemplate>
-                 <Border x:Name="FieldRow" Padding="6,2" BorderThickness="2,0,0,1" BorderBrush="#EDF0ED" Background="White">
-                   <Grid>
-                     <Grid x:Name="SimpleFieldGrid">
-                       <Grid.ColumnDefinitions><ColumnDefinition Width="104"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                       <TextBlock x:Name="FieldLabel" Text="{Binding Label}" FontSize="11" Foreground="#718278" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                       <StackPanel x:Name="FieldValue" Grid.Column="1">
-                         <TextBlock Text="{Binding Expected}" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                         <TextBlock x:Name="FieldActual" Text="{Binding Actual}" FontSize="10" Foreground="#7A877F" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,3,0,0"/>
-                       </StackPanel>
-                     </Grid>
-                     <StackPanel x:Name="LineSection" Visibility="Collapsed">
-                       <Grid>
-                         <Grid.ColumnDefinitions><ColumnDefinition Width="104"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                         <TextBlock Text="{Binding Label}" FontSize="11" Foreground="#466652" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                         <TextBlock Grid.Column="1" Text="{Binding Expected}" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                       </Grid>
-                       <ItemsControl ItemsSource="{Binding Children}" Margin="0,4,0,0">
-                         <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                         <ItemsControl.ItemTemplate><DataTemplate>
-                           <Border x:Name="LineField" Padding="4,3" Margin="0,1,3,1" BorderThickness="1" BorderBrush="#E8EEE9" Background="White">
-                             <Grid>
-                               <Grid.ColumnDefinitions><ColumnDefinition Width="72"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                               <TextBlock Text="{Binding Label}" FontSize="10" Foreground="#718278" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                               <StackPanel Grid.Column="1">
-                                 <TextBlock Text="{Binding Expected}" FontSize="10" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                                 <TextBlock x:Name="LineActual" Text="{Binding Actual}" FontSize="9" Foreground="#7A877F" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,2,0,0"/>
-                               </StackPanel>
-                             </Grid>
-                           </Border>
-                           <DataTemplate.Triggers>
-                             <DataTrigger Binding="{Binding IsMismatch}" Value="True"><Setter TargetName="LineField" Property="Background" Value="#FFF4EF"/><Setter TargetName="LineActual" Property="Visibility" Value="Visible"/></DataTrigger>
-                             <DataTrigger Binding="{Binding IsActive}" Value="True"><Setter TargetName="LineField" Property="Background" Value="#DDF0E5"/><Setter TargetName="LineField" Property="BorderBrush" Value="#19705B"/></DataTrigger>
-                           </DataTemplate.Triggers>
-                         </DataTemplate></ItemsControl.ItemTemplate>
-                       </ItemsControl>
-                     </StackPanel>
-                   </Grid>
-                 </Border>
-                 <DataTemplate.Triggers>
-                   <DataTrigger Binding="{Binding IsLineSection}" Value="True"><Setter TargetName="SimpleFieldGrid" Property="Visibility" Value="Collapsed"/><Setter TargetName="LineSection" Property="Visibility" Value="Visible"/><Setter TargetName="FieldRow" Property="Background" Value="#F0F4F0"/><Setter TargetName="FieldRow" Property="Margin" Value="0,4,0,0"/><Setter TargetName="FieldRow" Property="Padding" Value="6,3"/></DataTrigger>
-                   <DataTrigger Binding="{Binding IsSection}" Value="True"><Setter TargetName="FieldRow" Property="Background" Value="#F0F4F0"/><Setter TargetName="FieldRow" Property="Margin" Value="0,4,0,0"/><Setter TargetName="FieldRow" Property="Padding" Value="6,3"/><Setter TargetName="FieldLabel" Property="Foreground" Value="#466652"/></DataTrigger>
-                   <DataTrigger Binding="{Binding IsMismatch}" Value="True"><Setter TargetName="FieldRow" Property="Background" Value="#FFF4EF"/><Setter TargetName="FieldActual" Property="Visibility" Value="Visible"/></DataTrigger>
-                   <DataTrigger Binding="{Binding IsActive}" Value="True"><Setter TargetName="FieldRow" Property="Background" Value="#DDF0E5"/><Setter TargetName="FieldRow" Property="BorderBrush" Value="#19705B"/><Setter TargetName="FieldLabel" Property="Foreground" Value="#175A43"/></DataTrigger>
-                 </DataTemplate.Triggers>
-               </DataTemplate></ListView.ItemTemplate>
-             </ListView>
-            <Expander Grid.Row="1" x:Name="ComparisonExpander" Visibility="Collapsed" Header="Đối chiếu" Margin="0,3,0,0">
-              <StackPanel>
-                <DockPanel Margin="0,7,0,6"><Button DockPanel.Dock="Right" Content="Đọc lại" Click="Reconcile_Click" IsEnabled="{Binding CanEditSource}" Style="{StaticResource RailButton}" Padding="7,4" FontSize="11"/><TextBlock x:Name="ComparisonSummary" Text="Chưa có kết quả." TextWrapping="Wrap" FontSize="11" Margin="0,0,6,0"/></DockPanel>
-                <UniformGrid Columns="2" Margin="8,0,8,5"><TextBlock Text="NGUỒN EXCEL" FontSize="9" Foreground="#87948B"/><TextBlock Text="MISA" FontSize="9" Foreground="#87948B"/></UniformGrid>
-                <ListView x:Name="LiveComparisonList" MaxHeight="210" Background="White" BorderThickness="0" ItemTemplate="{StaticResource ComparisonTemplate}" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+
+          <Border Grid.Row="4" Style="{StaticResource Card}" Padding="0">
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <StackPanel x:Name="EntryEmpty" Margin="16,22,16,16" VerticalAlignment="Top">
+                <TextBlock Text="Bắt đầu trong 3 bước" FontWeight="SemiBold" FontSize="15"/>
+                <TextBlock Text="1. Mở Excel hóa đơn." Foreground="{StaticResource Muted}" Margin="0,10,0,0"/>
+                <TextBlock Text="2. Nạp file mã hàng (danh mục vật tư, hàng hóa)." Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                <TextBlock Text="3. Chọn hóa đơn đầu tiên rồi bấm Thêm vào MISA." Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                <TextBlock Text="Hóa đơn thành công tô xanh, bị bỏ tô đỏ." TextWrapping="Wrap" Foreground="{StaticResource Faint}" FontSize="11" Margin="0,12,0,0"/>
               </StackPanel>
-            </Expander>
-          </Grid>
+              <ListView x:Name="EntryList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Margin="4" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListView.ItemTemplate><DataTemplate>
+                  <Border x:Name="FieldRow" Padding="8,4" BorderThickness="3,0,0,1" BorderBrush="#F0F2F6" Background="White">
+                    <Grid>
+                      <Grid x:Name="SimpleFieldGrid">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock x:Name="FieldLabel" Text="{Binding Label}" FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <StackPanel x:Name="FieldValue" Grid.Column="1">
+                          <TextBlock Text="{Binding Expected}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                          <TextBlock x:Name="FieldActual" Text="{Binding Actual}" FontSize="10.5" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,2,0,0"/>
+                        </StackPanel>
+                      </Grid>
+                      <StackPanel x:Name="LineSection" Visibility="Collapsed">
+                        <Grid>
+                          <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                          <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{StaticResource Primary}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Expected}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        </Grid>
+                        <ItemsControl ItemsSource="{Binding Children}" Margin="0,5,0,0">
+                          <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate><DataTemplate>
+                            <Border x:Name="LineField" Padding="6,4" Margin="0,2,4,2" BorderThickness="1" BorderBrush="#EEF1F5" Background="White" CornerRadius="6">
+                              <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Label}" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                <StackPanel Grid.Column="1">
+                                  <TextBlock Text="{Binding Expected}" FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                  <TextBlock x:Name="LineActual" Text="{Binding Actual}" FontSize="10" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,2,0,0"/>
+                                </StackPanel>
+                              </Grid>
+                            </Border>
+                            <DataTemplate.Triggers>
+                              <DataTrigger Binding="{Binding IsMismatch}" Value="True"><Setter TargetName="LineField" Property="Background" Value="{StaticResource DangerSoft}"/><Setter TargetName="LineField" Property="BorderBrush" Value="#FECACA"/><Setter TargetName="LineActual" Property="Visibility" Value="Visible"/></DataTrigger>
+                              <DataTrigger Binding="{Binding IsActive}" Value="True"><Setter TargetName="LineField" Property="Background" Value="{StaticResource PrimarySoft}"/><Setter TargetName="LineField" Property="BorderBrush" Value="{StaticResource Primary}"/></DataTrigger>
+                            </DataTemplate.Triggers>
+                          </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                  <DataTemplate.Triggers>
+                    <DataTrigger Binding="{Binding IsLineSection}" Value="True"><Setter TargetName="SimpleFieldGrid" Property="Visibility" Value="Collapsed"/><Setter TargetName="LineSection" Property="Visibility" Value="Visible"/><Setter TargetName="FieldRow" Property="Background" Value="#F8FAFC"/><Setter TargetName="FieldRow" Property="Margin" Value="0,4,0,0"/><Setter TargetName="FieldRow" Property="Padding" Value="8,6"/></DataTrigger>
+                    <DataTrigger Binding="{Binding IsSection}" Value="True"><Setter TargetName="FieldRow" Property="Background" Value="#F8FAFC"/><Setter TargetName="FieldRow" Property="Margin" Value="0,4,0,0"/><Setter TargetName="FieldRow" Property="Padding" Value="8,6"/></DataTrigger>
+                    <DataTrigger Binding="{Binding IsMismatch}" Value="True"><Setter TargetName="FieldRow" Property="Background" Value="{StaticResource DangerSoft}"/><Setter TargetName="FieldRow" Property="BorderBrush" Value="{StaticResource Danger}"/><Setter TargetName="FieldActual" Property="Visibility" Value="Visible"/></DataTrigger>
+                    <DataTrigger Binding="{Binding IsActive}" Value="True"><Setter TargetName="FieldRow" Property="Background" Value="{StaticResource PrimarySoft}"/><Setter TargetName="FieldRow" Property="BorderBrush" Value="{StaticResource Primary}"/><Setter TargetName="FieldLabel" Property="Foreground" Value="{StaticResource Primary}"/></DataTrigger>
+                  </DataTemplate.Triggers>
+                </DataTemplate></ListView.ItemTemplate>
+              </ListView>
+              <Expander Grid.Row="1" x:Name="ComparisonExpander" Visibility="Collapsed" Header="Đối chiếu" Margin="10,4,10,8">
+                <StackPanel>
+                  <DockPanel Margin="0,8,0,6"><Button DockPanel.Dock="Right" Content="Đọc lại" Click="Reconcile_Click" IsEnabled="{Binding CanEditSource}" Style="{StaticResource RailButton}" Padding="10,4" FontSize="11"/><TextBlock x:Name="ComparisonSummary" Text="Chưa có kết quả." TextWrapping="Wrap" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0"/></DockPanel>
+                  <UniformGrid Columns="2" Margin="8,0,8,5"><TextBlock Text="NGUỒN EXCEL" Style="{StaticResource Caption}"/><TextBlock Text="MISA" Style="{StaticResource Caption}"/></UniformGrid>
+                  <ListView x:Name="LiveComparisonList" MaxHeight="220" Background="White" BorderThickness="0" ItemTemplate="{StaticResource ComparisonTemplate}" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                </StackPanel>
+              </Expander>
+            </Grid>
+          </Border>
         </Grid>
       </TabItem>
+
       <TabItem Header="Hồ sơ">
-        <Grid>
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <TextBlock x:Name="ProfileSummary" Text="Chưa có hóa đơn trong hồ sơ." FontSize="11" Foreground="#7A877F" TextWrapping="Wrap" Margin="0,0,0,8"/>
-          <ListView Grid.Row="1" x:Name="ProfileList" MaxHeight="185" SelectionChanged="ProfileList_SelectionChanged" Background="White" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-            <ListView.ItemTemplate><DataTemplate><StackPanel>
-              <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding Status}" Foreground="{Binding StatusColor}" FontSize="10" Margin="8,0,0,0"/><TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap"/></DockPanel>
-              <TextBlock Text="{Binding Subtitle}" FontSize="10" Foreground="#7A877F" Margin="0,3,0,0" TextWrapping="Wrap"/>
-            </StackPanel></DataTemplate></ListView.ItemTemplate>
-          </ListView>
-          <StackPanel Grid.Row="2" x:Name="ProfileDetail" Visibility="Collapsed" Margin="0,5,0,4">
-            <TextBlock x:Name="ProfileOutcome" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            <TextBlock x:Name="ProfileEvidence" FontSize="11" Foreground="#7A877F" TextWrapping="Wrap" Margin="0,2,0,4"/>
-            <ComboBox x:Name="ProfileHistory" DisplayMemberPath="DisplaySummary" SelectionChanged="ProfileHistory_SelectionChanged" ToolTip="Lịch sử đối chiếu"/>
-            <UniformGrid x:Name="ProfileColumns" Columns="2" Margin="8,9,8,0"><TextBlock Text="NGUỒN EXCEL" FontSize="9" Foreground="#87948B"/><TextBlock Text="MISA" FontSize="9" Foreground="#87948B"/></UniformGrid>
-          </StackPanel>
-          <Grid Grid.Row="3">
-            <StackPanel x:Name="ProfileEmpty" Margin="6,20,6,0" VerticalAlignment="Top">
-              <TextBlock x:Name="ProfileEmptyTitle" Text="Chọn hóa đơn để xem đối chiếu" FontWeight="SemiBold" Foreground="#65776D"/>
-              <TextBlock x:Name="ProfileEmptyText" Text="Kết quả nhập và các lần đối chiếu được lưu tại đây." Foreground="#7A877F" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        <Border Style="{StaticResource Card}">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <TextBlock x:Name="ProfileSummary" Text="Chưa có hóa đơn trong hồ sơ." FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <ListView Grid.Row="1" x:Name="ProfileList" MaxHeight="200" SelectionChanged="ProfileList_SelectionChanged" Background="White" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListView.ItemTemplate><DataTemplate><StackPanel>
+                <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding Status}" Foreground="{Binding StatusColor}" FontSize="10.5" FontWeight="SemiBold" Margin="8,0,0,0"/><TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap"/></DockPanel>
+                <TextBlock Text="{Binding Subtitle}" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+              </StackPanel></DataTemplate></ListView.ItemTemplate>
+            </ListView>
+            <StackPanel Grid.Row="2" x:Name="ProfileDetail" Visibility="Collapsed" Margin="0,8,0,4">
+              <TextBlock x:Name="ProfileOutcome" FontWeight="SemiBold" TextWrapping="Wrap"/>
+              <TextBlock x:Name="ProfileEvidence" FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,0,6"/>
+              <ComboBox x:Name="ProfileHistory" DisplayMemberPath="DisplaySummary" SelectionChanged="ProfileHistory_SelectionChanged" ToolTip="Lịch sử đối chiếu"/>
+              <UniformGrid x:Name="ProfileColumns" Columns="2" Margin="8,10,8,0"><TextBlock Text="NGUỒN EXCEL" Style="{StaticResource Caption}"/><TextBlock Text="MISA" Style="{StaticResource Caption}"/></UniformGrid>
             </StackPanel>
-            <ListView x:Name="ProfileComparisonList" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource ReadOnlyRow}" ItemTemplate="{StaticResource ComparisonTemplate}"/>
+            <Grid Grid.Row="3">
+              <StackPanel x:Name="ProfileEmpty" Margin="6,20,6,0" VerticalAlignment="Top">
+                <TextBlock x:Name="ProfileEmptyTitle" Text="Chọn hóa đơn để xem đối chiếu" FontWeight="SemiBold"/>
+                <TextBlock x:Name="ProfileEmptyText" Text="Kết quả nhập và các lần đối chiếu được lưu tại đây." Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
+              </StackPanel>
+              <ListView x:Name="ProfileComparisonList" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource ReadOnlyRow}" ItemTemplate="{StaticResource ComparisonTemplate}"/>
+            </Grid>
           </Grid>
-        </Grid>
+        </Border>
       </TabItem>
+
       <TabItem Header="Hiệu năng">
         <Grid>
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Border Background="#EEF7F1" BorderBrush="#D5E7D9" BorderThickness="1" CornerRadius="5" Padding="7" Margin="0,0,0,6">
+          <Border Style="{StaticResource Card}" Background="{StaticResource PrimarySoft}" BorderBrush="#D3E0FD" Margin="0,0,0,8">
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <StackPanel>
-                <TextBlock Text="Đang theo dõi" FontSize="10" Foreground="#65776D"/>
-                <TextBlock Text="{Binding PerformanceCurrent}" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding PerformanceElapsed}" FontSize="11" Foreground="#175A43" Margin="0,2,0,0"/>
-                <TextBlock Text="{Binding PerformanceInvoice}" FontSize="10" Foreground="#7A877F" TextWrapping="Wrap"/>
+                <TextBlock Text="ĐANG THEO DÕI" Style="{StaticResource Caption}"/>
+                <TextBlock Text="{Binding PerformanceCurrent}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                <TextBlock Text="{Binding PerformanceElapsed}" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource Primary}" Margin="0,2,0,0"/>
+                <TextBlock Text="{Binding PerformanceInvoice}" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
               </StackPanel>
               <Button Grid.Column="1" Content="Copy báo cáo" Click="CopyPerformance_Click" Style="{StaticResource RailButton}" VerticalAlignment="Center"/>
             </Grid>
           </Border>
-          <TextBlock Grid.Row="1" Text="Mỗi dòng là một bước đã chạy; các bước Native/UI Automation được lấy theo hoạt động hiện tại." FontSize="10" Foreground="#7A877F" TextWrapping="Wrap" Margin="2,0,2,5"/>
-          <ListView Grid.Row="2" x:Name="PerformanceList" Background="White" BorderThickness="0" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-            <ListView.ItemTemplate><DataTemplate>
-              <Grid Margin="0,1">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="66"/></Grid.ColumnDefinitions>
-                <StackPanel>
-                  <DockPanel><TextBlock Text="{Binding Status}" DockPanel.Dock="Right" FontSize="10" Foreground="#7A877F" Margin="5,0,0,0"/><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap"/></DockPanel>
-                  <TextBlock Text="{Binding Details}" FontSize="10" Foreground="#7A877F" TextWrapping="Wrap" Margin="0,2,0,0"/>
-                  <TextBlock Text="{Binding Error}" FontSize="10" Foreground="#B33B2E" TextWrapping="Wrap" Margin="0,2,0,0"/>
-                </StackPanel>
-                <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" HorizontalAlignment="Right" VerticalAlignment="Top" FontWeight="SemiBold" Foreground="#175A43"/>
-              </Grid>
-            </DataTemplate></ListView.ItemTemplate>
-          </ListView>
+          <TextBlock Grid.Row="1" Text="Mỗi dòng là một bước đã chạy; các bước Native/UI Automation được lấy theo hoạt động hiện tại." FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="2,0,2,6"/>
+          <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
+            <ListView x:Name="PerformanceList" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListView.ItemTemplate><DataTemplate>
+                <Border BorderThickness="0,0,0,1" BorderBrush="#F0F2F6" Padding="6,5">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <DockPanel><TextBlock Text="{Binding Status}" DockPanel.Dock="Right" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="5,0,0,0"/><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap"/></DockPanel>
+                      <TextBlock Text="{Binding Details}" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                      <TextBlock Text="{Binding Error}" FontSize="10.5" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" HorizontalAlignment="Right" VerticalAlignment="Top" FontWeight="SemiBold" Foreground="{StaticResource Primary}"/>
+                  </Grid>
+                </Border>
+              </DataTemplate></ListView.ItemTemplate>
+            </ListView>
+          </Border>
         </Grid>
       </TabItem>
     </TabControl>
-    <Border Grid.Row="3" Padding="0,3,0,0" BorderBrush="#E2E8E3" BorderThickness="0,1,0,0" Margin="0,3,0,0">
+
+    <Border Grid.Row="4" Padding="2,8,0,0" Margin="0,6,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0">
       <DockPanel LastChildFill="True">
-         <Button x:Name="ClearComparisonButton" DockPanel.Dock="Right" Content="×" Click="ClearComparison_Click"
-                Width="22" Height="20" Padding="0" Margin="5,0,0,0" FontSize="14" FontWeight="SemiBold"
-                 ToolTip="Xóa toàn bộ hồ sơ và hiệu năng" AutomationProperties.Name="Xóa toàn bộ hồ sơ và hiệu năng"
-                 IsEnabled="{Binding CanEditSource}"
-                Style="{StaticResource RailButton}"/>
-        <TextBlock x:Name="StatusLabel" Text="Sẵn sàng" TextWrapping="Wrap" FontSize="10" Foreground="#7A877F" MaxHeight="42" TextTrimming="CharacterEllipsis"/>
+        <Button x:Name="ClearComparisonButton" DockPanel.Dock="Right" Content="Xóa lịch sử" Click="ClearComparison_Click"
+                Padding="10,3" Margin="6,0,0,0" FontSize="11" FontWeight="Normal" Foreground="{StaticResource Muted}"
+                ToolTip="Xóa toàn bộ hồ sơ và hiệu năng" AutomationProperties.Name="Xóa toàn bộ hồ sơ và hiệu năng"
+                IsEnabled="{Binding CanEditSource}" Style="{StaticResource RailButton}"/>
+        <TextBlock x:Name="StatusLabel" Text="Sẵn sàng" TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}" MaxHeight="44" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
       </DockPanel>
     </Border>
-    <Border x:Name="ErrorPopup" Grid.RowSpan="4" Panel.ZIndex="20" Visibility="Collapsed" Background="#FFF8F5" BorderBrush="#D85B4C" BorderThickness="1" CornerRadius="7" Padding="9" VerticalAlignment="Top" Margin="0,4,0,0">
+
+    <Border x:Name="ErrorPopup" Grid.RowSpan="5" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="12" Padding="14,12" VerticalAlignment="Top" Margin="0,48,0,0">
+      <Border.Effect><DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.18" Color="#7F1D1D"/></Border.Effect>
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel>
-          <Button DockPanel.Dock="Right" Content="×" Click="CloseErrorPopup_Click" Width="24" Height="22" Padding="0" FontSize="16" FontWeight="SemiBold" Style="{StaticResource RailButton}" ToolTip="Đóng thông báo lỗi"/>
-          <TextBlock x:Name="ErrorPopupTitle" Text="Lỗi khi thêm vào MISA" FontWeight="SemiBold" Foreground="#8F281F" VerticalAlignment="Center"/>
+          <Button DockPanel.Dock="Right" Content="×" Click="CloseErrorPopup_Click" Width="28" Height="26" Padding="0" FontSize="16" Style="{StaticResource RailButton}" ToolTip="Đóng thông báo lỗi"/>
+          <TextBlock x:Name="ErrorPopupTitle" Text="Lỗi khi thêm vào MISA" FontWeight="SemiBold" FontSize="13" Foreground="#991B1B" VerticalAlignment="Center"/>
         </DockPanel>
-        <TextBlock Grid.Row="1" x:Name="ErrorPopupMessage" TextWrapping="Wrap" Foreground="#542B27" Margin="0,6,0,4"/>
-        <TextBox Grid.Row="2" x:Name="ErrorPopupDetails" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="130" VerticalScrollBarVisibility="Auto" Background="White" BorderBrush="#E8C7C2" FontFamily="Consolas" FontSize="10" Padding="5"/>
-        <Button Grid.Row="3" Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}" HorizontalAlignment="Right" Margin="0,6,0,0"/>
+        <TextBlock Grid.Row="1" x:Name="ErrorPopupMessage" TextWrapping="Wrap" Foreground="#450A0A" Margin="0,8,0,6"/>
+        <TextBox Grid.Row="2" x:Name="ErrorPopupDetails" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="140" VerticalScrollBarVisibility="Auto" Background="#FEF2F2" BorderBrush="#FECACA" FontFamily="Consolas" FontSize="10" Padding="6"/>
+        <Button Grid.Row="3" Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}" HorizontalAlignment="Right" Margin="0,8,0,0"/>
       </Grid>
     </Border>
   </Grid>
