@@ -144,9 +144,8 @@ public sealed partial class NativeInputService
 
     private bool HasVisibleTerminalRows(FlaUI.Core.AutomationElements.AutomationElement grid, CancellationToken token)
     {
-        var rows = grid.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.DataItem))
-            .Where(row => row.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
-                && row.Properties.IsEnabled.ValueOrDefault).OrderBy(row => row.BoundingRectangle.Y).ToArray();
+        var rows = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem), identity!.ProcessId, onscreen: false))
+            .OrderBy(row => row.Bounds.Y).Select(row => row.Element).ToArray();
         if (rows.Length is < 2 or > 5001) return false;
         var bounds = grid.BoundingRectangle;
         for (var index = 0; index < rows.Length; index++)
