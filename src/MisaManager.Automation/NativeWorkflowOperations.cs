@@ -391,6 +391,23 @@ public sealed partial class NativeInputService
         }
     }
 
+    /// <summary>Types the values into one bound row without a readback; the caller reconciles later.</summary>
+    public async Task<NativeFrame> SendRowValuesAsync(NativeFrame frame, NativeCell row,
+        IReadOnlyList<NativeCellWrite> writes, CancellationToken token, Action<string>? enteringColumn = null)
+    {
+        if (string.IsNullOrWhiteSpace(row.ExpectedCode) || writes.Count is < 1 or > 3
+            || writes.Select(write => write.Column).Distinct(StringComparer.Ordinal).Count() != writes.Count
+            || writes.Any(write => write.Column == row.CodeColumn || write.Text.Length > 32768 || write.Text.Any(char.IsControl)))
+            throw new ArgumentException("A row batch requires a bound item code and 1-3 distinct value columns.");
+        var sequence = WorkflowInputSequence;
+        try { return await SendRowAsync(frame, row, writes, token, enteringColumn); }
+        catch (Exception error)
+        {
+            var sent = WorkflowInputSequence != sequence || error is AutomationException { InputMayHaveBeenSent: true };
+            throw new AutomationException("ROW_INPUT_UNCERTAIN", $"Row {row.Row + 1} ({row.ExpectedCode}): {error.Message}", sent, error);
+        }
+    }
+
     public Task<NativeFields> ReadRowAsync(NativeFrame frame, NativeCell row,
         IReadOnlyList<string> columns, CancellationToken token)
         => dispatcher.RunAsync(() =>
@@ -429,8 +446,11 @@ public sealed partial class NativeInputService
                 RecordInput();
                 var cell = row with { Column = write.Column };
                 var target = ResolveCell(cell);
-                RealizeAndScroll(target);
-                target = ResolveCell(cell);
+                if (target.Properties.IsOffscreen.ValueOrDefault)
+                {
+                    RealizeAndScroll(target);
+                    target = ResolveCell(cell);
+                }
                 if (target.Properties.IsOffscreen.ValueOrDefault)
                     throw new AutomationException("GRID_OFFSCREEN", "Row cell remains offscreen after native realization.");
                 var sent = false;
@@ -457,8 +477,11 @@ public sealed partial class NativeInputService
             GuardWorkflow(frame, forInput: true);
             var requireEmptyCode = cell.Column == cell.CodeColumn && string.IsNullOrWhiteSpace(cell.ExpectedCode);
             var target = ResolveCell(cell, requireEmptyCode: requireEmptyCode);
-            RealizeAndScroll(target);
-            target = ResolveCell(cell, requireEmptyCode: requireEmptyCode);
+            if (target.Properties.IsOffscreen.ValueOrDefault)
+            {
+                RealizeAndScroll(target);
+                target = ResolveCell(cell, requireEmptyCode: requireEmptyCode);
+            }
             if (target.Properties.IsOffscreen.ValueOrDefault)
             {
                 if (!target.Patterns.ScrollItem.IsSupported)
@@ -918,6 +941,20 @@ public sealed partial class NativeInputService
 
     private void FocusTarget(AutomationElement target, bool activateGridCell = false,
         CancellationToken token = default, bool verifyFocus = true)
+    {
+        // The exact cell must own focus before input; retry the click a few times before failing.
+        for (var attempt = 1; ; attempt++)
+        {
+            try { FocusTargetOnce(target, activateGridCell, verifyFocus); return; }
+            catch (AutomationException error) when (error.Code == "FOCUS_FAILED" && attempt < 3)
+            {
+                token.ThrowIfCancellationRequested();
+                Thread.Sleep(80 * attempt);
+            }
+        }
+    }
+
+    private void FocusTargetOnce(AutomationElement target, bool activateGridCell, bool verifyFocus)
     {
         ThrowIfBlockingDialog();
         var handle = KeyboardHandle(target);

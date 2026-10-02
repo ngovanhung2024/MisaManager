@@ -337,9 +337,15 @@ public partial class MainWindow : Window
                 .ToImmutableDictionary(row => row.Key, row => row.SelectedColumn!.Value, StringComparer.Ordinal) : null;
             var imported = await importModel.ImportAsync(sheet, columnMap, work.Token);
             if (!IsCurrent(work)) return;
+            // MISA numbers vouchers in entry order, so enter oldest first: issued date, then invoice number.
+            var ordered = imported.Invoices
+                .OrderBy(invoice => invoice.Issued ?? DateOnly.MaxValue)
+                .ThenBy(invoice => long.TryParse(invoice.Identity.Number, out var number) ? number : long.MaxValue)
+                .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
+                .ToArray();
             invoices.Clear();
-            foreach (var invoice in imported.Invoices) invoices.Add(new(invoice));
-            workflow.InvoiceQueue = imported.Invoices.ToArray();
+            foreach (var invoice in ordered) invoices.Add(new(invoice));
+            workflow.InvoiceQueue = ordered;
             if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
             RefreshCatalogLabel();
             RefreshRunSummary();
