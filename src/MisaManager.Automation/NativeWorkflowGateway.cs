@@ -10,6 +10,8 @@ using MisaManager.Core;
 namespace MisaManager.Automation;
 
 public sealed record WorkflowActivity(string RunId, string Field, DateTimeOffset StartedAt);
+public sealed record WorkflowStepTiming(string RunId, string Kind, string Step, DateTimeOffset StartedAt,
+    long DurationMilliseconds, string Outcome);
 
 public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInputService input,
     WorkflowProfile profile) : IWorkflowNativeGateway
@@ -18,9 +20,73 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
     private readonly ConcurrentQueue<long> workflowSamples = new();
     private volatile WorkflowActivity? activity;
     public WorkflowActivity? Activity => activity;
-    private void Entering(string field) => activity = activity is { } current
-        ? current with { Field = field, StartedAt = DateTimeOffset.UtcNow }
-        : null;
+    // Per-run step timeline for the agent: in-memory only, no extra UIA calls.
+    private const int MaxTimelineEntries = 4000;
+    private readonly object timelineGate = new();
+    private readonly List<WorkflowStepTiming> timeline = [];
+    private string? timelineRunId;
+    private WorkflowActivity? openStep;
+    private long openStepTicks;
+
+    private void Entering(string field)
+    {
+        var current = activity;
+        if (current is null) return;
+        SetActivity(current with { Field = field, StartedAt = DateTimeOffset.UtcNow }, "ok");
+    }
+
+    private void SetActivity(WorkflowActivity? next, string closingOutcome)
+    {
+        lock (timelineGate)
+        {
+            if (openStep is { } open)
+            {
+                AddTiming(open.RunId, "step", open.Field, open.StartedAt, Elapsed(openStepTicks), closingOutcome);
+                openStep = null;
+            }
+            if (next is not null)
+            {
+                if (timelineRunId != next.RunId) { timeline.Clear(); timelineRunId = next.RunId; }
+                openStep = next;
+                openStepTicks = Stopwatch.GetTimestamp();
+            }
+            activity = next;
+        }
+    }
+
+    private void AddTiming(string runId, string kind, string step, DateTimeOffset startedAt, long elapsed, string outcome)
+    {
+        lock (timelineGate)
+        {
+            if (timelineRunId != runId) { timeline.Clear(); timelineRunId = runId; }
+            if (timeline.Count >= MaxTimelineEntries) timeline.RemoveAt(0);
+            timeline.Add(new(runId, kind, step, startedAt, elapsed, outcome));
+        }
+    }
+
+    public (string? RunId, IReadOnlyList<WorkflowStepTiming> Steps) Timeline()
+    {
+        lock (timelineGate)
+        {
+            var steps = new List<WorkflowStepTiming>(timeline);
+            if (openStep is { } open)
+                steps.Add(new(open.RunId, "step", open.Field, open.StartedAt, Elapsed(openStepTicks), "running"));
+            return (timelineRunId, steps);
+        }
+    }
+
+    // Called once when a checkpoint fails, before the runner discards the voucher
+    // and the failing dialog/focus state disappears.
+    public Func<WorkflowContext, string, Task>? FailureObserver { get; set; }
+
+    private async Task NotifyFailureAsync(WorkflowContext context, string step)
+    {
+        if (FailureObserver is not { } observer) return;
+        try { await observer(context, step); }
+        catch (Exception error) { Trace.TraceWarning("Failure UI capture failed: " + error.Message); }
+    }
+
+    private static long Elapsed(long started) => (long)(1000d * (Stopwatch.GetTimestamp() - started) / Stopwatch.Frequency);
 
     public NativeWorkflowMetrics Metrics
     {
@@ -134,7 +200,9 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         var sent = false;
         var saveSent = false;
         ReconciliationResult? comparison = null;
-        activity = new(context.Snapshot.RunId, transition.Action, DateTimeOffset.UtcNow);
+        var checkpointStartedAt = DateTimeOffset.UtcNow;
+        var checkpointFailed = false;
+        SetActivity(new(context.Snapshot.RunId, transition.Action, checkpointStartedAt), "ok");
         var inputSequence = input.WorkflowInputSequence;
         var checkpointStarted = Stopwatch.GetTimestamp();
         try
@@ -301,14 +369,24 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         }
         catch (Exception error)
         {
+            checkpointFailed = true;
             sent |= input.WorkflowInputSequence != inputSequence || error is AutomationException fault && fault.InputMayHaveBeenSent;
             var automation = error as AutomationException;
+            var failedStep = activity?.Field ?? transition.Action;
+            SetActivity(null, "failed");
+            if (error is not OperationCanceledException) await NotifyFailureAsync(context, failedStep);
             return new(false, saveSent ? WorkflowStatus.SaveUncertain : transition.To == WorkflowStatus.Saved ? WorkflowStatus.Blocked
                     : sent ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
                 "", error.Message, sent ? InputDisposition.Uncertain : InputDisposition.NotSent, sent,
                 automation?.Code ?? "WORKFLOW_ERROR", error.ToString(), comparison);
         }
-        finally { activity = null; RecordCheckpoint(transition.To.ToString(), checkpointStarted); }
+        finally
+        {
+            SetActivity(null, checkpointFailed ? "failed" : "ok");
+            AddTiming(context.Snapshot.RunId, "checkpoint", transition.Checkpoint + " -> " + transition.To, checkpointStartedAt,
+                Elapsed(checkpointStarted), checkpointFailed ? "failed" : "ok");
+            RecordCheckpoint(transition.To.ToString(), checkpointStarted);
+        }
     }
 
     private async Task<string> CreateMissingItemAndSelectAsync(WorkflowContext context, InvoiceLine line, int row,
@@ -723,13 +801,16 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
 
     public async Task<ReconciliationResult> ReconcileAsync(WorkflowContext context, CancellationToken token)
     {
-        activity = new(context.Snapshot.RunId, "reconcile", DateTimeOffset.UtcNow);
+        SetActivity(new(context.Snapshot.RunId, "reconcile", DateTimeOffset.UtcNow), "ok");
+        var failed = true;
         try
         {
             await BindEditor(context, token);
-            return await ReadReconciliationAsync(context, token);
+            var result = await ReadReconciliationAsync(context, token);
+            failed = false;
+            return result;
         }
-        finally { activity = null; }
+        finally { SetActivity(null, failed ? "failed" : "ok"); }
     }
 
     private async Task<ReconciliationResult> ReadReconciliationAsync(WorkflowContext context, CancellationToken token)

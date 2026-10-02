@@ -250,6 +250,9 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
             return connected.Data is CapabilitySnapshot capabilities
                 ? connected with { Data = capabilities with { SessionNonce = sessionNonce } } : connected;
         }
+        // Reads need no lost-response replay; skipping the fsync'd journal keeps
+        // agent polling off the disk and out of the in-memory completion cache.
+        if (!MayMutate(request.Action)) return await DispatchReadAsync(request, serverToken);
         // Transport timestamps and the app nonce change after reconnect; semantic identity does not.
         body = JsonSerializer.Serialize(new { request.ProtocolVersion,
             request.Action, request.ExpectedRevision, request.Payload }, ContractJson.Compact);
@@ -321,6 +324,30 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
             completed.TryAdd(request.IdempotencyKey, (body, uncertain));
             return uncertain;
         }
+    }
+
+    private async Task<OperationResult> DispatchReadAsync(ControlRequest request, CancellationToken serverToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
+        var remaining = request.Deadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero) deadline.Cancel(); else deadline.CancelAfter(remaining);
+        var requestKey = (request.SessionId, request.RequestId);
+        lock (cancellationGate)
+        {
+            PruneCancellations(DateTimeOffset.UtcNow);
+            if (!activeRequests.TryAdd(requestKey, deadline))
+                return new(request.RequestId, "error", "Request ID is already running in this session.");
+            if (cancelledRequests.ContainsKey(requestKey)) deadline.Cancel();
+        }
+        try
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            return await dispatcher.DispatchAsync(request, deadline.Token);
+        }
+        catch (AutomationException error) { return new(request.RequestId, "blocked", error.Message); }
+        catch (OperationCanceledException error) { return new(request.RequestId, "cancelled", error.Message); }
+        catch (Exception error) { return new(request.RequestId, "error", error.Message); }
+        finally { lock (cancellationGate) activeRequests.Remove(requestKey); }
     }
 
     public string SessionNonce => sessionNonce;

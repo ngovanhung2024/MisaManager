@@ -1,6 +1,9 @@
 project_doc_max_bytes = 65536
 project_root_markers = ['AGENTS.md', '.git', 'MisaManager.sln']
 
+# Observer mode: the bridge exposes only read-only tools (misa_wait, misa_failure,
+# misa_ui, misa_perf, misa_compare), so they are auto-approved. Add args = ['--advanced']
+# to expose the MISA-driving tools; those still prompt per call (overrides below).
 [mcp_servers.misa_manager]
 command = 'C:\Users\nngov\AppData\Local\Programs\MisaManager\bridge\MisaManager.McpBridge.exe'
 args = []
@@ -8,5 +11,27 @@ cwd = 'C:\Users\nngov\AppData\Local\Programs\MisaManager\bridge'
 enabled = true
 required = false
 startup_timeout_sec = 30
-tool_timeout_sec = 1560
-default_tools_approval_mode = 'auto'
+# misa_wait blocks up to 25 min; advanced live_run up to 30 min.
+tool_timeout_sec = 1860
+default_tools_approval_mode = 'approve'
+
+[mcp_servers.misa_manager.tools.misa_control]
+approval_mode = 'prompt'
+
+[mcp_servers.misa_manager.tools.misa_workflow]
+approval_mode = 'prompt'
+
+[mcp_servers.misa_manager.tools.misa_run_workflow]
+approval_mode = 'prompt'
+
+[mcp_servers.misa_manager.tools.misa_live_run]
+approval_mode = 'prompt'
+
+[mcp_servers.misa_manager.tools.misa_begin_repair]
+approval_mode = 'prompt'
+
+[mcp_servers.misa_manager.tools.misa_complete_repair]
+approval_mode = 'prompt'
+
+[mcp_servers.misa_manager.tools.misa_restart]
+approval_mode = 'prompt'

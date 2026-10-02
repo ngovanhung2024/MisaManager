@@ -76,6 +76,24 @@ public sealed class NativeObservationService : IAsyncDisposable
                     : "All UIA elements exposed by this scope were visited at observation time; virtualized or closed content may be absent.");
         }, token);
 
+    public Task<UiFindResult> FindAsync(nint handle, string? text, string? scopeAutomationId, string? controlType,
+        int maxResults, int maxVisited, CancellationToken token = default)
+        => dispatcher.RunAsync(() =>
+        {
+            var window = discovery.Bind(handle);
+            readback.Bind(window);
+            return readback.Find(readback.CaptureFrame(), text, scopeAutomationId, controlType, maxResults, maxVisited);
+        }, token);
+
+    public Task<UiFailureSnapshot> InspectFailureAsync(nint handle, IReadOnlyList<string> targetAutomationIds,
+        CancellationToken token = default)
+        => dispatcher.RunAsync(() =>
+        {
+            var window = discovery.Bind(handle);
+            readback.Bind(window);
+            return readback.InspectFailure(readback.CaptureFrame(), targetAutomationIds);
+        }, token);
+
     public ValueTask DisposeAsync()
     {
         if (ownsDispatcher) dispatcher.Dispose();

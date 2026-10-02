@@ -15,9 +15,18 @@ internal static class Program
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> Requests = new(StringComparer.Ordinal);
     private static readonly SemaphoreSlim Capacity = new(16, 16);
     private static bool supportsStructuredContent;
+    // Set when the running app is a different build; reads still work, mutations do not.
+    private static string? runtimeMismatch;
+    // Default surface is the five read-only agent tools; MISA-driving tools need --advanced.
+    private static bool advancedMode;
 
     private static readonly IReadOnlyDictionary<string, string> ToolActions = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["misa_wait"] = "wait_run",
+        ["misa_failure"] = "failure_report",
+        ["misa_ui"] = "ui_find",
+        ["misa_perf"] = "perf_report",
+        ["misa_compare"] = "compare_report",
         ["misa_capabilities"] = "capabilities",
         ["misa_diagnostics"] = "diagnostics",
         ["misa_live_test_state"] = "live_test_state",
@@ -76,13 +85,40 @@ internal static class Program
         ["misa_restart"] = ["misa_reload", "misa_acknowledge_restart", "misa_rebind_after_restart"]
     };
 
-    private static readonly string[] AdvertisedToolNames = ["misa_read", "misa_control", "misa_workflow",
+    private static readonly string[] AgentToolNames = ["misa_wait", "misa_failure", "misa_ui", "misa_perf", "misa_compare"];
+    private static readonly string[] AdvancedToolNames = ["misa_read", "misa_control", "misa_workflow",
         "misa_run_workflow", "misa_live_run", "misa_begin_repair", "misa_complete_repair", "misa_restart"];
+    private static string[] AdvertisedToolNames => advancedMode ? [.. AgentToolNames, .. AdvancedToolNames] : AgentToolNames;
     private static readonly Lazy<JsonElement> ToolCatalog = new(() => JsonSerializer.SerializeToElement(
-        AdvertisedToolNames.Select(name => new { name, description = DescribeTool(name), inputSchema = BuildToolSchema(name) }), ContractJson.Compact));
+        AdvertisedToolNames.Select(name => new
+        {
+            name, description = DescribeTool(name), inputSchema = BuildToolSchema(name),
+            annotations = ToolAnnotations(name)
+        }), ContractJson.Compact));
+
+    private const string ServerInstructions =
+        "MISA R20 observer. The user runs the tool by hand (open Excel, click 'Thêm vào MISA'). "
+        + "Flow: misa_wait (blocks until the run finishes) -> if failed, misa_failure (error, step, MISA dialogs and focused element captured at failure time) "
+        + "-> misa_ui only if more UI evidence is needed -> misa_compare / misa_perf on request. "
+        + "All tools are read-only and never send input to MISA. Do not poll; do not read UI while the tool is running.";
+
+    private static object ToolAnnotations(string name)
+        => AgentToolNames.Contains(name)
+            ? new { readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false }
+            : name is "misa_read"
+                ? new { readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false }
+                : new { readOnlyHint = false, destructiveHint = true, idempotentHint = false, openWorldHint = false };
 
     private static readonly IReadOnlyDictionary<string, string> ToolDescriptions = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["misa_wait"] = "Block until the current 'Thêm vào MISA' run finishes, then return a compact summary: outcome, failed step, first error line, comparison mismatches, slowest steps. "
+            + "waitForStart=true (default) also waits for the user to click the button. Status accepted = timed out, call again. Never sends input.",
+        ["misa_failure"] = "Everything needed to diagnose the last failure in one call: error code/message/stack, failed step and its last steps with timings, expected invoice values and active line, "
+            + "comparison mismatches, MISA dialogs + focused element captured AT failure time (uiAtFailure) and now (uiNow), the app's error popup, and source files to inspect. Never sends input.",
+        ["misa_ui"] = "Find MISA UI elements by text (case/diacritic-insensitive, matches Name or AutomationId), optional scopeAutomationId and controlType. "
+            + "Auto-selects the workflow's MISA window. Returns compact elements with value, state and ancestor path. Refuses while the tool is driving MISA unless force=true. Never sends input.",
+        ["misa_perf"] = "Per-step timing of the latest run: checkpoints, cost per step type (line:*:column), slowest steps, native queue p50/p95 and recent run durations. detail=true lists steps. Never sends input.",
+        ["misa_compare"] = "Reconciliation (đối chứng) result of the latest run, or by runId/invoiceNumber: outcome, matched flag and each mismatched field with expected vs actual. includeMatched=true adds matched fields.",
         ["misa_capabilities"] = "Connect to the running MisaManager app and return the current control capabilities.",
         ["misa_diagnostics"] = "Collect fresh MISA window/process observation, workflow checkpoint and queue health without input.",
         ["misa_live_test_state"] = "Poll the current workflow and fresh MISA native state without sending input.",
@@ -119,6 +155,31 @@ internal static class Program
 
     private static readonly IReadOnlyDictionary<string, object> ToolSchemas = new Dictionary<string, object>(StringComparer.Ordinal)
     {
+        ["misa_wait"] = new { type = "object", properties = new {
+            waitForStart = new { type = "boolean", description = "Wait for a run to start if none is running (default true)." },
+            timeoutSeconds = new { type = "integer", minimum = 1, maximum = ControlActions.MaxWaitSeconds, description = "Default 900." } },
+            additionalProperties = false },
+        ["misa_failure"] = new { type = "object", properties = new {
+            ui = new { type = "boolean", description = "Also read current MISA dialogs/focus (default true)." },
+            force = new { type = "boolean", description = "Read UI even while the tool is running (slows it)." } },
+            additionalProperties = false },
+        ["misa_ui"] = new { type = "object", properties = new {
+            text = new { type = "string", maxLength = 256, description = "Substring of Name or AutomationId; omit to list elements in scope." },
+            scopeAutomationId = new { type = "string", maxLength = 256 },
+            controlType = new { type = "string", description = "UIA control type, e.g. Edit, Button, Window, DataItem, Text." },
+            windowHandle = new { type = "integer", description = "Only when several MISA windows are open." },
+            maxResults = new { type = "integer", minimum = 1, maximum = 200, description = "Default 40." },
+            force = new { type = "boolean" } },
+            additionalProperties = false },
+        ["misa_perf"] = new { type = "object", properties = new {
+            detail = new { type = "boolean" },
+            history = new { type = "integer", minimum = 0, maximum = 50, description = "Recent runs to include (default 10)." } },
+            additionalProperties = false },
+        ["misa_compare"] = new { type = "object", properties = new {
+            runId = new { type = "string", maxLength = 256 },
+            invoiceNumber = new { type = "string", maxLength = 256 },
+            includeMatched = new { type = "boolean" } },
+            additionalProperties = false },
         ["misa_capabilities"] = new { type = "object", additionalProperties = false },
         ["misa_diagnostics"] = new { type = "object", additionalProperties = false },
         ["misa_live_test_state"] = new { type = "object", properties = new { windowHandle = new { type = "integer" } }, additionalProperties = false },
@@ -234,6 +295,9 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        advancedMode = args.Contains("--advanced", StringComparer.Ordinal)
+            || Environment.GetEnvironmentVariable("MISA_MCP_ADVANCED") == "1";
+        args = args.Where(arg => arg != "--advanced").ToArray();
         if (args.Length > 0)
         {
             if (args[0] == "--call")
@@ -290,7 +354,7 @@ internal static class Program
                 workbookSchemaVersion = ProductIdentity.WorkbookSchemaVersion,
                 locatorProfileVersion = ProductIdentity.LocatorProfileVersion,
                 architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
-                inputSent = false, toolCount = AdvertisedToolNames.Length, compatibilityToolCount = ToolActions.Count
+                inputSent = false, toolCount = AdvertisedToolNames.Length, compatibilityToolCount = ToolActions.Count, advancedMode
             }, ContractJson.Compact));
             return 0;
         }
@@ -379,7 +443,7 @@ internal static class Program
             var negotiated = protocol.GetString()!;
             if (negotiated is not ("2024-11-05" or "2025-03-26" or "2025-06-18")) negotiated = "2024-11-05";
             supportsStructuredContent = negotiated != "2024-11-05";
-            return JsonSerializer.Serialize(new { jsonrpc = "2.0", id = JsonId(id), result = new { protocolVersion = negotiated, capabilities = new { tools = new { listChanged = false } }, serverInfo = new { name = ProductIdentity.TechnicalName, version = typeof(Program).Assembly.GetName().Version?.ToString() } } }, ContractJson.Compact);
+            return JsonSerializer.Serialize(new { jsonrpc = "2.0", id = JsonId(id), result = new { protocolVersion = negotiated, capabilities = new { tools = new { listChanged = false } }, serverInfo = new { name = ProductIdentity.TechnicalName, version = typeof(Program).Assembly.GetName().Version?.ToString() }, instructions = ServerInstructions } }, ContractJson.Compact);
         }
         if (method == "tools/list")
         {
@@ -409,6 +473,8 @@ internal static class Program
             }
             if (!ToolActions.TryGetValue(toolName, out var action))
                 return Error(id, -32602, "Unknown or missing tool name.");
+            if (!advancedMode && ControlActions.MayMutate(action))
+                return Error(id, -32602, "This tool can drive MISA and is disabled in observer mode. Start the bridge with --advanced (or MISA_MCP_ADVANCED=1) to enable it.");
             if (arguments.ValueKind != JsonValueKind.Object
                 || (arguments.TryGetProperty("idempotencyKey", out var suppliedKey) && suppliedKey.ValueKind != JsonValueKind.String)
                 || (arguments.TryGetProperty("expectedRevision", out var suppliedRevision) && suppliedRevision.ValueKind != JsonValueKind.String))
@@ -442,6 +508,7 @@ internal static class Program
                 Requests.TryRemove(id, out _);
                 if (entered) Capacity.Release();
             }
+            if (ControlActions.IsAgentAction(action)) return AgentResult(id, response);
             var result = new Dictionary<string, object>
             {
                 ["content"] = new[] { new { type = "text", text = JsonSerializer.Serialize(response, ContractJson.Compact) } },
@@ -453,6 +520,49 @@ internal static class Program
         return Error(id, -32601, "Method not found.");
     }
 
+    // Flat, null-free text keeps agent responses small; status/message lead.
+    private static string AgentResult(string id, OperationResult response)
+    {
+        var body = new JsonObject { ["status"] = response.Status, ["message"] = response.Message };
+        if (runtimeMismatch is not null) body["warning"] = runtimeMismatch;
+        if (response.Data is not null && JsonSerializer.SerializeToNode(response.Data, ContractJson.Compact) is { } data)
+        {
+            if (data is JsonObject fields)
+                foreach (var pair in fields.ToArray()) { fields.Remove(pair.Key); body[pair.Key] = pair.Value; }
+            else body["data"] = data;
+        }
+        Prune(body);
+        var result = new
+        {
+            content = new[] { new { type = "text", text = body.ToJsonString(AgentJson) } },
+            isError = response.Status is "error" or "expired" or "cancelled" or "uncertain"
+        };
+        return JsonSerializer.Serialize(new { jsonrpc = "2.0", id = JsonId(id), result }, ContractJson.Compact);
+    }
+
+    // Vietnamese text stays readable (and cheaper in tokens) instead of \uXXXX escapes.
+    private static readonly JsonSerializerOptions AgentJson = new(ContractJson.Compact)
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    // Returns true when the node is empty after removing nulls and empty containers.
+    private static bool Prune(JsonNode? node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var pair in obj.ToArray())
+                if (pair.Value is null || Prune(pair.Value)) obj.Remove(pair.Key);
+            return obj.Count == 0;
+        }
+        if (node is JsonArray array)
+        {
+            foreach (var item in array) Prune(item);
+            return array.Count == 0;
+        }
+        return false;
+    }
+
     private static async Task<string> ForwardTypedAsync(string body)
     {
         if (!await Capacity.WaitAsync(0))
@@ -460,6 +570,8 @@ internal static class Program
         try
         {
             var request = JsonSerializer.Deserialize<ControlRequest>(body, ContractJson.Options) ?? throw new JsonException("Empty request.");
+            if (!advancedMode && ControlActions.MayMutate(request.Action))
+                return JsonSerializer.Serialize(new { status = "blocked", code = "OBSERVER_MODE", message = "Mutations require --advanced." }, ContractJson.Compact);
             return JsonSerializer.Serialize(await ForwardRequestAsync(request), ContractJson.Compact);
         }
         catch (Exception error) { return JsonSerializer.Serialize(new { status = "error", code = "BRIDGE_ERROR", message = error.Message }, ContractJson.Compact); }
@@ -477,6 +589,8 @@ internal static class Program
         if (sessionResult is not null)
             return sessionResult with { RequestId = request.RequestId };
 
+        if (runtimeMismatch is not null && ControlActions.MayMutate(request.Action))
+            return new(request.RequestId, "error", runtimeMismatch + " Mutations are blocked; reads still work.");
         var response = await SendRequestAsync(request with { SessionNonce = sessionNonce }, token);
         if (response.Status == "error" && response.Message.Contains("nonce", StringComparison.OrdinalIgnoreCase))
         {
@@ -538,11 +652,15 @@ internal static class Program
             await pipeWriter.WriteLineAsync(JsonSerializer.Serialize(request, ContractJson.Compact).AsMemory(), deadline.Token);
             var result = JsonSerializer.Deserialize<OperationResult>(await MisaManager.Control.ControlServer.ReadLineAsync(pipeReader, deadline.Token)
                 ?? throw new IOException("Control app closed the connection."), ContractJson.Options) ?? throw new JsonException("Control response is empty.");
-            if (request.Action == "capabilities")
+            if (request.Action == "capabilities" && result.Status == "completed")
             {
-                if (result.Status == "completed" && !MatchesRuntime(result.Data))
-                    return new(request.RequestId, "error", "BRIDGE_APP_IDENTITY_MISMATCH: app and bridge must have the same version, source revision, Core SHA-256, protocol and schema. Restart both from one checked release; no action was dispatched.");
+                // A reloaded app is a different build than this long-lived bridge;
+                // keep the session for reads and block only mutations.
+                runtimeMismatch = MatchesRuntime(result.Data) ? null
+                    : "BRIDGE_APP_IDENTITY_MISMATCH: app and bridge are different builds (version/source/Core SHA/protocol/schema). Restart Codex's MCP bridge from the same release.";
                 if (TryReadSessionNonce(result.Data, out var nonce)) sessionNonce = nonce;
+                if (runtimeMismatch is not null && request.SessionNonce is null && !request.RequestId.StartsWith("capabilities-", StringComparison.Ordinal))
+                    return result with { Status = "error", Message = runtimeMismatch + " No action was dispatched." };
             }
             return result;
         }
