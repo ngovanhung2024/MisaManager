@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="MISA Excel Manager" Manufacturer="MisaManager" Version="$(var.PackageVersion)"
+           UpgradeCode="A4A72B74-3D7F-4D42-A81E-3A2E69C7E5B3" Scope="perUser">
+    <SummaryInformation Description="Native MISA Excel Manager" />
+    <MajorUpgrade DowngradeErrorMessage="A newer MISA Excel Manager is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="USERPROGRAMSFOLDER" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="MisaManager">
+          <Directory Id="APPFOLDER" Name="app" />
+          <Directory Id="BRIDGEFOLDER" Name="bridge" />
+          <Directory Id="NOTICESFOLDER" Name="notices" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="MainFeature" Title="MISA Excel Manager" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="BridgeFiles" />
+      <ComponentGroupRef Id="NoticeFiles" />
+      <ComponentGroupRef Id="FolderCleanup" />
+    </Feature>
+    <ComponentGroup Id="FolderCleanup">
+      <ComponentRef Id="InstallFolderCleanup" />
+      <ComponentRef Id="AppFolderCleanup" />
+      <ComponentRef Id="BridgeFolderCleanup" />
+      <ComponentRef Id="NoticesFolderCleanup" />
+    </ComponentGroup>
+    <Component Id="InstallFolderCleanup" Directory="INSTALLFOLDER" Guid="7C0D2506-0D8A-49F5-9A54-5F9C2C3AE9D7">
+      <RegistryValue Root="HKCU" Key="Software\MisaManager\Folders" Name="Install" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <RemoveFolder Id="RemoveUserProgramsFolder" Directory="USERPROGRAMSFOLDER" On="uninstall" />
+    </Component>
+    <Component Id="AppFolderCleanup" Directory="APPFOLDER" Guid="A8A5F4D9-C9B2-4BE8-9B64-3E4D2BFC5F8A">
+      <RegistryValue Root="HKCU" Key="Software\MisaManager\Folders" Name="App" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveAppFolder" On="uninstall" />
+    </Component>
+    <Component Id="BridgeFolderCleanup" Directory="BRIDGEFOLDER" Guid="D7C7C8AF-BF9B-4D54-8F8A-98D0A0A7C76D">
+      <RegistryValue Root="HKCU" Key="Software\MisaManager\Folders" Name="Bridge" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveBridgeFolder" On="uninstall" />
+    </Component>
+    <Component Id="NoticesFolderCleanup" Directory="NOTICESFOLDER" Guid="5AEFE6D3-EA6C-41A0-86F4-4A6E6A0A9D48">
+      <RegistryValue Root="HKCU" Key="Software\MisaManager\Folders" Name="Notices" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveNoticesFolder" On="uninstall" />
+    </Component>
+    <ui:WixUI Id="WixUI_Minimal" />
+  </Package>
+</Wix>

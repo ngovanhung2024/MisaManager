@@ -1,0 +1,509 @@
+using System.ComponentModel;
+using System.Collections.ObjectModel;
+using System.Text.Json;
+using System.Text;
+using System.Windows.Input;
+using MisaManager.Automation;
+using MisaManager.Core;
+
+namespace MisaManager.App;
+
+public sealed record DeveloperDiagnostics(string Summary, string TechnicalDetails, string LiveTestingPrompt);
+
+public sealed class WorkflowViewModel : INotifyPropertyChanged
+{
+    private readonly AppServices services;
+    private string status = "Sẵn sàng. Chọn hóa đơn để tiếp tục.";
+    private bool running;
+    private bool stopRequested;
+    private DateTimeOffset? performanceStartedAt;
+    private string? performanceInvoice;
+    private string performanceCurrent = "Chưa chạy";
+    private string performanceElapsed = "0 ms";
+    private string? activeNativeTraceId;
+    private PerformanceTraceEntry? activeNativeTrace;
+    private readonly Dictionary<string, int> performanceTraceIndexes = new(StringComparer.Ordinal);
+
+    public WorkflowViewModel(AppServices services)
+    {
+        this.services = services;
+        AddCommand = new ActionCommand(async () => await RunOrPauseAsync());
+        PauseCommand = new ActionCommand(async () => await PauseAsync());
+    }
+
+    public InvoiceDocument? SelectedInvoice { get; set; }
+    public WindowIdentity? SelectedWindow { get; set; }
+    public ICommand AddCommand { get; }
+    public ICommand PauseCommand { get; }
+    public bool IsRunning => running;
+    public WorkflowContext? CurrentContext => services.Workflow.Current;
+    public string Status
+    {
+        get => status;
+        private set { status = value; PropertyChanged?.Invoke(this, new(nameof(Status))); }
+    }
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler? WorkflowChanged;
+    public event EventHandler<WorkflowErrorEventArgs>? ErrorRaised;
+
+    private void NotifyWorkflowChanged()
+    {
+        PropertyChanged?.Invoke(this, new(nameof(CurrentContext)));
+        PropertyChanged?.Invoke(this, new(nameof(CanEditSource)));
+        PropertyChanged?.Invoke(this, new(nameof(AddLabel)));
+        WorkflowChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public async Task RestoreAsync()
+    {
+        try
+        {
+            await services.Initialization;
+            await LoadHistoryAsync();
+            if (services.Workflow.Current is { } current)
+                Status = current.Snapshot.LastMessage ?? $"Đã khôi phục phiên {current.Invoice.Identity.Number}: {current.Snapshot.Status}.";
+            NotifyWorkflowChanged();
+        }
+        catch (Exception error) { Status = "Không đọc được phiên trước: " + error.Message; }
+    }
+
+    public async Task PauseAsync()
+    {
+        stopRequested = true;
+        if (services.Workflow.Current is null) return;
+        try { Status = (await services.ExecuteAsync("pause")).Message; }
+        catch (Exception error) { Status = error.Message; }
+    }
+
+    public IReadOnlyList<InvoiceDocument> InvoiceQueue { get; set; } = [];
+    public IReadOnlyList<WorkflowContext> History { get; private set; } = [];
+    public WorkflowActivity? Activity => services.Activity;
+    public ObservableCollection<PerformanceTraceEntry> PerformanceEntries { get; } = [];
+    public string PerformanceCurrent
+    {
+        get => performanceCurrent;
+        private set { if (performanceCurrent == value) return; performanceCurrent = value; PropertyChanged?.Invoke(this, new(nameof(PerformanceCurrent))); }
+    }
+    public string PerformanceElapsed
+    {
+        get => performanceElapsed;
+        private set { if (performanceElapsed == value) return; performanceElapsed = value; PropertyChanged?.Invoke(this, new(nameof(PerformanceElapsed))); }
+    }
+    public string PerformanceInvoice => performanceInvoice ?? "Chưa có hóa đơn đang chạy";
+    public bool HasPerformanceData => PerformanceEntries.Count > 0 || performanceStartedAt is not null;
+    public bool CanEditSource => !running;
+    public string AddLabel => running ? "Tạm dừng" : "Thêm vào MISA";
+
+    public void RefreshPerformance()
+    {
+        var activity = services.Activity;
+        if (activity is null)
+        {
+            if (activeNativeTraceId is not null)
+            {
+                FinishTrace(activeNativeTraceId, "Hoàn tất");
+                activeNativeTraceId = null;
+                activeNativeTrace = null;
+            }
+        }
+        else if (activeNativeTraceId != activity.RunId + ":" + activity.Field + ":" + activity.StartedAt.Ticks
+            || activeNativeTrace is null
+            || activeNativeTrace.StartedAt != activity.StartedAt)
+        {
+            if (activeNativeTraceId is not null) FinishTrace(activeNativeTraceId, "Chuyển bước");
+            activeNativeTraceId = activity.RunId + ":" + activity.Field + ":" + activity.StartedAt.Ticks;
+            activeNativeTrace = new(activity.Field, "Native/UI Automation", activity.StartedAt, null, "Đang chạy");
+            performanceTraceIndexes[activeNativeTraceId] = PerformanceEntries.Count;
+            PerformanceEntries.Add(activeNativeTrace);
+        }
+
+        if (performanceStartedAt is { } started)
+        {
+            PerformanceElapsed = FormatDuration(DateTimeOffset.UtcNow - started);
+            PerformanceCurrent = activity is null
+                ? (running ? "Đang xử lý..." : PerformanceCurrent)
+                : $"{activity.Field} · {FormatDuration(DateTimeOffset.UtcNow - activity.StartedAt)}";
+            PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
+        }
+        PropertyChanged?.Invoke(this, new(nameof(HasPerformanceData)));
+    }
+
+    public string ExportPerformance()
+    {
+        RefreshPerformance();
+        var lines = new StringBuilder()
+            .AppendLine("MISA Manager - PHÂN TÍCH HIỆU NĂNG")
+            .AppendLine($"Thời điểm xuất: {DateTimeOffset.Now:O}")
+            .AppendLine($"Hóa đơn: {PerformanceInvoice}")
+            .AppendLine($"Trạng thái: {Status}")
+            .AppendLine($"Đang chạy: {PerformanceCurrent}")
+            .AppendLine($"Tổng thời gian phiên: {PerformanceElapsed}")
+            .AppendLine()
+            .AppendLine("CÁC BƯỚC")
+            .AppendLine("Tên | Trạng thái | Thời lượng | Bắt đầu | Chi tiết")
+            .AppendLine(new string('-', 100));
+        foreach (var entry in PerformanceEntries)
+            lines.AppendLine($"{entry.Name} | {entry.Status} | {entry.DurationDisplay} | {entry.StartedDisplay} | {entry.Details}{(string.IsNullOrWhiteSpace(entry.Error) ? "" : " | " + entry.Error)}");
+        lines.AppendLine().AppendLine("HƯỚNG DẪN CHO CHATGPT");
+        lines.AppendLine("Hãy xác định 3 bước tốn thời gian nhất, phân biệt chờ MISA/UI Automation với xử lý nội bộ, và đề xuất cách đo hoặc tối ưu tiếp theo. Không giả định thành công nếu có bước lỗi.");
+        return lines.ToString();
+    }
+
+    public string ExportLastError(string message, string details, DateTimeOffset occurredAt)
+        => new StringBuilder()
+            .AppendLine("MISA Manager - LỖI KHI THÊM VÀO MISA")
+            .AppendLine($"Thời điểm: {occurredAt:O}")
+            .AppendLine($"Hóa đơn: {PerformanceInvoice}")
+            .AppendLine($"Lỗi: {message}")
+            .AppendLine()
+            .AppendLine("CHI TIẾT")
+            .AppendLine(details)
+            .AppendLine()
+            .AppendLine("HIỆU NĂNG ĐẾN THỜI ĐIỂM LỖI")
+            .AppendLine(ExportPerformance())
+            .ToString();
+
+    public async Task LoadHistoryAsync()
+    {
+        History = await services.Workflow.ReadHistoryAsync();
+        NotifyWorkflowChanged();
+    }
+
+    public async Task<int> DeleteAllProfileHistoryAsync()
+    {
+        var deleted = await services.Workflow.DeleteAllProfileHistoryAsync();
+        await LoadHistoryAsync();
+        return deleted;
+    }
+
+    public void ClearPerformance() => ResetPerformance();
+
+    private async Task RunOrPauseAsync()
+    {
+        if (running) { await PauseAsync(); return; }
+        if (SelectedInvoice is not { } selected) { Status = "Chọn một hóa đơn trước khi thêm vào MISA."; return; }
+        running = true;
+        stopRequested = false;
+        ResetPerformance();
+        performanceStartedAt = DateTimeOffset.UtcNow;
+        performanceInvoice = selected.Identity.Number;
+        PerformanceCurrent = "Chuẩn bị phiên";
+        var wholeRun = BeginTrace("Toàn bộ function Thêm vào MISA", selected.Identity.Number);
+        var performanceOutcome = "Hoàn tất";
+        NotifyWorkflowChanged();
+        try
+        {
+            var initialize = BeginTrace("Khởi tạo phiên", "Đọc state và lịch sử workflow");
+            await services.Initialization;
+            await LoadHistoryAsync();
+            FinishTrace(initialize, "Hoàn tất");
+            var offset = InvoiceQueue.ToList().FindIndex(invoice => invoice.Fingerprint == selected.Fingerprint);
+            var queue = offset < 0 ? new[] { selected } : InvoiceQueue.Skip(offset).ToArray();
+            foreach (var invoice in queue)
+            {
+                if (stopRequested) break;
+                if (History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
+                    && run.Snapshot.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded))
+                    continue;
+                if (invoice.IsBlocked)
+                { Status = $"Hóa đơn {invoice.Identity.Number} còn lỗi nguồn; cần bổ sung dữ liệu."; break; }
+                SelectedInvoice = invoice;
+                PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
+                performanceInvoice = invoice.Identity.Number;
+                PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
+                var findWindow = BeginTrace("Tìm cửa sổ MISA", "Xác định đúng PID/HWND phiên MISA");
+                var identity = await ResolveWindowIdentityAsync();
+                FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
+                if (identity is null) break;
+                Status = $"Đang chạy live toàn trình hóa đơn {invoice.Identity.Number}. Nhấn Esc để tạm dừng.";
+                PerformanceCurrent = "live_run · đang chạy";
+                var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
+                var response = await services.ExecuteAsync("live_run", new
+                {
+                    invoice,
+                    windowIdentity = identity,
+                    executionMode = "live_production",
+                    liveValidation = true,
+                    allowKgToTon = true
+                });
+                FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
+                Status = response.Message;
+                NotifyWorkflowChanged();
+                if (response.Status != "completed")
+                {
+                    performanceOutcome = response.Status;
+                    RaiseError(response.Message, Serialize(response.Data));
+                }
+                // A completed save or verified discard advances the queue. Any
+                // error stops here so repair can rebuild and rerun from Ready.
+                if (response.Status != "completed") break;
+                await LoadHistoryAsync();
+                var final = services.Workflow.Current?.Snapshot.Status;
+                if (stopRequested || final is not (WorkflowStatus.Saved or WorkflowStatus.Discarded)) break;
+            }
+        }
+        catch (Exception error)
+        {
+            Status = error.Message;
+            performanceOutcome = "Lỗi";
+            RaiseError(error.Message, error.ToString());
+            FinishActiveTrace("Lỗi", error.Message);
+        }
+        finally
+        {
+            if (stopRequested && performanceOutcome == "Hoàn tất") performanceOutcome = "Đã dừng";
+            FinishActiveTrace(performanceOutcome);
+            FinishAllRunning(performanceOutcome);
+            FinishTrace(wholeRun, performanceOutcome);
+            running = false;
+            PerformanceCurrent = "Đã kết thúc";
+            NotifyWorkflowChanged();
+        }
+    }
+
+    private void ResetPerformance()
+    {
+        PerformanceEntries.Clear();
+        performanceTraceIndexes.Clear();
+        activeNativeTraceId = null;
+        activeNativeTrace = null;
+        performanceStartedAt = null;
+        performanceInvoice = null;
+        PerformanceElapsed = "0 ms";
+        PerformanceCurrent = "Chưa chạy";
+        PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
+        PropertyChanged?.Invoke(this, new(nameof(HasPerformanceData)));
+    }
+
+    private string BeginTrace(string name, string details)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        performanceTraceIndexes[id] = PerformanceEntries.Count;
+        PerformanceEntries.Add(new(name, details, DateTimeOffset.UtcNow, null, "Đang chạy"));
+        return id;
+    }
+
+    private void FinishTrace(string id, string status, string? error = null)
+    {
+        if (!performanceTraceIndexes.TryGetValue(id, out var index) || index >= PerformanceEntries.Count) return;
+        var entry = PerformanceEntries[index];
+        if (entry.CompletedAt is not null) return;
+        PerformanceEntries[index] = entry with { CompletedAt = DateTimeOffset.UtcNow, Status = status, Error = error };
+        performanceTraceIndexes.Remove(id);
+    }
+
+    private void FinishActiveTrace(string status, string? error = null)
+    {
+        if (activeNativeTraceId is not null) FinishTrace(activeNativeTraceId, status, error);
+        activeNativeTraceId = null;
+        activeNativeTrace = null;
+        if (performanceStartedAt is { } started) PerformanceElapsed = FormatDuration(DateTimeOffset.UtcNow - started);
+    }
+
+    private void FinishAllRunning(string status, string? error = null)
+    {
+        foreach (var id in performanceTraceIndexes.Keys.ToArray()) FinishTrace(id, status, error);
+    }
+
+    private void RaiseError(string message, string details)
+        => ErrorRaised?.Invoke(this, new(message, details, DateTimeOffset.Now));
+
+    private static string Serialize(object? value)
+        => value is null ? "Không có thêm dữ liệu." : JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true });
+
+    private static string FormatDuration(TimeSpan duration)
+        => duration.TotalSeconds < 1 ? $"{duration.TotalMilliseconds:N0} ms" : duration.ToString(@"mm\:ss\.fff");
+
+    private async Task<string?> ResolveWindowIdentityAsync()
+    {
+        var windows = await services.Native.FindCandidatesAsync();
+        if (SelectedWindow is null && windows.Count != 1)
+        {
+            Status = "Chuột phải Thêm vào MISA để chọn đúng phiên đang mở.";
+            return null;
+        }
+        if (stopRequested) return null;
+        var window = SelectedWindow is null ? windows[0] : windows.SingleOrDefault(item => item.WindowHandle == SelectedWindow.WindowHandle
+            && item.ProcessId == SelectedWindow.ProcessId && item.ProcessStartUtc == SelectedWindow.ProcessStartUtc);
+        if (window is null)
+        {
+            Status = "Phiên MISA đã thay đổi; chọn lại cửa sổ.";
+            return null;
+        }
+        return $"pid={window.ProcessId};start={window.ProcessStartUtc:O};hwnd={window.WindowHandle};exe={window.ExecutablePath}";
+    }
+
+    public async Task<OperationResult> ReconcileAsync()
+    {
+        if (SelectedInvoice is not { } invoice || services.Workflow.Current?.Invoice.Fingerprint != invoice.Fingerprint)
+            return new("ui", "blocked", "Chọn hóa đơn đang gắn với chứng từ MISA để đối chiếu.");
+        var owned = !running;
+        if (owned) { running = true; NotifyWorkflowChanged(); }
+        try
+        {
+            var result = await services.ExecuteAsync("reconcile", expectedRevision: invoice.Fingerprint);
+            Status = result.Message;
+            NotifyWorkflowChanged();
+            return result;
+        }
+        finally { if (owned) { running = false; NotifyWorkflowChanged(); } }
+    }
+
+    public async Task FinishAsync(bool save)
+    {
+        if (running) { Status = "Tạm dừng workflow trước khi Cất/Bỏ."; return; }
+        var current = services.Workflow.Current;
+        if (current is null) { Status = "Chưa có chứng từ được gắn với workflow."; return; }
+        running = true;
+        NotifyWorkflowChanged();
+        try
+        {
+            Status = (await services.ExecuteAsync(save ? "save" : "discard", new { confirmed = true }, current.Invoice.Fingerprint)).Message;
+            NotifyWorkflowChanged();
+        }
+        catch (Exception error) { Status = error.Message; }
+        finally { running = false; NotifyWorkflowChanged(); }
+    }
+
+    public Task<IReadOnlyList<WindowIdentity>> WindowsAsync() => services.Native.FindCandidatesAsync();
+
+    /// <summary>
+    /// Read the current sales scope without sending input. The UI uses this
+    /// only to close the comparison surface when MISA closes the sales tab.
+    /// </summary>
+    public async Task<(bool IsOpen, WindowIdentity? Window)> ObserveSalesSurfaceAsync(CancellationToken token = default)
+    {
+        var window = SelectedWindow ?? ResolveWindow(services.Workflow.Current?.Snapshot.WindowIdentity);
+        if (window is null) return (false, null);
+        try
+        {
+            var observation = await services.Native.ObserveAsync(window.WindowHandle, null, token,
+                services.WorkflowProfile.SalesScopeId);
+            return (services.MisaProfile.IsSalesSurface(observation.Elements), observation.Frame.Window);
+        }
+        catch (Exception error) when (error is AutomationException or ArgumentException
+            or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return (false, null);
+        }
+    }
+
+    private static WindowIdentity? ResolveWindow(string? identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity)) return null;
+        try
+        {
+            var values = identity.Split(';')
+                .Select(part => part.Split('=', 2))
+                .Where(part => part.Length == 2)
+                .ToDictionary(part => part[0], part => part[1], StringComparer.Ordinal);
+            return new WindowIdentity(
+                int.Parse(values["pid"], System.Globalization.CultureInfo.InvariantCulture),
+                DateTimeOffset.Parse(values["start"], System.Globalization.CultureInfo.InvariantCulture).UtcDateTime,
+                (nint)long.Parse(values["hwnd"], System.Globalization.CultureInfo.InvariantCulture),
+                values["exe"], "", 96, new Bounds(0, 0, 0, 0), "unknown");
+        }
+        catch (Exception error) when (error is FormatException or KeyNotFoundException or OverflowException)
+        {
+            return null;
+        }
+    }
+
+    public void SelectWindow(WindowIdentity window) => SelectedWindow = window;
+
+    public async Task<DeveloperDiagnostics> DiagnosticsAsync()
+    {
+        var native = await services.Native.DiagnosticsAsync();
+        var current = services.Workflow.Current;
+        var data = new
+        {
+            product = ProductIdentity.DisplayName,
+            runtime = new RuntimeStateIdentity(ProductIdentity.RuntimeVersion, ProductIdentity.SourceRevision, services.WorkflowProfile.Revision),
+            profile = new { services.MisaProfile.Id, services.MisaProfile.Revision, services.MisaProfile.Status, capability = services.MisaProfile.Capability },
+            native,
+            workflow = current?.Snapshot
+        };
+        var summary = new StringBuilder()
+            .AppendLine($"Thời điểm đọc: {native.ObservedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss}")
+            .AppendLine($"Ứng dụng: {ProductIdentity.DisplayName} {ProductIdentity.RuntimeVersion}")
+            .AppendLine($"Hồ sơ MISA: {services.MisaProfile.Id} ({services.MisaProfile.Status})")
+            .AppendLine($"Nguồn đọc: {native.ReadbackBackend}")
+            .AppendLine($"Phiên MISA tìm thấy: {native.Candidates.Count}");
+
+        foreach (var window in native.Candidates)
+            summary.AppendLine($"  PID {window.ProcessId} | {window.Title} | DPI {window.Dpi}");
+
+        summary.AppendLine($"Cửa sổ đọc được: {native.Observations.Count}/{native.Candidates.Count}")
+            .AppendLine($"Thành phần đọc được: {native.Observations.Sum(item => item.Elements.Count)}")
+            .AppendLine($"Hàng đợi native: {native.Queue.QueueLength}/{native.Queue.QueueCapacity}")
+            .AppendLine($"Lần đọc native: {native.Queue.LastMilliseconds} ms")
+            .AppendLine($"Workflow: {(current is null ? "chưa có phiên" : $"{current.Invoice.Identity.Number} - {current.Snapshot.Status}")}");
+
+        if (native.Candidates.Count == 0)
+            summary.AppendLine("Chưa tìm thấy cửa sổ MISA. Hãy mở MISA rồi xem lại chẩn đoán.");
+        foreach (var skipped in native.Skipped ?? [])
+            summary.AppendLine($"Không đọc được cửa sổ: {skipped}");
+
+        var technicalDetails = System.Text.Json.JsonSerializer.Serialize(data, ContractJson.Options);
+        var run = current?.Snapshot;
+        var repairable = run is not null && run.Status is WorkflowStatus.Blocked or WorkflowStatus.InputUncertain
+            or WorkflowStatus.SaveUncertain or WorkflowStatus.Failed;
+        var incident = repairable ? run!.RunId : "<no repairable incident bound>";
+        var prompt = new StringBuilder()
+            .AppendLine("You are the live testing and repair agent for the current MISA Excel Manager session.")
+            .AppendLine("Use the connected MISA MCP tools to inspect and operate the CURRENT desktop session. Do not invent UI values and do not rely on screenshots, saved logs, or old incidents when a fresh native read is available.")
+            .AppendLine()
+            .AppendLine("CURRENT SESSION EVIDENCE (captured by Developer mode just now)")
+            .AppendLine($"- App: {ProductIdentity.DisplayName} {ProductIdentity.RuntimeVersion}")
+            .AppendLine($"- Source revision: {ProductIdentity.SourceRevision}")
+            .AppendLine($"- Workflow profile: {services.WorkflowProfile.Revision} ({services.WorkflowProfile.Status})")
+            .AppendLine($"- MISA profile: {services.MisaProfile.Id} {services.MisaProfile.Revision} ({services.MisaProfile.Status})")
+            .AppendLine($"- Candidate windows: {native.Candidates.Count}; readable observations: {native.Observations.Count}")
+            .AppendLine($"- Current run/incident id: {incident}")
+            .AppendLine($"- Current workflow: {(run is null ? "none" : $"{run.Status}; mode={services.Workflow.Current?.ExecutionMode}; invoice={run.InvoiceId}; revision={run.InvoiceRevision}; updated={run.UpdatedAt:O}")}")
+            .AppendLine()
+            .AppendLine("TECHNICAL DIAGNOSTICS JSON")
+            .AppendLine("```json")
+            .AppendLine(technicalDetails)
+            .AppendLine("```")
+            .AppendLine()
+            .AppendLine("OPERATING RULES")
+            .AppendLine(repairable
+                ? $"1. The first MCP call must be misa_begin_repair with incident_id={incident} and source_root=C:\\misa. Use its repair packet and fresh native observation; do not call separate state tools unless a concrete conflict requires it."
+                : "1. Start with misa_read action=live_test_state for the current workflow, or action=diagnostics if no workflow is selected. The bridge handshakes automatically. Use the fresh native observation in that response; request another scoped read only when evidence is missing or conflicting.")
+            .AppendLine("2. This is a live TEST repair session. If you need to exercise an invoice, call misa_live_run with executionMode=live_test; it must always Bỏ the test voucher and never write accounting data. Never use live_production from this developer prompt.")
+            .AppendLine("3. Never claim success from a click, keystroke, or screenshot alone. A live-run error is terminal for that attempt; capture the repair incident and never replay the failed checkpoint.")
+            .AppendLine("4. Keep the test bound to the current MISA window identity, workbook/invoice revision, and runtime/source revision. Do not reuse another run or historical incident.")
+            .AppendLine("5. misa_live_run owns the save/discard decision: only a full fresh reconciliation can authorize Cất, and any mismatch is Bỏ. Preserve SaveUncertain/InputUncertain states.")
+            .AppendLine()
+            .AppendLine("LIVE BUG FIX WORKFLOW")
+            .AppendLine($"- If the current workflow is blocked/uncertain/failed, first call misa_begin_repair with incident_id={incident} and source_root=C:\\misa. Do not invent an incident id; if none is available, report that source repair cannot be bound yet.")
+            .AppendLine("- Inspect the failing checkpoint, last action/readback, and the routed source branch. Make the smallest source fix that explains the actual value, expected value, and failure condition.")
+            .AppendLine("- Run source-only syntax/hash/package/build checks required by the project. Do not use Python hot reload or create tests/fixtures/scripts for this repair.")
+            .AppendLine("- Call misa_complete_repair with the real release directory, root cause, affected callers, and message. Call misa_reload with release_directory set to that same checked release, wait for the candidate to return, then call misa_acknowledge_restart with the same incident/session and fresh MISA window identity.")
+            .AppendLine("- Call misa_rebind_after_restart with expectedStatus=Failed, restartFromBeginning=true, the required incident, and a fresh window identity. This submits the same invoice to misa_live_run from Ready; never resume the failed checkpoint.")
+            .AppendLine("- If the new live run fails again, repeat the same repair cycle. If it is SaveUncertain, stop and prove the native save result before any retry.")
+            .AppendLine("- Report changed files, root cause, affected callers, source revision, checks, live verification result, and any uncertain destination/readback.")
+            .AppendLine()
+            .AppendLine("The embedded diagnostics are a launch-time snapshot, not a fresh observation at tool-call time. Begin with the required MCP call and report its fresh observation or explicit failure. Do not ask me to paste a screenshot when a native observation can answer the question.")
+            .ToString();
+
+        return new(summary.ToString(), technicalDetails, prompt);
+    }
+
+    public async Task RecoverAsync(WorkflowStatus expectedStatus)
+    {
+        var current = services.Workflow.Current;
+        if (current is null || SelectedWindow is null) { Status = "Chọn phiên MISA mới trước khi khôi phục."; return; }
+        var window = SelectedWindow;
+        var identity = $"pid={window.ProcessId};start={window.ProcessStartUtc:O};hwnd={window.WindowHandle};exe={window.ExecutablePath}";
+        Status = (await services.ExecuteAsync("recover", new { windowIdentity = identity, expectedStatus }, current.Invoice.Fingerprint)).Message;
+    }
+
+    private sealed class ActionCommand(Func<Task> action) : ICommand
+    {
+        public bool CanExecute(object? parameter) => true;
+        public async void Execute(object? parameter) => await action();
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
+    }
+}

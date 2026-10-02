@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>MisaManager.Core</AssemblyName>
+    <RootNamespace>MisaManager.Core</RootNamespace>
+  </PropertyGroup>
+</Project>

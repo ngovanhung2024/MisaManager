@@ -1,0 +1,75 @@
+<Window x:Class="MisaManager.App.ComparisonWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Bang doi chieu" Width="420" MinWidth="340" MinHeight="520"
+        ShowInTaskbar="False" ShowActivated="False" Topmost="True"
+        WindowStartupLocation="Manual" WindowStyle="SingleBorderWindow"
+        ResizeMode="CanMinimize" Background="#FAFBFA" FontFamily="Segoe UI"
+        FontSize="12" Foreground="#263630" UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+  <Grid Margin="8,6,8,5">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+    <TextBlock x:Name="TitleLabel" FontSize="14" FontWeight="SemiBold"
+               TextWrapping="Wrap" Margin="0,0,0,3"/>
+    <TextBlock x:Name="SummaryLabel" Grid.Row="1" Foreground="#65776D"
+               TextWrapping="Wrap" Margin="0,0,0,7"/>
+    <UniformGrid Grid.Row="2" Columns="2" Margin="8,0,8,5">
+      <TextBlock Text="NGUON EXCEL" FontSize="9" Foreground="#87948B"/>
+      <TextBlock Text="MISA" FontSize="9" Foreground="#87948B"/>
+    </UniformGrid>
+    <ListView x:Name="ComparisonList" Grid.Row="3" Background="White"
+              BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+      <ListView.ItemContainerStyle>
+        <Style TargetType="ListViewItem">
+          <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+          <Setter Property="Padding" Value="0"/>
+          <Setter Property="Focusable" Value="False"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ListViewItem">
+                <ContentPresenter/>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+      </ListView.ItemContainerStyle>
+      <ListView.ItemTemplate>
+        <DataTemplate>
+          <Border x:Name="RowBorder" Padding="6,4" BorderThickness="0,0,0,1"
+                  BorderBrush="#E8EDE9" Background="White" ToolTip="{Binding Evidence}">
+            <StackPanel>
+              <DockPanel>
+                <TextBlock x:Name="ResultMark" DockPanel.Dock="Right"
+                           Text="{Binding ResultLabel}" Foreground="#19705B"
+                           FontSize="10" Margin="8,0,0,0"/>
+                <TextBlock Text="{Binding Label}" FontWeight="SemiBold"
+                           TextWrapping="Wrap" FontSize="11"/>
+              </DockPanel>
+              <Grid Margin="0,2,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding ExpectedValue}" TextWrapping="Wrap"
+                           Margin="0,0,8,0"/>
+                <TextBlock Grid.Column="1" Text="{Binding ActualValue}"
+                           TextWrapping="Wrap"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+          <DataTemplate.Triggers>
+            <DataTrigger Binding="{Binding Matched}" Value="False">
+              <Setter TargetName="RowBorder" Property="Background" Value="#FFF4EF"/>
+              <Setter TargetName="ResultMark" Property="Foreground" Value="#B55737"/>
+            </DataTrigger>
+          </DataTemplate.Triggers>
+        </DataTemplate>
+      </ListView.ItemTemplate>
+    </ListView>
+  </Grid>
+</Window>

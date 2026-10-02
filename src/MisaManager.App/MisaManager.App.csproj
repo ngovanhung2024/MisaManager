@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>MisaManager.App</AssemblyName>
+    <RootNamespace>MisaManager.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <StartupObject>MisaManager.App.Program</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../MisaManager.Core/MisaManager.Core.csproj" />
+    <ProjectReference Include="../MisaManager.Import/MisaManager.Import.csproj" />
+    <ProjectReference Include="../MisaManager.Automation/MisaManager.Automation.csproj" />
+    <ProjectReference Include="../MisaManager.Control/MisaManager.Control.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../profiles/*.json" Link="profiles/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

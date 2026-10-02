@@ -1,59 +1,12 @@
 project_doc_max_bytes = 65536
-project_root_markers = ['AGENTS.md', '.git', 'MisaAutomation.sln']
+project_root_markers = ['AGENTS.md', '.git', 'MisaManager.sln']
 
-[mcp_servers.misa_incidents]
-command = 'C:\misa\.venv\Scripts\python.exe'
-args = ['C:\misa\incident_mcp.py']
-cwd = 'C:\misa'
+[mcp_servers.misa_manager]
+command = 'C:\Users\nngov\AppData\Local\Programs\MisaManager\bridge\MisaManager.McpBridge.exe'
+args = []
+cwd = 'C:\Users\nngov\AppData\Local\Programs\MisaManager\bridge'
 enabled = true
 required = false
 startup_timeout_sec = 30
-enabled_tools = ['launch_live_test', 'claim_live_test', 'get_live_test_state', 'start_live_test', 'stop_live_test',
-  'submit_live_test_handoff', 'inspect_live_misa', 'list_incidents', 'read_incident_file', 'get_current_misa_state',
-  'begin_repair', 'complete_repair']
-# Repair protocol tools remain available for an explicitly initiated incident.
+tool_timeout_sec = 1560
 default_tools_approval_mode = 'auto'
-
-[mcp_servers.misa_incidents.tools.list_incidents]
-output_token_limit = 2000
-
-[mcp_servers.misa_incidents.tools.read_incident_file]
-output_token_limit = 5000
-
-[mcp_servers.misa_incidents.tools.get_current_misa_state]
-output_token_limit = 6000
-
-[mcp_servers.misa_incidents.tools.claim_live_test]
-approval_mode = 'approve'
-output_token_limit = 8000
-
-[mcp_servers.misa_incidents.tools.launch_live_test]
-approval_mode = 'approve'
-output_token_limit = 3000
-
-[mcp_servers.misa_incidents.tools.get_live_test_state]
-output_token_limit = 8000
-
-[mcp_servers.misa_incidents.tools.inspect_live_misa]
-output_token_limit = 20000
-
-[mcp_servers.misa_incidents.tools.start_live_test]
-approval_mode = 'approve'
-output_token_limit = 2000
-
-[mcp_servers.misa_incidents.tools.stop_live_test]
-approval_mode = 'approve'
-output_token_limit = 2000
-
-[mcp_servers.misa_incidents.tools.submit_live_test_handoff]
-approval_mode = 'approve'
-output_token_limit = 4000
-
-
-[mcp_servers.misa_incidents.tools.begin_repair]
-approval_mode = 'approve'
-output_token_limit = 8000
-
-[mcp_servers.misa_incidents.tools.complete_repair]
-approval_mode = 'approve'
-output_token_limit = 4000

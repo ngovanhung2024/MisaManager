@@ -2,6 +2,10 @@
 models/
 training/
 out/
+cleanup/
+installer/artifacts/
+installer/bin/
+installer/obj/
 *.xlsx
 *.xls
 *.csv

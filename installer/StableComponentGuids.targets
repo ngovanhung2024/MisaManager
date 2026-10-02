@@ -1,0 +1,48 @@
+<Project>
+  <!-- WiX cannot auto-generate GUIDs for file components with HKCU keypaths.
+       Derive their identity from the stable registry key, never the build folder. -->
+  <UsingTask TaskName="MisaStableComponentGuids" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Sources ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Xml" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Using Namespace="System.Text" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        foreach (var source in Sources)
+        {
+            var document = new XmlDocument { XmlResolver = null };
+            document.Load(source.ItemSpec);
+            var namespaces = new XmlNamespaceManager(document.NameTable);
+            namespaces.AddNamespace("w", "http://wixtoolset.org/schemas/v4/wxs");
+            var changed = false;
+            foreach (XmlElement component in document.SelectNodes("//w:Component[@Guid='*'][w:File]", namespaces))
+            {
+                var key = component.SelectSingleNode("w:RegistryValue[@KeyPath='yes']", namespaces) as XmlElement;
+                if (key == null || key.GetAttribute("Root") != "HKCU")
+                {
+                    Log.LogError("Harvested component {0} has no HKCU keypath.", component.GetAttribute("Id"));
+                    return false;
+                }
+                var identity = "MisaManager.perUser.x64|" + key.GetAttribute("Key") + "|" + key.GetAttribute("Name");
+                byte[] digest;
+                using (var hash = SHA256.Create()) digest = hash.ComputeHash(Encoding.UTF8.GetBytes(identity.ToLowerInvariant()));
+                var bytes = new byte[16];
+                Array.Copy(digest, bytes, bytes.Length);
+                bytes[7] = (byte)((bytes[7] & 0x0f) | 0x80);
+                bytes[8] = (byte)((bytes[8] & 0x3f) | 0x80);
+                component.SetAttribute("Guid", new Guid(bytes).ToString("D"));
+                changed = true;
+            }
+            if (changed) document.Save(source.ItemSpec);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="StabilizeHarvestedComponentGuids" AfterTargets="HarvestDirectory">
+    <MisaStableComponentGuids Sources="@(HarvestDirectory->'$(IntermediateOutputPath)_%(ComponentGroupName)_dir.wxs')" />
+  </Target>
+</Project>
