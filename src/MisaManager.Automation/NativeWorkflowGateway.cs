@@ -210,8 +210,8 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             {
                 if (transition.To is WorkflowStatus.Saved or WorkflowStatus.Discarded)
                 {
-                    if (transition.To == WorkflowStatus.Saved) await VerifySavedAndCloseEditor(context, token);
-                    else await VerifyFinished(context, false, token);
+                    if (transition.To == WorkflowStatus.Saved) await VerifySavedAndCloseEditor(context, token, afterSave: false);
+                    else await WaitEditor(context, false, token);
                     var finishedFrame = Frame(await input.CaptureAsync(token));
                     sent = input.WorkflowInputSequence != inputSequence;
                     return new(true, transition.To, finishedFrame, "Rebound by native readback; no input replayed.",
@@ -242,37 +242,21 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             {
                 if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                     throw new AutomationException("EXISTING_EDITOR", "Đang có editor chưa gắn với run; không nhận chứng từ đang mở làm chứng từ mới.");
+                // The sales list is not read: already-saved invoices are skipped from history.
                 var sales = await BindSales(context, token);
-                // R20 virtualizes horizontally hidden columns (including the
-                // subtotal) with zero-sized headers. Duplicate detection only
-                // needs the visible invoice number, so do not require hidden
-                // columns at this checkpoint.
-                var table = await input.ReadTableAsync(sales, profile.SalesGridId,
-                    SalesBaselineColumns(), token);
-                if (table.Rows.Any(row => Match(context.Invoice.Identity.Number, row[profile.SalesColumns["number"]], NativeValueKind.Exact)))
-                    throw new AutomationException("POSSIBLE_DUPLICATE", "Số hóa đơn đã có trong bảng MISA; cần đối chiếu trước khi nhập.");
-                await progress(new("sales_baseline", TableHash(table), Frame(table.Frame)), token);
-                await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.OpenVoucher, token);
+                await input.InvokeWorkflowAsync(sales, profile.OpenVoucher, token);
                 sent = true;
                 await WaitEditor(context, true, token);
                 await Tab(profile.ReceiptTab, token);
                 var voucher = await Field("voucher_number", await input.CaptureAsync(token), token);
                 if (string.IsNullOrWhiteSpace(voucher.Value)) throw new AutomationException("VOUCHER_ID_MISSING", "Chưa đọc được số chứng từ mới.", true);
                 await progress(new("voucher_number", voucher.Value!, Frame(voucher.Frame)), token);
-                await Tab(profile.ItemTab, token);
-                var grid = await input.ReadTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
-                    [profile.Columns["code"], profile.Columns["name"]], token);
-                if (grid.Rows.Any(row => row.Values.Any(value => !string.IsNullOrWhiteSpace(value))))
-                    throw new AutomationException("VOUCHER_NOT_EMPTY", "Editor mới có dòng hàng; giữ nguyên để kiểm tra.", true);
             }
             else
             {
-                var frame = await BindEditor(context, token);
-                // Full reconciliation reads voucher_number on the receipt tab
-                // itself. Avoid a duplicate identity traversal immediately
-                // before those expensive table reads.
-                if (transition.To is not (WorkflowStatus.TotalsVerified or WorkflowStatus.Saved))
-                    await VerifyVoucherIdentity(context, frame, token);
+                // Entry steps skip readbacks the final reconciliation repeats (voucher number,
+                // dates, invoice fields, line values). Recovery still verifies via ObserveAsync.
+                await BindEditor(context, token);
                 switch (transition.To)
                 {
                     case WorkflowStatus.CustomerVerified:
@@ -289,24 +273,14 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         await Tab(profile.ReceiptTab, token);
                         await WriteDate("posted_date", context.Invoice.PostedDate!.Value, token); sent = true;
                         await WriteDate("voucher_date", context.Invoice.VoucherDate!.Value, token);
-                        await RequireFields(token,
-                            ("voucher_date", context.Invoice.VoucherDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
-                            ("posted_date", context.Invoice.PostedDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date));
                         await Tab(profile.InvoiceTab, token);
                         await WriteDate("issued_date", context.Invoice.Issued!.Value, token);
-                        await Require("issued_date", context.Invoice.Issued!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date, token);
                         break;
                     case WorkflowStatus.InvoiceVerified:
                         await Tab(profile.InvoiceTab, token);
                         await Write("number", context.Invoice.Identity.Number, context.Invoice.Identity.Number, NativeValueKind.Exact, "Tab", token); sent = true;
                         if (context.Invoice.Identity.Series.Length > 0)
                             await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token);
-                        else
-                        {
-                            var series = await Field("series", await input.CaptureAsync(token), token);
-                            await progress(new("series", series.Value ?? "", Frame(series.Frame)), token);
-                        }
-                        await VerifyInvoice(context, token);
                         break;
                     case WorkflowStatus.ItemsVerified:
                         await EnterLines(context, progress, token);
@@ -317,8 +291,9 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         if (!reconciliation.Matched) throw new AutomationException("RECONCILIATION_FAILED", "Đối chiếu dòng/tổng chưa khớp nguồn.");
                         break;
                     case WorkflowStatus.AwaitingSave:
-                        // TotalsVerified already reconciled every row; Save reuses it unless values were input since.
-                        await VerifyTotals(context, token);
+                        // TotalsVerified already read every field and total; reuse it unless values were input since.
+                        var settled = await ReadReconciliationAsync(context, token, reuseMatched: true);
+                        if (!settled.Matched) throw new AutomationException("RECONCILIATION_FAILED", "Đối chiếu dòng/tổng chưa khớp nguồn.");
                         break;
                     case WorkflowStatus.Saved:
                         var beforeSave = await ReadReconciliationAsync(context, token, reuseMatched: true);
@@ -331,7 +306,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         catch (AutomationException error) { saveSent = error.InputMayHaveBeenSent; throw; }
                         finally { saveSent |= input.WorkflowInputSequence != beforeSaveInput; }
                         sent = true;
-                        await VerifySavedAndCloseEditor(context, token);
+                        await VerifySavedAndCloseEditor(context, token, afterSave: true);
                         break;
                     case WorkflowStatus.Discarded:
                         if (context.Snapshot.Status == WorkflowStatus.SaveUncertain)
@@ -349,11 +324,9 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                             await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
                             await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), profile.SaveVoucher, true, token);
                         }
-                        if (context.NativeValues?.ContainsKey("sales_baseline") != true)
-                            throw new AutomationException("DISCARD_BASELINE_MISSING", "Thiếu baseline trước khi mở chứng từ.");
                         await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token,
                             leavesScope: true, discardChanges: true); sent = true;
-                        await VerifyFinished(context, false, token);
+                        await WaitEditor(context, false, token);
                         break;
                     default: throw new AutomationException("TRANSITION_INVALID", "Checkpoint không thuộc profile R20.");
                 }
@@ -443,10 +416,10 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
     /// Types the exact code into the empty "Mã hàng" cell and presses Enter, which picks the first
     /// dropdown row. The readback inside WriteCellAsync proves that row is this exact code.
     /// </summary>
-    private async Task SelectItemCodeAsync(int row, string code, CancellationToken token)
+    private async Task SelectItemCodeAsync(int row, string code, bool afterCreate, CancellationToken token)
     {
         var cell = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], "");
-        var current = (await input.ReadCellAsync(await input.CaptureAsync(token), cell, token)).Value?.Trim() ?? "";
+        var current = afterCreate ? (await input.ReadCellAsync(await input.CaptureAsync(token), cell, token)).Value?.Trim() ?? "" : "";
         if (current.Length > 0)
         {
             // MISA can fill the row itself after creating an item from the cell.
@@ -496,10 +469,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             }
             else
             {
-                if (code.Length == 0)
+                var created = code.Length == 0;
+                if (created)
                     code = await CreateMissingItemAsync(context, line, row, codeCell, token);
                 Entering("line:" + line.LineId + ":code");
-                await SelectItemCodeAsync(row, code, token);
+                await SelectItemCodeAsync(row, code, created, token);
             }
             var boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
             var metadata = await NativeWait.UntilAsync(async () => await input.ReadRowAsync(
@@ -543,54 +517,29 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 new NativeCellWrite(profile.Columns["quantity"], expected.Quantity.ToString(Culture)),
                 new NativeCellWrite(profile.Columns["amount"], line.AmountBeforeTax!.Value.ToString(Culture))
             };
-            var rowValues = await input.WriteRowAsync(await input.CaptureAsync(token),
+            var sentFrame = await input.SendRowValuesAsync(await input.CaptureAsync(token),
                 new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code),
-                writes,
-                [profile.Columns["name"], profile.Columns["debit_account"], profile.Columns["unit"],
-                    profile.Columns["quantity"], profile.Columns["amount"], profile.Columns["unit_price"]],
-                actual =>
-                {
-                    var values = actual.Values;
-                    var account = values.GetValueOrDefault(profile.Columns["debit_account"])?.Value;
-                    var unit = values.GetValueOrDefault(profile.Columns["unit"])?.Value;
-                    var unitPrice = values.GetValueOrDefault(profile.Columns["unit_price"])?.Value;
-                    return values.TryGetValue(profile.Columns["code"], out var nativeCode)
-                        && Match(code, nativeCode.Value, NativeValueKind.Exact)
-                        && CatalogNameMatch(line.Name, values.GetValueOrDefault(profile.Columns["name"])?.Value)
-                        && Match(expectedAccount, account, NativeValueKind.Exact)
-                        && Match(expected.Unit, unit, NativeValueKind.Text)
-                        && Match(Decimal(expected.Quantity), values.GetValueOrDefault(profile.Columns["quantity"])?.Value, NativeValueKind.Decimal)
-                        && Match(Decimal(line.AmountBeforeTax), values.GetValueOrDefault(profile.Columns["amount"])?.Value, NativeValueKind.Decimal)
-                        && NativeComparison.MatchesDerivedUnitPrice(expected.Quantity, line.AmountBeforeTax!.Value, unitPrice, Culture);
-                }, token, column => Entering("line:" + line.LineId + ":"
+                writes, token, column => Entering("line:" + line.LineId + ":"
                     + profile.Columns.Single(pair => pair.Value == column).Key));
-            var unitPrice = rowValues.Values[profile.Columns["unit_price"]];
-            var accountValue = rowValues.Values[profile.Columns["debit_account"]].Value;
-            var unitValue = rowValues.Values[profile.Columns["unit"]].Value;
-            if (string.IsNullOrWhiteSpace(accountValue) || !accountValue.All(char.IsDigit))
-                throw new AutomationException("ACCOUNT_READBACK_INVALID", $"Dòng {row + 1}, TK tiền/chi phí không phải mã tài khoản: {accountValue}");
-            if (!Match(expected.Unit, unitValue, NativeValueKind.Text))
-                throw new AutomationException("ITEM_UNIT_MISMATCH",
-                    $"Dòng {row + 1}: mã hàng '{code}' có ĐVT native '{unitValue}', khác ĐVT nguồn '{line.Unit}'. "
-                    + "Cần sửa mã/ĐVT nguồn hoặc xác nhận ánh xạ; không tự đổi ĐVT.", true);
-            var derived = new Dictionary<string, string>
-            {
-                ["account:" + line.LineId] = expectedAccount,
-                ["price:" + line.LineId] = unitPrice.Value!
-            };
             codes.Add(code);
-            await progress(new("line:" + line.LineId, code, Frame(rowValues.Frame), row, derived), token);
+            await progress(new("line:" + line.LineId, code, Frame(sentFrame), row,
+                new Dictionary<string, string> { ["account:" + line.LineId] = expectedAccount }), token);
         }
-        await Tab(profile.TaxTab, token);
+        var taxFrame = await Tab(profile.TaxTab, token);
+        // Items usually carry their VAT rate already; one grid read avoids a write per line.
+        var taxGrid = await input.ReadTableAsync(taxFrame, profile.ItemGridId,
+            [profile.Columns["code"], profile.Columns["tax_rate"]], token);
         for (var row = 0; row < context.Invoice.Lines.Length; row++)
         {
             var line = context.Invoice.Lines[row];
-            var code = codes[row];
             var tax = line.TaxRate.TrimEnd('%').Trim();
+            var nativeRate = row < taxGrid.Rows.Count ? taxGrid.Rows[row].GetValueOrDefault(profile.Columns["tax_rate"]) : null;
+            if (row < taxGrid.Rows.Count && Match(codes[row], taxGrid.Rows[row].GetValueOrDefault(profile.Columns["code"]), NativeValueKind.Exact)
+                && Match(tax, nativeRate, NativeValueKind.TaxRate))
+                continue;
             Entering("line:" + line.LineId + ":tax_rate");
-            await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, code, "tax_rate"), tax, tax,
+            await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"), tax, tax,
                 NativeValueKind.TaxRate, profile.Culture, token);
-            await RequireCell(row, code, "tax_amount", Decimal(line.TaxAmount), NativeValueKind.Decimal, token);
         }
     }
 
@@ -643,21 +592,8 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             }
             return actual.Frame;
         }
-        await CompareFields(profile.ReceiptTab,
-            [("voucher_number", Saved(context, "voucher_number"), NativeValueKind.Exact),
-            .. CustomerFields(context),
-            ("voucher_date", context.Invoice.VoucherDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
-            ("posted_date", context.Invoice.PostedDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date)]);
-        await CompareFields(profile.InvoiceTab,
-            ("number", context.Invoice.Identity.Number, NativeValueKind.Exact),
-            ("series", context.Invoice.Identity.Series.Length > 0 ? context.Invoice.Identity.Series : Saved(context, "series"), NativeValueKind.Exact),
-            ("issued_date", context.Invoice.Issued!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
-            ("payment", context.Invoice.PaymentMethod, NativeValueKind.Text));
-        // BindEditor/ValidateDocument require the exact domestic cash editor.
-        // R20 has no currency control on this VND-only surface.
-        values.Add(new("currency", context.Invoice.Currency, "VND",
-            context.Invoice.Currency == "VND", "R20.DomesticCashEditor:implicit_currency"));
-        foreach (var taxTab in new[] { false, true })
+        // Tab order: tax grid (selected after entry) → item grid + totals → receipt → invoice.
+        foreach (var taxTab in new[] { true, false })
         {
             var tabFrame = await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
@@ -688,14 +624,20 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                     : new[] { ("code", code, NativeValueKind.Exact), ("name", line.Name, NativeValueKind.Text), ("unit", expectedLine.Unit, NativeValueKind.Text),
                         ("debit_account", context.NativeValues?.GetValueOrDefault("account:" + line.LineId) ?? "<missing verified account>", NativeValueKind.Exact),
                         ("quantity", Decimal(expectedLine.Quantity), NativeValueKind.Decimal), ("amount", Decimal(line.AmountBeforeTax), NativeValueKind.Decimal),
-                        ("unit_price", Saved(context, "price:" + line.LineId), NativeValueKind.Exact) };
+                        ("unit_price", Decimal(decimal.Round(line.AmountBeforeTax!.Value / expectedLine.Quantity, 2, MidpointRounding.AwayFromZero)), NativeValueKind.Decimal) };
                 foreach (var (key, wanted, kind) in expected)
                 {
                     var actual = native.Row?.GetValueOrDefault(profile.Columns[key]);
                     var source = native.Row is not null && native.Index < table.Sources.Count
                         ? table.Sources[native.Index].GetValueOrDefault(profile.Columns[key]) ?? "UIA3.GridPattern"
                         : "UIA3.GridPattern:missing_row";
-                    var matched = key == "name" ? CatalogNameMatch(wanted, actual) : Match(wanted, actual, kind);
+                    var matched = key switch
+                    {
+                        "name" => CatalogNameMatch(wanted, actual),
+                        // MISA derives the price from amount / quantity at its own display scale.
+                        "unit_price" => NativeComparison.MatchesDerivedUnitPrice(expectedLine.Quantity, line.AmountBeforeTax!.Value, actual, Culture),
+                        _ => Match(wanted, actual, kind)
+                    };
                     values.Add(new($"line:{line.LineId}:{key}", wanted, actual, matched, source));
                 }
             }
@@ -715,28 +657,56 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 || !string.IsNullOrWhiteSpace(row[profile.Columns["name"]]));
             values.Add(new(taxTab ? "tax_row_count" : "item_row_count", context.Invoice.Lines.Length.ToString(CultureInfo.InvariantCulture),
                 count.ToString(CultureInfo.InvariantCulture), count == context.Invoice.Lines.Length, "UIA3.GridPattern"));
+            if (!taxTab)
+            {
+                // Totals sit below the grid; read them while the item tab is still selected.
+                var totals = await input.ReadFieldsAsync(await input.CaptureAsync(token),
+                    new[] { "subtotal", "tax_total", "grand_total" }.ToDictionary(key => key, key => profile.Fields[key]), token);
+                foreach (var (key, wanted) in new[] { ("subtotal", context.Invoice.Subtotal), ("tax_total", context.Invoice.TaxTotal),
+                    ("grand_total", context.Invoice.GrandTotal) })
+                {
+                    var read = totals.Values[key];
+                    values.Add(new(key, Decimal(wanted), read.Value, Match(Decimal(wanted), read.Value, NativeValueKind.Decimal), read.Source));
+                }
+            }
         }
-        await CompareFields(profile.ItemTab,
-            ("subtotal", Decimal(context.Invoice.Subtotal), NativeValueKind.Decimal),
-            ("tax_total", Decimal(context.Invoice.TaxTotal), NativeValueKind.Decimal),
-            ("grand_total", Decimal(context.Invoice.GrandTotal), NativeValueKind.Decimal));
+        await CompareFields(profile.ReceiptTab,
+            [("voucher_number", Saved(context, "voucher_number"), NativeValueKind.Exact),
+            .. CustomerFields(context),
+            ("voucher_date", context.Invoice.VoucherDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
+            ("posted_date", context.Invoice.PostedDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date)]);
+        var invoiceFields = new List<(string Key, string Expected, NativeValueKind Kind)>
+        {
+            ("number", context.Invoice.Identity.Number, NativeValueKind.Exact),
+            ("issued_date", context.Invoice.Issued!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
+            ("payment", context.Invoice.PaymentMethod, NativeValueKind.Text)
+        };
+        // An empty source series keeps MISA's default series; there is nothing to compare.
+        if (context.Invoice.Identity.Series.Length > 0)
+            invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
+        await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
+        // BindEditor/ValidateDocument require the exact domestic cash editor.
+        // R20 has no currency control on this VND-only surface.
+        values.Add(new("currency", context.Invoice.Currency, "VND",
+            context.Invoice.Currency == "VND", "R20.DomesticCashEditor:implicit_currency"));
         return new(context.Invoice.InvoiceId, context.Invoice.Revision, DateTimeOffset.UtcNow, values, context.Invoice.Source.Sha256);
     }
 
     private async Task VerifyFinished(WorkflowContext context, bool save, CancellationToken token)
     {
         // Saving R20 can leave the voucher editor open in a read-only,
-        // saved-invoice state with the Save command disabled. The sales
-        // register readback below is authoritative for the save result, so do
-        // not require the editor to close before checking it. Discard still
-        // requires the editor to disappear.
+        // saved-invoice state with the Save command disabled. This recovery-only
+        // path reads the sales register as save proof; discard needs only the
+        // editor to disappear.
         if (!save)
+        {
             await WaitEditor(context, false, token);
+            return;
+        }
         var frame = await BindSales(context, token);
         bool MatchesResult(NativeTable table)
         {
             frame = table.Frame;
-            if (!save) return TableHash(table) == Saved(context, "sales_baseline");
             var vouchers = table.Rows.Where(row => Match(Saved(context, "voucher_number"),
                 row[profile.SalesColumns["voucher_number"]], NativeValueKind.Exact)).ToArray();
             if (vouchers.Length > 1) throw new AutomationException("SAVE_AMBIGUOUS", "Có nhiều dòng cùng số chứng từ; không Cất lại.");
@@ -747,12 +717,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         }
         var proof = await NativeWait.UntilAsync(async () => await input.ReadTableAsync(
             await input.CaptureAsync(token), profile.SalesGridId,
-            save ? SalesFinishedColumns() : SalesBaselineColumns(), token), MatchesResult,
-            save ? "SAVE_UNCERTAIN" : "DISCARD_UNCERTAIN", "Danh sách MISA chưa xác nhận kết quả Cất/Bỏ; không gửi lại thao tác.", token,
-            timeoutMilliseconds: save ? 15000 : 10000, returnLastMismatch: true);
+            SalesFinishedColumns(), token), MatchesResult,
+            "SAVE_UNCERTAIN", "Danh sách MISA chưa xác nhận kết quả Cất; không gửi lại thao tác.", token,
+            timeoutMilliseconds: 15000, returnLastMismatch: true);
         if (!MatchesResult(proof))
         {
-            if (!save) throw new AutomationException("DISCARD_UNCERTAIN", "Native sales baseline has not been restored.");
             var candidates = proof.Rows.Where(row =>
                 Match(Saved(context, "voucher_number"), row[profile.SalesColumns["voucher_number"]], NativeValueKind.Exact)
                 || Match(context.Invoice.Identity.Number, row[profile.SalesColumns["number"]], NativeValueKind.Exact)).Take(3);
@@ -764,16 +733,16 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         }
     }
 
-    private async Task VerifySavedAndCloseEditor(WorkflowContext context, CancellationToken token)
+    private async Task VerifySavedAndCloseEditor(WorkflowContext context, CancellationToken token, bool afterSave)
     {
-        var preservedTax = await input.TryPreserveSourceTaxAsync(BindTarget(context, activate: false), profile.EditorId, null,
+        var window = BindTarget(context, activate: false);
+        var preservedTax = afterSave && await input.TryPreserveSourceTaxAsync(window, profile.EditorId, null,
             profile.Fields["voucher_number"], Saved(context, "voucher_number"), context.Invoice.TaxTotal!.Value,
             context.Invoice.Lines.Length, token);
-        await VerifyFinished(context, true, token);
-        var window = BindTarget(context, activate: false);
+        // R20 closes the editor itself only after a successful Save; an unsaved editor never closes silently.
         if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return;
         var savedEditor = await BindEditor(context, token);
-        await VerifyVoucherIdentity(context, savedEditor, token);
+        if (!afterSave) await VerifyVoucherIdentity(context, savedEditor, token);
         if (preservedTax)
         {
             await Tab(profile.ItemTab, token);
@@ -782,10 +751,15 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 ("tax_total", Decimal(context.Invoice.TaxTotal), NativeValueKind.Decimal),
                 ("grand_total", Decimal(context.Invoice.GrandTotal), NativeValueKind.Decimal));
         }
-        await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token);
+        // Saved proof without reading the sales list: the voucher turns read-only (Cất disabled).
+        await NativeWait.UntilAsync(async () =>
+            {
+                try { await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token); return true; }
+                catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
+            }, disabled => disabled, "SAVE_UNCERTAIN",
+            "Nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
         await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token, leavesScope: true);
         await WaitEditor(context, false, token);
-        await VerifyFinished(context, true, token);
     }
 
     private (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context)
@@ -837,14 +811,6 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
     {
         await input.SelectTabAsync(frame, profile.ReceiptTab, token);
         await Require("voucher_number", Saved(context, "voucher_number"), NativeValueKind.Exact, token);
-    }
-    private async Task VerifyTotals(WorkflowContext context, CancellationToken token)
-    {
-        await Tab(profile.ItemTab, token);
-        await RequireFields(token,
-            ("subtotal", Decimal(context.Invoice.Subtotal), NativeValueKind.Decimal),
-            ("tax_total", Decimal(context.Invoice.TaxTotal), NativeValueKind.Decimal),
-            ("grand_total", Decimal(context.Invoice.GrandTotal), NativeValueKind.Decimal));
     }
     private async Task<NativeFrame> BindEditor(WorkflowContext context, CancellationToken token)
     {
@@ -945,7 +911,6 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
     private static string Saved(WorkflowContext context, string key) => context.NativeValues?.GetValueOrDefault(key)
         ?? throw new AutomationException("CHECKPOINT_PROOF_MISSING", "Checkpoint thiếu native proof " + key);
     private static string Frame(NativeFrame frame) => JsonSerializer.Serialize(frame, ContractJson.Compact);
-    private IReadOnlyList<string> SalesBaselineColumns() => [profile.SalesColumns["number"]];
     private IReadOnlyList<string> SalesFinishedColumns() => [profile.SalesColumns["voucher_number"], profile.SalesColumns["number"],
         profile.SalesColumns["customer"], profile.SalesColumns["voucher_date"]];
     private static string TableHash(NativeTable table) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(table.Rows, ContractJson.Compact))));

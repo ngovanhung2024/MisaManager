@@ -304,7 +304,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 if (!proof.Confirmed) throw new InvalidOperationException("Cannot prepare the next invoice: " + proof.Message);
                 previous = Replace(candidate, WorkflowStatus.Saved, proof.NativeFrame, message: proof.Message);
                 lock (gate) context = previous;
-                await PersistAsync(previous, CancellationToken.None);
             }
             lock (gate)
             {
@@ -591,25 +590,30 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 if (current.Snapshot.Status is WorkflowStatus.Paused or WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain)
                     throw new InvalidOperationException("Workflow đang dừng ở trạng thái cần xử lý; không tự replay input.");
                 var transition = policy.Next(current.Snapshot.Status);
-                if (await FileDigest.Sha256Async(current.Invoice.Source.FilePath, token) != current.Invoice.Source.Sha256)
+                // Hash the workbook once per run; FinishAsync checks it again before Save.
+                if (current.Snapshot.Status == WorkflowStatus.Ready
+                    && await FileDigest.Sha256Async(current.Invoice.Source.FilePath, token) != current.Invoice.Source.Sha256)
                     throw new InvalidDataException("Workbook đã thay đổi; nhập lại dữ liệu trước khi tiếp tục.");
                 var mayInput = transition.Action is "open_voucher" or "select_customer" or "set_dates" or "set_invoice" or "set_items";
+                // Disk checkpoints only where a crash changes what is safe to do next: before a voucher
+                // exists, once it exists, and before/after Save. Other steps stay in memory.
+                var durable = transition.Action == "open_voucher" || transition.To is WorkflowStatus.VoucherCreated or WorkflowStatus.AwaitingSave;
                 if (mayInput)
                 {
                     current = current with { Snapshot = current.Snapshot with { InputPending = true, PendingAction = transition.Action } };
                     lock (gate) context = current;
-                    await PersistAsync(current, CancellationToken.None);
+                    if (durable) await PersistAsync(current, CancellationToken.None);
                 }
                 WorkflowObservation observation;
                 try
                 {
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
                     deadline.CancelAfter(transition.Timeout);
-                    observation = await native.ExecuteAsync(current, transition, async (progress, _) =>
+                    observation = await native.ExecuteAsync(current, transition, (progress, _) =>
                     {
                         current = ApplyProgress(current, progress);
                         lock (gate) context = current;
-                        await PersistAsync(current, CancellationToken.None);
+                        return Task.CompletedTask;
                     }, deadline.Token);
                 }
                 catch (AutomationException error)
@@ -650,7 +654,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     LastInputDisposition = observation.InputDisposition
                 } };
                 lock (gate) context = next;
-                await PersistAsync(next, CancellationToken.None);
+                if (durable) await PersistAsync(next, CancellationToken.None);
                 return next;
             }
             finally
@@ -850,11 +854,11 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             WorkflowObservation observation;
             try
             {
-                observation = await native.ExecuteAsync(current, transition, async (progress, _) =>
+                observation = await native.ExecuteAsync(current, transition, (progress, _) =>
                 {
                     current = ApplyProgress(current, progress);
                     lock (gate) context = current;
-                    await PersistAsync(current, CancellationToken.None);
+                    return Task.CompletedTask;
                 }, deadline.Token);
             }
             catch (Exception error)
