@@ -338,8 +338,9 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         {
             var dayFirst = DateOnly.TryParseExact(raw, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dayDate);
             var monthFirst = DateOnly.TryParseExact(raw, "MM/dd/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var monthDate);
-            if (dayFirst && (!monthFirst || dayDate == monthDate)) return dayDate;
-            if (monthFirst && !dayFirst) return monthDate;
+            // Vietnamese workbooks write dd/MM/yyyy; 05/10/2026 is 5 October.
+            if (dayFirst) return dayDate;
+            if (monthFirst) return monthDate;
         }
         if (cell.CellType == "number" && DecimalValue.TryParseInvariant(raw, out var serial) && serial == decimal.Truncate(serial)
             && serial >= (date1904 ? 0 : 1) && (date1904 || serial != 60))
@@ -368,6 +369,10 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             else if (locale == "vi-VN") raw = raw.Replace(".", "", StringComparison.Ordinal).Replace(',', '.');
             else if (locale == "en-US") raw = raw.Replace(",", "", StringComparison.Ordinal);
         }
+        // Excel stores computed values as doubles (e.g. 3333.3333333333335); keep 6 decimals instead of rejecting them.
+        if (cell.CellType == "number" && raw.Replace(".", "", StringComparison.Ordinal).TrimStart('-', '0').Length > 15
+            && decimal.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var wide))
+            raw = decimal.Round(wide, 6, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture);
         if (cell.CellType is "number" or "text" && DecimalValue.TryParseInvariant(raw, out var result)
             && (cell.CellType != "number" || raw.Replace(".", "", StringComparison.Ordinal).TrimStart('-', '0').Length <= 15)) return result;
         issues.Add(new("NUMBER_INVALID", IssueSeverity.Blocking, $"Giá trị số '{cell.RawValue}' không hợp lệ.", cell.Worksheet, cell.Address,

@@ -78,6 +78,9 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
     // Called once when a checkpoint fails, before the runner discards the voucher
     // and the failing dialog/focus state disappears.
     public Func<WorkflowContext, string, Task>? FailureObserver { get; set; }
+    /// <summary>Name → item-code database; required when a source line has no item code.</summary>
+    public ItemCatalogStore? ItemCatalog { get; set; }
+    private (string RunId, string Fingerprint, long ValueInputs, DateTimeOffset At, ReconciliationResult Result)? lastReconciliation;
 
     private async Task NotifyFailureAsync(WorkflowContext context, string step)
     {
@@ -160,12 +163,6 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             }
             else
             {
-                if (status == WorkflowStatus.InvoiceVerified)
-                {
-                    await input.BindAsync(BindTarget(context, activate: false), token);
-                    if (await input.TryCloseItemCatalogAsync(token))
-                        await WaitEditor(context, visible: true, token);
-                }
                 var frame = await BindEditor(context, token);
                 await VerifyVoucherIdentity(context, frame, token);
                 if (status == WorkflowStatus.VoucherCreated)
@@ -320,11 +317,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         if (!reconciliation.Matched) throw new AutomationException("RECONCILIATION_FAILED", "Đối chiếu dòng/tổng chưa khớp nguồn.");
                         break;
                     case WorkflowStatus.AwaitingSave:
-                        // TotalsVerified already reconciled every row. Save performs a new full reconciliation.
+                        // TotalsVerified already reconciled every row; Save reuses it unless values were input since.
                         await VerifyTotals(context, token);
                         break;
                     case WorkflowStatus.Saved:
-                        var beforeSave = await ReadReconciliationAsync(context, token);
+                        var beforeSave = await ReadReconciliationAsync(context, token, reuseMatched: true);
                         comparison = beforeSave;
                         if (!beforeSave.Matched) throw new AutomationException("RECONCILIATION_FAILED", "Chứng từ đã đổi; không Cất.");
                         Entering("save");
@@ -389,19 +386,21 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         }
     }
 
-    private async Task<string> CreateMissingItemAndSelectAsync(WorkflowContext context, InvoiceLine line, int row,
+    private ItemCatalogStore RequireCatalog()
+        => ItemCatalog is { Count: > 0 } catalog ? catalog
+            : throw new AutomationException("ITEM_CATALOG_MISSING", "Chưa nạp database mã hàng. Bấm 'Mã hàng' và chọn file danh mục vật tư, hàng hóa.");
+
+    private async Task<string> CreateMissingItemAsync(WorkflowContext context, InvoiceLine line, int row,
         NativeCell codeCell, CancellationToken token)
     {
         if (profile.ItemNewCode is null || profile.ItemNewName is null || profile.ItemNewUnit is null
             || profile.ItemNewStock is null || profile.ItemNewTaxRate is null || profile.ItemNewSave is null)
             throw new AutomationException("ITEM_MAPPING_REQUIRED", "Profile chưa khai báo native create-item capability.");
-
-        await input.CloseItemCatalogAsync(await input.CaptureAsync(token), token);
-        await WaitEditor(context, visible: true, token);
-        await Tab(profile.ItemTab, token);
+        var catalog = RequireCatalog();
+        var code = catalog.NextCode();
+        Entering("line:" + line.LineId + ":new_item");
         await input.OpenNewItemAsync(await input.CaptureAsync(token), codeCell, token);
         var newItem = await input.BindNewItemAsync(token);
-        var code = CreateGeneratedItemCode(line);
         await input.WriteFieldAsync(newItem, profile.ItemNewCode, code, code, NativeValueKind.Exact,
             profile.Culture, "Tab", token, verifyAfterWrite: false);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewName,
@@ -430,57 +429,33 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 && Match(line.Unit, values.Values["unit"].Value, NativeValueKind.Text)
                 && Match("KHH", values.Values["stock"].Value, NativeValueKind.Exact)
                 && Match(line.TaxRate, values.Values["tax"].Value, NativeValueKind.TaxRate),
-            "ITEM_CREATE_READBACK_FAILED", $"Row {row + 1}: new-item fields do not match before native save.", token);
+            "ITEM_CREATE_READBACK_FAILED", $"Dòng {row + 1}: thông tin mã hàng mới chưa khớp trước khi Cất.", token);
         await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.ItemNewSave, token,
             leavesScope: true);
         await WaitEditor(context, visible: true, token);
+        // Record the code as soon as MISA closed the dialog so a rerun never creates it twice.
+        catalog.Add(new ItemCatalogEntry(code, line.Name, line.Unit));
         await Tab(profile.ItemTab, token);
-
-        // Reopen the catalog after creation. The newly created row must still
-        // pass the same exact-name/exact-unit/unique-candidate/readback gates.
-        await input.OpenItemCatalogAsync(await input.CaptureAsync(token), codeCell, token);
-        var catalog = await input.BindItemCatalogAsync(token);
-        await input.WriteFieldAsync(catalog, new("4", ControlType: "ComboBox"),
-            line.Name, line.Name, NativeValueKind.Text, profile.Culture, "Enter", token,
-            allowUnverifiedFocus: true, verifyAfterWrite: false);
-        var columns = new[] { profile.Columns["code"], profile.Columns["name"], profile.Columns["unit"] };
-        string? previous = null;
-        var candidates = await NativeWait.UntilAsync(async () =>
-                await input.ReadCatalogTableAsync(await input.CaptureAsync(token), "grdData", columns, token),
-            table =>
-            {
-                var fingerprint = TableHash(table);
-                var settled = previous == fingerprint;
-                previous = fingerprint;
-                return settled;
-            }, "ITEM_CREATE_READBACK_FAILED", $"Row {row + 1}: created item did not appear in native catalog.", token, timeoutMilliseconds: 30000);
-        var matches = candidates.Rows.Where(candidate =>
-                !string.IsNullOrWhiteSpace(candidate.GetValueOrDefault(profile.Columns["code"]))
-                && CatalogNameMatch(line.Name, candidate.GetValueOrDefault(profile.Columns["name"]) ?? "")
-                && Match(line.Unit, candidate.GetValueOrDefault(profile.Columns["unit"]) ?? "", NativeValueKind.Text))
-            .ToArray();
-        if (matches.Length != 1)
-            throw new AutomationException(matches.Length == 0 ? "ITEM_CREATE_READBACK_FAILED" : "ITEM_AMBIGUOUS",
-                $"Row {row + 1}: native catalog returned {matches.Length} created-item matches for '{line.Name}' / '{line.Unit}'.");
-        var nativeCode = matches[0][profile.Columns["code"]].Trim();
-        if (!Match(code, nativeCode, NativeValueKind.Exact))
-            throw new AutomationException("ITEM_CREATE_READBACK_FAILED",
-                $"Row {row + 1}: native catalog code '{nativeCode}' differs from generated code '{code}'.");
-        await input.SelectItemCatalogRowAsync(await input.CaptureAsync(token),
-            Array.FindIndex(candidates.Rows.ToArray(), candidate =>
-                string.Equals(candidate.GetValueOrDefault(profile.Columns["code"])?.Trim(), nativeCode,
-                    StringComparison.Ordinal)), nativeCode, token);
-        await input.InvokeAsync(await input.CaptureAsync(token), "btnOK", "", token);
-        await WaitEditor(context, visible: true, token);
-        await Tab(profile.ItemTab, token);
-        await RequireCell(row, nativeCode, "code", nativeCode, NativeValueKind.Exact, token);
-        return nativeCode;
+        return code;
     }
 
-    private static string CreateGeneratedItemCode(InvoiceLine line)
+    /// <summary>
+    /// Types the exact code into the empty "Mã hàng" cell and presses Enter, which picks the first
+    /// dropdown row. The readback inside WriteCellAsync proves that row is this exact code.
+    /// </summary>
+    private async Task SelectItemCodeAsync(int row, string code, CancellationToken token)
     {
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(line.Name + "|" + line.Unit)))[..10];
-        return "FU_" + digest;
+        var cell = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], "");
+        var current = (await input.ReadCellAsync(await input.CaptureAsync(token), cell, token)).Value?.Trim() ?? "";
+        if (current.Length > 0)
+        {
+            // MISA can fill the row itself after creating an item from the cell.
+            if (Match(code, current, NativeValueKind.Exact)) return;
+            throw new AutomationException("GRID_ROW_CHANGED",
+                $"Dòng {row + 1}: ô Mã hàng đang là '{current}', khác mã '{code}'; không ghi đè.", true);
+        }
+        await input.WriteCellAsync(await input.CaptureAsync(token), cell, code, code, NativeValueKind.Exact,
+            profile.Culture, token, commitKey: "Enter");
     }
 
     private (string Unit, decimal Quantity, decimal Price) ExpectedLine(WorkflowContext context, InvoiceLine line)
@@ -508,195 +483,23 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             if (code.Length == 0)
                 code = context.NativeValues?.GetValueOrDefault("line:" + line.LineId)?.Trim() ?? "";
             var codeCell = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], "");
-            var existingCode = await NativeWait.UntilAsync(async () => await input.ReadCellAsync(
+            var existingCode = (await NativeWait.UntilAsync(async () => await input.ReadCellAsync(
                 await input.CaptureAsync(token), codeCell, token, waitForCode: false),
-                read => read.Value is not null, "GRID_ROW_NOT_READY", $"Row {row + 1} is not ready.", token);
-            var catalogSelected = false;
-            if (string.IsNullOrWhiteSpace(line.ItemCode) && code.Length == 0
-                && !string.IsNullOrWhiteSpace(existingCode.Value))
+                read => read.Value is not null, "GRID_ROW_NOT_READY", $"Row {row + 1} is not ready.", token)).Value!.Trim();
+            if (code.Length == 0)
+                code = RequireCatalog().Find(line.Name, line.Unit)?.Code ?? "";
+            if (existingCode.Length > 0)
             {
-                var existingName = await Cell(row, existingCode.Value.Trim(), "name", token);
-                if (CatalogNameMatch(line.Name, existingName.Value))
-                    code = existingCode.Value.Trim();
+                if (!Match(code, existingCode, NativeValueKind.Exact))
+                    throw new AutomationException("GRID_ROW_CHANGED",
+                        $"Row {row + 1}: native code '{existingCode}' differs from source code '{code}'; refusing to overwrite.", true);
             }
-            if (!string.IsNullOrWhiteSpace(existingCode.Value)
-                && !Match(code, existingCode.Value, NativeValueKind.Exact))
-                throw new AutomationException("GRID_ROW_CHANGED",
-                    $"Row {row + 1}: native code '{existingCode.Value}' differs from source code '{code}'; refusing to overwrite.", true);
-            if (string.IsNullOrWhiteSpace(existingCode.Value))
+            else
             {
                 if (code.Length == 0)
-                {
-                    await input.OpenItemCatalogAsync(await input.CaptureAsync(token), codeCell, token);
-                    var catalog = await input.BindItemCatalogAsync(token);
-                    await input.WriteFieldAsync(catalog, new("4", ControlType: "ComboBox"),
-                        line.Name, line.Name, NativeValueKind.Text, profile.Culture, "Enter", token,
-                        allowUnverifiedFocus: true, verifyAfterWrite: false);
-                    var columns = new[] { profile.Columns["code"], profile.Columns["name"], profile.Columns["unit"] };
-                    string? previous = null;
-                    var candidates = await NativeWait.UntilAsync(async () =>
-                        await input.ReadCatalogTableAsync(await input.CaptureAsync(token), "grdData", columns, token),
-                        table =>
-                        {
-                            var fingerprint = TableHash(table);
-                            var settled = previous == fingerprint;
-                            previous = fingerprint;
-                            return settled;
-                        }, "ITEM_NOT_FOUND", $"Row {row + 1}: MISA has no exact item name '{line.Name}'.", token, timeoutMilliseconds: 30000);
-                    var names = candidates.Rows.Where(candidate =>
-                        !string.IsNullOrWhiteSpace(candidate[profile.Columns["code"]])
-                        && CatalogNameMatch(line.Name, candidate[profile.Columns["name"]])).ToArray();
-                    if (names.Length == 0)
-                    {
-                        // Some R20 catalogs normalize spacing in product-size
-                        // suffixes (for example "10kg" versus "10 kg").
-                        // Search a stable prefix, then require a unique
-                        // normalized full name before accepting a candidate.
-                        var prefix = line.Name.StartsWith("NPK \"Bông lúa\"", StringComparison.OrdinalIgnoreCase)
-                            ? "NPK Bông lúa"
-                            : line.Name.Contains('(', StringComparison.Ordinal)
-                            ? line.Name[..line.Name.IndexOf('(')].TrimEnd()
-                            : line.Name.Contains(" - ", StringComparison.Ordinal)
-                                ? line.Name.Split(" - ", 2, StringSplitOptions.None)[0].Trim()
-                                : line.Name.Length > 24 ? line.Name[..24].TrimEnd() : line.Name;
-                        await input.WriteFieldAsync(await input.CaptureAsync(token), new("4", ControlType: "ComboBox"),
-                            prefix, prefix, NativeValueKind.Text, profile.Culture, "Enter", token,
-                            allowUnverifiedFocus: true, verifyAfterWrite: false);
-                        previous = null;
-                        candidates = await NativeWait.UntilAsync(async () =>
-                            await input.ReadCatalogTableAsync(await input.CaptureAsync(token), "grdData", columns, token),
-                            table =>
-                            {
-                                var fingerprint = TableHash(table);
-                                var settled = previous == fingerprint;
-                                previous = fingerprint;
-                                return settled;
-                            }, "ITEM_NOT_FOUND", $"Row {row + 1}: MISA has no catalog prefix '{prefix}'.", token, timeoutMilliseconds: 30000);
-                        names = candidates.Rows.Where(candidate =>
-                            !string.IsNullOrWhiteSpace(candidate[profile.Columns["code"]])
-                            && CatalogNameMatch(line.Name, candidate[profile.Columns["name"]])).ToArray();
-                        if (names.Length == 0)
-                        {
-                            // A catalog may tokenize punctuation differently
-                            // (for example, a dash before the package size).
-                            // Retry once with the first two words, then keep the
-                            // same exact normalized-name and unit gates below.
-                            var words = line.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                            var broadPrefix = words.Length >= 2 ? string.Join(' ', words.Take(2)) : prefix;
-                            if (!string.Equals(broadPrefix, prefix, StringComparison.Ordinal))
-                            {
-                                await input.WriteFieldAsync(await input.CaptureAsync(token), new("4", ControlType: "ComboBox"),
-                                    broadPrefix, broadPrefix, NativeValueKind.Text, profile.Culture, "Enter", token,
-                                    allowUnverifiedFocus: true, verifyAfterWrite: false);
-                                previous = null;
-                                candidates = await NativeWait.UntilAsync(async () =>
-                                    await input.ReadCatalogTableAsync(await input.CaptureAsync(token), "grdData", columns, token),
-                                    table =>
-                                    {
-                                        var fingerprint = TableHash(table);
-                                        var settled = previous == fingerprint;
-                                        previous = fingerprint;
-                                        return settled;
-                                    }, "ITEM_NOT_FOUND", $"Row {row + 1}: MISA has no broad catalog prefix '{broadPrefix}'.", token, timeoutMilliseconds: 30000);
-                                names = candidates.Rows.Where(candidate =>
-                                    !string.IsNullOrWhiteSpace(candidate[profile.Columns["code"]])
-                                    && CatalogNameMatch(line.Name, candidate[profile.Columns["name"]])).ToArray();
-                                if (names.Length == 0 && words.Length >= 2)
-                                {
-                                    var shortestPrefix = words[0];
-                                    await input.WriteFieldAsync(await input.CaptureAsync(token), new("4", ControlType: "ComboBox"),
-                                        shortestPrefix, shortestPrefix, NativeValueKind.Text, profile.Culture, "Enter", token,
-                                        allowUnverifiedFocus: true, verifyAfterWrite: false);
-                                    previous = null;
-                                    candidates = await NativeWait.UntilAsync(async () =>
-                                        await input.ReadCatalogTableAsync(await input.CaptureAsync(token), "grdData", columns, token),
-                                        table =>
-                                        {
-                                            var fingerprint = TableHash(table);
-                                            var settled = previous == fingerprint;
-                                            previous = fingerprint;
-                                            return settled;
-                                        }, "ITEM_NOT_FOUND", $"Row {row + 1}: MISA has no short catalog prefix '{shortestPrefix}'.", token, timeoutMilliseconds: 30000);
-                                    names = candidates.Rows.Where(candidate =>
-                                        !string.IsNullOrWhiteSpace(candidate[profile.Columns["code"]])
-                                        && CatalogNameMatch(line.Name, candidate[profile.Columns["name"]])).ToArray();
-                                }
-                            }
-                        }
-                    }
-                    if (names.Length == 0)
-                    {
-                        // Some catalogs index a product by its concentration or
-                        // package token rather than the leading brand token.
-                        // Try a bounded set of stable tokens, then apply the
-                        // same full-name and unit filters below.
-                        var alternateTerms = line.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                            .Select(term => term.Trim('(', ')', '"', '\''))
-                            .Where(term => term.Length >= 3)
-                            .Reverse()
-                            .Take(4);
-                        foreach (var term in alternateTerms)
-                        {
-                            await input.WriteFieldAsync(await input.CaptureAsync(token), new("4", ControlType: "ComboBox"),
-                                term, term, NativeValueKind.Text, profile.Culture, "Enter", token,
-                                allowUnverifiedFocus: true, verifyAfterWrite: false);
-                            previous = null;
-                            candidates = await NativeWait.UntilAsync(async () =>
-                                await input.ReadCatalogTableAsync(await input.CaptureAsync(token), "grdData", columns, token),
-                                table =>
-                                {
-                                    var fingerprint = TableHash(table);
-                                    var settled = previous == fingerprint;
-                                    previous = fingerprint;
-                                    return settled;
-                                }, "ITEM_NOT_FOUND", $"Row {row + 1}: MISA has no token catalog search '{term}'.", token, timeoutMilliseconds: 30000);
-                            names = candidates.Rows.Where(candidate =>
-                                !string.IsNullOrWhiteSpace(candidate[profile.Columns["code"]])
-                                && CatalogNameMatch(line.Name, candidate[profile.Columns["name"]])).ToArray();
-                            if (names.Length > 0) break;
-                        }
-                    }
-                    if (names.Length == 0)
-                    {
-                        // A missing exact row is the native trigger for the
-                        // supported create-item flow. Creation is performed in
-                        // MISA's own dialog, then the catalog is reopened and
-                        // the new row is selected/read back before line input.
-                        code = await CreateMissingItemAndSelectAsync(context, line, row, codeCell, token);
-                        catalogSelected = true;
-                    }
-                    else
-                    {
-                        var exactUnits = names.Where(candidate =>
-                            Match(line.Unit, candidate[profile.Columns["unit"]], NativeValueKind.Text)).ToArray();
-                        var matches = exactUnits.Length > 0 ? exactUnits : names;
-                        if (matches.Length != 1)
-                            throw new AutomationException(matches.Length == 0 ? "ITEM_UNIT_MISMATCH" : "ITEM_AMBIGUOUS",
-                                $"Row {row + 1}: MISA returned {matches.Length} exact matches for '{line.Name}' / '{line.Unit}'. "
-                                + (matches.Length == 0
-                                    ? "Catalog readback: " + string.Join(" | ", candidates.Rows
-                                        .Where(candidate => !string.IsNullOrWhiteSpace(candidate[profile.Columns["name"]]))
-                                        .Take(12)
-                                        .Select(candidate => $"{candidate[profile.Columns["code"]]}:{candidate[profile.Columns["name"]]}[{candidate[profile.Columns["unit"]]}]"))
-                                    : ""));
-                        code = matches[0][profile.Columns["code"]].Trim();
-                        await input.SelectItemCatalogRowAsync(await input.CaptureAsync(token),
-                            Array.FindIndex(candidates.Rows.ToArray(), candidate =>
-                                string.Equals(candidate.GetValueOrDefault(profile.Columns["code"])?.Trim(), code,
-                                    StringComparison.Ordinal)), code, token);
-                        // Use the same host-root click path as direct native
-                        // invoke; the catalog's child HWND can ignore a
-                        // targeted click after a checkbox selection.
-                        await input.InvokeAsync(await input.CaptureAsync(token), "btnOK", "", token);
-                        await WaitEditor(context, visible: true, token);
-                        await Tab(profile.ItemTab, token);
-                        await RequireCell(row, code, "code", code, NativeValueKind.Exact, token);
-                        catalogSelected = true;
-                    }
-                }
-                if (!catalogSelected)
-                    await input.WriteCellAsync(await input.CaptureAsync(token), codeCell, code, code,
-                        NativeValueKind.Exact, profile.Culture, token);
+                    code = await CreateMissingItemAsync(context, line, row, codeCell, token);
+                Entering("line:" + line.LineId + ":code");
+                await SelectItemCodeAsync(row, code, token);
             }
             var boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
             var metadata = await NativeWait.UntilAsync(async () => await input.ReadRowAsync(
@@ -733,19 +536,13 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         }), token);
                 }
             }
-            var derivedPrice = context.Invoice.ImportConfirmation?.CalculateUnitPriceFromAmount == true;
-            var writes = derivedPrice
-                ? new[]
-                {
-                    new NativeCellWrite(profile.Columns["quantity"], expected.Quantity.ToString(Culture)),
-                    new NativeCellWrite(profile.Columns["amount"], line.AmountBeforeTax!.Value.ToString(Culture))
-                }
-                : new[]
-                {
-                    new NativeCellWrite(profile.Columns["quantity"], expected.Quantity.ToString(Culture)),
-                    new NativeCellWrite(profile.Columns["unit_price"], expected.Price.ToString(Culture)),
-                    new NativeCellWrite(profile.Columns["amount"], line.AmountBeforeTax!.Value.ToString(Culture))
-                };
+            // Only quantity and amount are typed; MISA derives the unit price, so
+            // rounded source prices (e.g. 13333.33 × 150 ≠ 2000000) cannot mismatch.
+            var writes = new[]
+            {
+                new NativeCellWrite(profile.Columns["quantity"], expected.Quantity.ToString(Culture)),
+                new NativeCellWrite(profile.Columns["amount"], line.AmountBeforeTax!.Value.ToString(Culture))
+            };
             var rowValues = await input.WriteRowAsync(await input.CaptureAsync(token),
                 new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code),
                 writes,
@@ -764,9 +561,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         && Match(expected.Unit, unit, NativeValueKind.Text)
                         && Match(Decimal(expected.Quantity), values.GetValueOrDefault(profile.Columns["quantity"])?.Value, NativeValueKind.Decimal)
                         && Match(Decimal(line.AmountBeforeTax), values.GetValueOrDefault(profile.Columns["amount"])?.Value, NativeValueKind.Decimal)
-                        && (derivedPrice
-                            ? NativeComparison.MatchesDerivedUnitPrice(expected.Quantity, line.AmountBeforeTax!.Value, unitPrice, Culture)
-                            : Match(Decimal(expected.Price), unitPrice, NativeValueKind.Decimal));
+                        && NativeComparison.MatchesDerivedUnitPrice(expected.Quantity, line.AmountBeforeTax!.Value, unitPrice, Culture);
                 }, token, column => Entering("line:" + line.LineId + ":"
                     + profile.Columns.Single(pair => pair.Value == column).Key));
             var unitPrice = rowValues.Values[profile.Columns["unit_price"]];
@@ -778,11 +573,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 throw new AutomationException("ITEM_UNIT_MISMATCH",
                     $"Dòng {row + 1}: mã hàng '{code}' có ĐVT native '{unitValue}', khác ĐVT nguồn '{line.Unit}'. "
                     + "Cần sửa mã/ĐVT nguồn hoặc xác nhận ánh xạ; không tự đổi ĐVT.", true);
-            var derived = new Dictionary<string, string> { ["account:" + line.LineId] = expectedAccount };
-            if (derivedPrice)
+            var derived = new Dictionary<string, string>
             {
-                derived["price:" + line.LineId] = unitPrice.Value!;
-            }
+                ["account:" + line.LineId] = expectedAccount,
+                ["price:" + line.LineId] = unitPrice.Value!
+            };
             codes.Add(code);
             await progress(new("line:" + line.LineId, code, Frame(rowValues.Frame), row, derived), token);
         }
@@ -806,18 +601,29 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         try
         {
             await BindEditor(context, token);
-            var result = await ReadReconciliationAsync(context, token);
+            // In a live run this follows TotalsVerified directly; reuse that read when nothing was typed since.
+            var result = await ReadReconciliationAsync(context, token,
+                reuseMatched: context.Snapshot.Status == WorkflowStatus.AwaitingSave);
             failed = false;
             return result;
         }
         finally { SetActivity(null, failed ? "failed" : "ok"); }
     }
 
-    private async Task<ReconciliationResult> ReadReconciliationAsync(WorkflowContext context, CancellationToken token)
+    private async Task<ReconciliationResult> ReadReconciliationAsync(WorkflowContext context, CancellationToken token,
+        bool reuseMatched = false)
     {
+        // A full read switches 4 tabs and walks both grids. A matched read is reused only for
+        // the same run/invoice, within 30 s, and when no value input was sent since.
+        if (reuseMatched && lastReconciliation is { } last && last.Result.Matched
+            && last.RunId == context.Snapshot.RunId && last.Fingerprint == context.Invoice.Fingerprint
+            && last.ValueInputs == input.ValueInputSequence && DateTimeOffset.UtcNow - last.At < TimeSpan.FromSeconds(30))
+            return last.Result;
         Entering("reconcile");
-        return await NativeWait.UntilAsync(() => ReadReconciliationPassAsync(context, token), result => result.Matched,
+        var result = await NativeWait.UntilAsync(() => ReadReconciliationPassAsync(context, token), result => result.Matched,
             "RECONCILIATION_PENDING", "MISA values have not settled.", token, returnLastMismatch: true);
+        lastReconciliation = (context.Snapshot.RunId, context.Invoice.Fingerprint, input.ValueInputSequence, DateTimeOffset.UtcNow, result);
+        return result;
     }
 
     private async Task<ReconciliationResult> ReadReconciliationPassAsync(WorkflowContext context, CancellationToken token)
@@ -882,9 +688,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                     : new[] { ("code", code, NativeValueKind.Exact), ("name", line.Name, NativeValueKind.Text), ("unit", expectedLine.Unit, NativeValueKind.Text),
                         ("debit_account", context.NativeValues?.GetValueOrDefault("account:" + line.LineId) ?? "<missing verified account>", NativeValueKind.Exact),
                         ("quantity", Decimal(expectedLine.Quantity), NativeValueKind.Decimal), ("amount", Decimal(line.AmountBeforeTax), NativeValueKind.Decimal),
-                        ("unit_price", context.Invoice.ImportConfirmation?.CalculateUnitPriceFromAmount == true
-                            ? Saved(context, "price:" + line.LineId) : Decimal(expectedLine.Price),
-                            context.Invoice.ImportConfirmation?.CalculateUnitPriceFromAmount == true ? NativeValueKind.Exact : NativeValueKind.Decimal) };
+                        ("unit_price", Saved(context, "price:" + line.LineId), NativeValueKind.Exact) };
                 foreach (var (key, wanted, kind) in expected)
                 {
                     var actual = native.Row?.GetValueOrDefault(profile.Columns[key]);
@@ -1114,7 +918,8 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             profile.Culture, commit, token, verifyAfterWrite: false);
     }
     private Task WriteDate(string field, DateOnly day, CancellationToken token)
-        => Write(field, day.ToString("dd/MM/yyyy"), day.ToString("yyyy-MM-dd"), NativeValueKind.Date, "Tab", token);
+        => Write(field, day.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture), day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            NativeValueKind.Date, "Tab", token);
     private NativeCell CellTarget(int row, string code, string key) => new(profile.ItemGridId, row, profile.Columns[key], profile.Columns["code"], code);
     private async Task<Readback> Cell(int row, string code, string key, CancellationToken token)
         => await input.ReadCellAsync(await input.CaptureAsync(token), CellTarget(row, code, key), token);
@@ -1128,36 +933,13 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             actual => Match(expected, actual.Value, kind), "READBACK_MISMATCH", $"Dòng {row + 1}, {key} khác nguồn.", token);
     }
     private bool Match(string expected, string? actual, NativeValueKind kind) => NativeComparison.Matches(expected, actual, kind, Culture);
+    // Names compare ignoring case, spacing and punctuation; the item code is the authoritative identity.
     private static bool CatalogNameMatch(string expected, string? actual)
     {
         if (actual is null) return false;
         static string Key(string value) => new string(value.Normalize(NormalizationForm.FormC)
             .Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
-        var expectedKey = Key(expected);
-        var actualKey = Key(actual);
-        if (expectedKey == actualKey) return true;
-
-        // Ignore only the package word "bao"; retain size, volume and supplier
-        // suffixes so distinct catalog variants cannot share a shortened stem.
-        static string PackageKey(string value)
-        {
-            value = Regex.Replace(value, @"\(\s*bao\s*\)", "",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            value = Regex.Replace(value, @"\bbao\s+(?=\d+(?:[.,]\d+)?\s*(?:kg|g)\b)", "",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            return Key(value);
-        }
-        if (expectedKey.Length > 0 && PackageKey(expected) == PackageKey(actual))
-            return true;
-
-        // The current native catalog abbreviates only these observed supplier
-        // variants. Preserve the size and marker to exclude other catalog rows.
-        return (expectedKey == Key("Chani 300EC - 100ml (\u0110N Nicotex)")
-                && actualKey == Key("Chani 300EC - 100ml (\u0110N)"))
-            || (expectedKey == Key("Phân NPK 16-16-8+13S HCQN (BM-BV)")
-                && actualKey == Key("Phân NPK 16-16-8+13S HCQN (BM-BV) (50Kg)"))
-            || (expectedKey == Key("NPK \"Bông lúa\" 5.10.3 L25")
-                && actualKey.StartsWith(Key("NPK \"Bông lúa\" 5.10.3 L2"), StringComparison.Ordinal));
+        return Key(expected) == Key(actual);
     }
     private static string Decimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? throw new InvalidDataException("Thiếu số nguồn.");
     private static string Saved(WorkflowContext context, string key) => context.NativeValues?.GetValueOrDefault(key)

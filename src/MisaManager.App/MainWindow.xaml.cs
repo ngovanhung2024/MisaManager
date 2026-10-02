@@ -82,7 +82,10 @@ public partial class MainWindow : Window
         workflow.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(workflow.SelectedInvoice))
+            {
                 InvoiceList.SelectedItem = invoices.FirstOrDefault(row => row.Invoice.Fingerprint == workflow.SelectedInvoice?.Fingerprint);
+                if (InvoiceList.SelectedItem is { } shown) InvoiceList.ScrollIntoView(shown);
+            }
             if (args.PropertyName != nameof(workflow.Status)) return;
             StatusLabel.Text = workflow.Status;
             foreach (var row in invoices) row.Refresh();
@@ -93,7 +96,8 @@ public partial class MainWindow : Window
         ProfileList.ItemsSource = profileRecords;
         MappingItems.ItemsSource = mappingRows;
         PerformanceList.ItemsSource = workflow.PerformanceEntries;
-        workflow.WorkflowChanged += (_, _) => RefreshWorkflowPanel();
+        workflow.WorkflowChanged += (_, _) => { RefreshWorkflowPanel(); RefreshRunSummary(); };
+        ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
         uiTimer.Tick += UiTimer_Tick;
         uiTimer.Start();
@@ -111,6 +115,7 @@ public partial class MainWindow : Window
     {
         var workArea = SystemParameters.WorkArea;
         PositionRail(workArea);
+        RefreshCatalogLabel();
         await workflow.RestoreAsync();
     }
 
@@ -167,6 +172,64 @@ public partial class MainWindow : Window
         finally { EndImport(work); }
         if (workbook is not null && SheetChoice.SelectedIndex >= 0 && PrepareMapping())
             await ImportSelectedSheetAsync();
+    }
+
+    private async void ChooseCatalog_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Chọn file danh mục vật tư, hàng hóa (Mã, Tên, ĐVT)" };
+        if (dialog.ShowDialog(this) != true) return;
+        var services = ((App)Application.Current).Services;
+        StatusLabel.Text = "Đang đọc file mã hàng...";
+        try
+        {
+            var items = await ItemCatalogWorkbook.ReadAsync(services.WorkbookReader, dialog.FileName);
+            var total = await Task.Run(() => services.ItemCatalog.Merge(items, dialog.FileName));
+            RefreshCatalogLabel();
+            StatusLabel.Text = $"Đã nạp {items.Count:N0} mã hàng từ {Path.GetFileName(dialog.FileName)}; database có {total:N0} mã.";
+        }
+        catch (Exception error) { StatusLabel.Text = "Không nạp được file mã hàng: " + error.Message; }
+    }
+
+    private void RefreshCatalogLabel()
+    {
+        var catalog = ((App)Application.Current).Services.ItemCatalog;
+        CatalogLabel.Text = catalog.Count == 0 ? "Chưa nạp danh mục mã hàng"
+            : $"{catalog.Count:N0} mã · {Path.GetFileName(catalog.SourceFile ?? catalog.FilePath)}";
+        CatalogLabel.ToolTip = catalog.SourceFile;
+        var names = invoices.SelectMany(row => row.Invoice.Lines)
+            .Where(line => line.ItemCode.Trim().Length == 0)
+            .GroupBy(line => ItemCatalogStore.NameKey(line.Name)).Select(group => group.First()).ToArray();
+        if (catalog.Count == 0 || names.Length == 0) { CatalogDetail.Visibility = Visibility.Collapsed; return; }
+        var missing = new List<string>();
+        var ambiguous = new List<string>();
+        foreach (var line in names)
+        {
+            try { if (catalog.Find(line.Name, line.Unit) is null) missing.Add(line.Name); }
+            catch (AutomationException) { ambiguous.Add(line.Name); }
+        }
+        CatalogDetail.Text = (missing.Count == 0 ? $"Đủ mã cho {names.Length} tên hàng trong file hóa đơn."
+                : $"{missing.Count}/{names.Length} tên hàng chưa có mã, sẽ tự tạo mới: {string.Join("; ", missing.Take(4))}{(missing.Count > 4 ? "…" : "")}")
+            + (ambiguous.Count == 0 ? "" : $" Trùng tên nhiều mã: {string.Join("; ", ambiguous)}.");
+        CatalogDetail.ToolTip = string.Join(Environment.NewLine, missing.Concat(ambiguous));
+        CatalogDetail.Visibility = Visibility.Visible;
+    }
+
+    private bool? shownRunning;
+
+    private void RefreshRunSummary()
+    {
+        var kinds = invoices.Select(row => row.StatusKind).ToArray();
+        SavedCount.Text = kinds.Count(kind => kind == "saved").ToString("N0");
+        DiscardedCount.Text = kinds.Count(kind => kind == "discarded").ToString("N0");
+        PendingCount.Text = kinds.Count(kind => kind is not ("saved" or "discarded")).ToString("N0");
+        if (shownRunning == workflow.IsRunning) return;
+        shownRunning = workflow.IsRunning;
+        var brush = (System.Windows.Media.Brush)FindResource(workflow.IsRunning ? "Primary" : "Success");
+        RunBadge.Background = (System.Windows.Media.Brush)FindResource(workflow.IsRunning ? "PrimarySoft" : "SuccessSoft");
+        RunDot.Fill = brush;
+        RunBadgeText.Foreground = brush;
+        RunBadgeText.Text = workflow.IsRunning ? "Đang chạy · Esc để dừng" : "Sẵn sàng";
     }
 
     private void InvoiceList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -278,6 +341,8 @@ public partial class MainWindow : Window
             foreach (var invoice in imported.Invoices) invoices.Add(new(invoice));
             workflow.InvoiceQueue = imported.Invoices.ToArray();
             if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
+            RefreshCatalogLabel();
+            RefreshRunSummary();
             ShowWorkbookIssues();
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
                 MappingExpander.IsExpanded = true;
@@ -421,6 +486,8 @@ public partial class MainWindow : Window
     {
         workflow.RefreshPerformance();
         RefreshWorkflowPanel();
+        // The probe shares the single UIA thread with data entry; it only slows a running batch.
+        if (workflow.IsRunning) { CloseComparisonWindow(); return; }
         if (DateTimeOffset.UtcNow < comparisonProbeDue) return;
         comparisonProbeDue = DateTimeOffset.UtcNow.AddMilliseconds(500);
         await RefreshComparisonWindowAsync();
@@ -749,11 +816,13 @@ public partial class MainWindow : Window
         public void Refresh()
         {
             PropertyChanged?.Invoke(this, new(nameof(DisplayStatus)));
+            PropertyChanged?.Invoke(this, new(nameof(StatusKind)));
             PropertyChanged?.Invoke(this, new(nameof(DisplaySummary)));
         }
         public InvoiceDocument Invoice { get; }
         public InvoiceRow(InvoiceDocument invoice) => Invoice = invoice;
-        public string DisplayIdentity => $"{Invoice.Identity.Series} {Invoice.Identity.Number} · {Invoice.Buyer.Name}";
+        public string DisplayIdentity => (Invoice.Identity.Series.Length == 0 ? "HĐ " : Invoice.Identity.Series + " ")
+            + $"{Invoice.Identity.Number} · {Invoice.Buyer.Name}";
         public string DisplayDate => Invoice.Issued?.ToString("dd/MM/yyyy") ?? "Thiếu";
         public int LineCount => Invoice.Lines.Length;
         public string SourceRange => $"dòng {Invoice.Source.FirstRow}-{Invoice.Source.LastRow}";
@@ -763,13 +832,33 @@ public partial class MainWindow : Window
             get
             {
                 if (Invoice.IsBlocked) return "Bị chặn";
-                var current = ((App)Application.Current).Services.Workflow.Current;
-                var record = current?.Invoice.Fingerprint == Invoice.Fingerprint ? current
-                    : (Application.Current.MainWindow as MainWindow)?.workflow.History
-                        .FirstOrDefault(run => run.Invoice.Fingerprint == Invoice.Fingerprint);
-                if (record is not null) return ProfileRecord.StatusLabel(record.Snapshot.Status);
+                if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot.Status);
                 return "Sẵn sàng nhập";
             }
+        }
+        /// <summary>Drives the list color: saved = green, discarded/failed = red.</summary>
+        public string StatusKind
+        {
+            get
+            {
+                if (Invoice.IsBlocked) return "attention";
+                return LatestRun()?.Snapshot.Status switch
+                {
+                    null or WorkflowStatus.Ready or WorkflowStatus.Cancelled => "ready",
+                    WorkflowStatus.Saved => "saved",
+                    WorkflowStatus.Discarded or WorkflowStatus.Failed => "discarded",
+                    WorkflowStatus.Paused or WorkflowStatus.Blocked or WorkflowStatus.InputUncertain
+                        or WorkflowStatus.SaveUncertain => "attention",
+                    _ => "running"
+                };
+            }
+        }
+        private WorkflowContext? LatestRun()
+        {
+            var current = ((App)Application.Current).Services.Workflow.Current;
+            return current?.Invoice.Fingerprint == Invoice.Fingerprint ? current
+                : (Application.Current.MainWindow as MainWindow)?.workflow.History
+                    .FirstOrDefault(run => run.Invoice.Fingerprint == Invoice.Fingerprint);
         }
     }
 }

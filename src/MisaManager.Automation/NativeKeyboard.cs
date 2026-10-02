@@ -93,8 +93,8 @@ internal static class NativeKeyboard
     private static extern bool SetWindowPos(HWND window, HWND insertAfter, int x, int y, int width, int height, uint flags);
     internal static void Press(nint targetHandle, nint windowHandle, int processId, string key, CancellationToken token = default)
     {
-        var code = key switch { "Enter" => 0x0D, "Tab" => 0x09, "F3" => 0x72, "Escape" => 0x1B, "ArrowDown" => 0x28, "Delete" => 0x2E,
-            _ => throw new AutomationException("KEY_UNSUPPORTED", "Chỉ hỗ trợ Enter, Tab, F3, Escape hoặc ArrowDown có target.") };
+        var code = key switch { "Enter" => 0x0D, "Tab" => 0x09, "F3" => 0x72, "Escape" => 0x1B, "ArrowDown" => 0x28, "Delete" => 0x2E, "F9" => 0x78,
+            _ => throw new AutomationException("KEY_UNSUPPORTED", "Chỉ hỗ trợ Enter, Tab, F3, F9, Escape, ArrowDown hoặc Delete.") };
         var root = InputRoot(targetHandle, windowHandle, processId);
         var foreground = (nint)PInvoke.GetForegroundWindow();
         PInvoke.GetWindowThreadProcessId((HWND)foreground, out var pid);
@@ -113,8 +113,8 @@ internal static class NativeKeyboard
 
     internal static void PressFocused(nint windowHandle, int processId, string key, CancellationToken token = default)
     {
-        var code = key switch { "Enter" => 0x0D, "Tab" => 0x09, "F3" => 0x72, "Escape" => 0x1B, "ArrowDown" => 0x28, "Delete" => 0x2E,
-            _ => throw new AutomationException("KEY_UNSUPPORTED", "Chỉ hỗ trợ Enter, Tab, F3, Escape hoặc ArrowDown có target.") };
+        var code = key switch { "Enter" => 0x0D, "Tab" => 0x09, "F3" => 0x72, "Escape" => 0x1B, "ArrowDown" => 0x28, "Delete" => 0x2E, "F9" => 0x78,
+            _ => throw new AutomationException("KEY_UNSUPPORTED", "Chỉ hỗ trợ Enter, Tab, F3, F9, Escape, ArrowDown hoặc Delete.") };
         var foreground = (nint)PInvoke.GetForegroundWindow();
         PInvoke.GetWindowThreadProcessId((HWND)foreground, out var pid);
         if (!IsWindowInScope(foreground, windowHandle) || pid != processId || !PInvoke.IsWindowEnabled((HWND)foreground))

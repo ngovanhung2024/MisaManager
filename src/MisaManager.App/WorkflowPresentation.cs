@@ -130,9 +130,8 @@ public partial class MainWindow
             {
                 Create(key + "unit", "Đơn vị tính", line.Unit),
                 Create(key + "quantity", "Số lượng", Number(line.Quantity)),
-                Create(key + "unit_price", "Đơn giá", invoice.ImportConfirmation?.CalculateUnitPriceFromAmount == true
-                ? bound?.NativeValues?.GetValueOrDefault("price:" + line.LineId) ?? "MISA tính từ số lượng / thành tiền"
-                : Number(line.UnitPrice)),
+                Create(key + "unit_price", "Đơn giá", bound?.NativeValues?.GetValueOrDefault("price:" + line.LineId)
+                    ?? "MISA tự tính từ thành tiền / số lượng"),
                 Create(key + "amount", "Thành tiền", Number(line.AmountBeforeTax)),
                 Create(key + "tax_rate", "Thuế suất", line.TaxRate),
                 Create(key + "tax_amount", "Tiền thuế", Number(line.TaxAmount))
@@ -212,6 +211,7 @@ public partial class MainWindow
             : $"{records.Length} hóa đơn · {records.Count(record => record.Context.Snapshot.Status == WorkflowStatus.Saved)} đã Cất"
                 + $" · {records.Count(record => record.Context.Snapshot.Status == WorkflowStatus.Discarded)} đã bỏ";
         foreach (var row in invoices) row.Refresh();
+        RefreshRunSummary();
         ShowProfile();
     }
 

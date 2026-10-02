@@ -200,6 +200,16 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             FinishTrace(initialize, "Hoàn tất");
             var offset = InvoiceQueue.ToList().FindIndex(invoice => invoice.Fingerprint == selected.Fingerprint);
             var queue = offset < 0 ? new[] { selected } : InvoiceQueue.Skip(offset).ToArray();
+            if (services.ItemCatalog.Count == 0 && queue.Any(invoice => invoice.Lines.Any(line => line.ItemCode.Trim().Length == 0)))
+            {
+                Status = "Chưa nạp database mã hàng. Bấm 'Mã hàng' và chọn file danh mục vật tư, hàng hóa trước khi nhập.";
+                return;
+            }
+            // One MISA session per batch: resolving it per invoice costs a UIA window scan each time.
+            var findWindow = BeginTrace("Tìm cửa sổ MISA", "Xác định đúng PID/HWND phiên MISA");
+            var identity = await ResolveWindowIdentityAsync();
+            FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
+            if (identity is null) return;
             foreach (var invoice in queue)
             {
                 if (stopRequested) break;
@@ -212,10 +222,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
                 performanceInvoice = invoice.Identity.Number;
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
-                var findWindow = BeginTrace("Tìm cửa sổ MISA", "Xác định đúng PID/HWND phiên MISA");
-                var identity = await ResolveWindowIdentityAsync();
-                FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
-                if (identity is null) break;
                 Status = $"Đang chạy live toàn trình hóa đơn {invoice.Identity.Number}. Nhấn Esc để tạm dừng.";
                 PerformanceCurrent = "live_run · đang chạy";
                 var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
@@ -237,8 +243,13 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 }
                 // A completed save or verified discard advances the queue. Any
                 // error stops here so repair can rebuild and rerun from Ready.
+                // Update history in memory instead of re-reading every run file from disk.
+                if (services.Workflow.Current is { } finished)
+                {
+                    History = [finished, .. History.Where(run => run.Snapshot.RunId != finished.Snapshot.RunId)];
+                    NotifyWorkflowChanged();
+                }
                 if (response.Status != "completed") break;
-                await LoadHistoryAsync();
                 var final = services.Workflow.Current?.Snapshot.Status;
                 if (stopRequested || final is not (WorkflowStatus.Saved or WorkflowStatus.Discarded)) break;
             }

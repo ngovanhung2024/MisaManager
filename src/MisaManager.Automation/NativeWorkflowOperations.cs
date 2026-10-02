@@ -19,6 +19,9 @@ public sealed partial class NativeInputService
     private long workflowInputSequence;
     public long WorkflowInputSequence => Interlocked.Read(ref workflowInputSequence);
     private void MarkWorkflowInput() => Interlocked.Increment(ref workflowInputSequence);
+    private long tabInputSequence;
+    // Input that can change voucher values; tab selection only changes the view.
+    public long ValueInputSequence => WorkflowInputSequence - Interlocked.Read(ref tabInputSequence);
 
     public Task<bool> WorkflowScopeExistsAsync(WindowIdentity window, string scopeId, CancellationToken token)
         => dispatcher.RunAsync(() => WorkflowScopes(window, scopeId).Length != 0, token);
@@ -195,7 +198,7 @@ public sealed partial class NativeInputService
                 token.ThrowIfCancellationRequested();
                 RecordTab();
                 RecordInput();
-                try { MarkWorkflowInput(); tab.Patterns.SelectionItem.Pattern.Select(); epoch++; }
+                try { MarkWorkflowInput(); Interlocked.Increment(ref tabInputSequence); tab.Patterns.SelectionItem.Pattern.Select(); epoch++; }
                 catch (Exception error) { throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được thao tác chuyển tab.", true, error); }
             }
             return (Frame: Capture(), Sent: sent);
@@ -356,9 +359,9 @@ public sealed partial class NativeInputService
             return new Readback("supported", value, source + "+GridItem", DateTimeOffset.UtcNow, null, Capture());
         }, token);
     public async Task<Readback> WriteCellAsync(NativeFrame frame, NativeCell cell, string text, string expected,
-        NativeValueKind kind, string cultureName, CancellationToken token)
+        NativeValueKind kind, string cultureName, CancellationToken token, string commitKey = "Tab")
     {
-        var sentFrame = await SendCellAsync(frame, cell, text, token);
+        var sentFrame = await SendCellAsync(frame, cell, text, token, commitKey);
         var reread = cell.Column == cell.CodeColumn ? cell with { ExpectedCode = expected } : cell;
         return await VerifyWrittenAsync(() => ReadCellAsync(sentFrame, reread, token, waitForCode: cell.Column == cell.CodeColumn), expected, kind, cultureName, token);
     }
@@ -446,7 +449,8 @@ public sealed partial class NativeInputService
             return current;
         }, token, maySendInput: true);
 
-    private Task<NativeFrame> SendCellAsync(NativeFrame frame, NativeCell cell, string text, CancellationToken token)
+    private Task<NativeFrame> SendCellAsync(NativeFrame frame, NativeCell cell, string text, CancellationToken token,
+        string commitKey = "Tab")
         => dispatcher.RunAsync(() =>
         {
             RecordInput();
@@ -483,7 +487,7 @@ public sealed partial class NativeInputService
                     target = ResolveCell(cell, requireEmptyCode: requireEmptyCode);
                     SetNativeValue(target, text, token, ref sent);
                 }
-                Commit(target, "Tab", token);
+                Commit(target, commitKey, token);
                 epoch++;
                 return Capture();
             }
