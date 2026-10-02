@@ -30,12 +30,10 @@ public sealed partial class NativeInputService
         {
             RecordQuery();
             Capture();
-            var dialogs = automation.FromHandle(identity!.WindowHandle)
-                .FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Window))
-                .Where(element => element.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                    && element.Properties.IsEnabled.ValueOrDefault && !element.Properties.IsOffscreen.ValueOrDefault
-                    && element.Properties.NativeWindowHandle.ValueOrDefault != identity.WindowHandle
-                    && IsNewItemDialog(element))
+            var dialogs = HostWindows(identity!.ProcessId)
+                .Where(element => element.NativeWindowHandle != identity.WindowHandle)
+                .Select(element => element.Element)
+                .Where(IsNewItemDialog)
                 .ToArray();
             if (dialogs.Length == 0)
                 throw new AutomationException("TARGET_NOT_FOUND", "MISA new-item dialog is not ready.");
@@ -91,12 +89,10 @@ public sealed partial class NativeInputService
         {
             RecordQuery();
             Capture();
-            var dialogs = automation.FromHandle(identity!.WindowHandle)
-                .FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Window))
-                .Where(element => element.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                    && element.Properties.IsEnabled.ValueOrDefault && !element.Properties.IsOffscreen.ValueOrDefault
-                    && element.Properties.NativeWindowHandle.ValueOrDefault != identity.WindowHandle
-                    && IsCatalogDialog(element))
+            var dialogs = HostWindows(identity!.ProcessId)
+                .Where(element => element.NativeWindowHandle != identity.WindowHandle)
+                .Select(element => element.Element)
+                .Where(IsCatalogDialog)
                 .Where(element => element.FindAllDescendants(automation.ConditionFactory.ByAutomationId("4"))
                     .Any(editor => editor.ControlType == ControlType.ComboBox && editor.IsEnabled
                         && !editor.Properties.IsOffscreen.ValueOrDefault)).ToArray();
@@ -131,16 +127,14 @@ public sealed partial class NativeInputService
         {
             if (identity is null) return false;
             RecordQuery(false);
-            var dialogs = automation.FromHandle(identity.WindowHandle)
-                .FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Window))
-                .Where(element => element.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                    && element.IsEnabled && !element.Properties.IsOffscreen.ValueOrDefault
-                    && element.Properties.NativeWindowHandle.ValueOrDefault != nint.Zero
-                    && element.Properties.NativeWindowHandle.ValueOrDefault != identity.WindowHandle
-                    // A few R20 provider stubs do not expose AutomationId on
-                    // the dialog itself. The title plus the stable grid/editor
-                    // contract is sufficient for this recovery path.
-                    && IsCatalogDialog(element))
+            var dialogs = HostWindows(identity.ProcessId)
+                .Where(element => element.NativeWindowHandle != nint.Zero
+                    && element.NativeWindowHandle != identity.WindowHandle)
+                .Select(element => element.Element)
+                // A few R20 provider stubs do not expose AutomationId on
+                // the dialog itself. The title plus the stable grid/editor
+                // contract is sufficient for this recovery path.
+                .Where(IsCatalogDialog)
                 .Where(element => element.FindAllDescendants(automation.ConditionFactory.ByAutomationId("grdData")).Length == 1
                     && element.FindAllDescendants(automation.ConditionFactory.ByAutomationId("4"))
                         .Any(editor => editor.ControlType == ControlType.ComboBox && editor.IsEnabled
@@ -181,11 +175,7 @@ public sealed partial class NativeInputService
     private async Task VerifyCatalogCancelledAsync(CancellationToken token)
     {
         await NativeWait.UntilAsync(() => dispatcher.RunAsync(() =>
-            !automation.FromHandle(identity!.WindowHandle)
-                .FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Window))
-                .Any(dialog => dialog.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                    && dialog.IsEnabled && !dialog.Properties.IsOffscreen.ValueOrDefault
-                    && IsCatalogDialog(dialog)), token), closed => closed,
+            !HostWindows(identity!.ProcessId).Any(dialog => IsCatalogDialog(dialog.Element)), token), closed => closed,
             "CATALOG_STILL_OPEN", "Catalog Cancel did not close the dialog; input is not replayed.", token,
             timeoutMilliseconds: 15000);
         var origin = catalogOrigin;

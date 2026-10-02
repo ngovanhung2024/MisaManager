@@ -10,6 +10,7 @@ namespace MisaManager.Automation;
 public sealed class UiaReadbackProvider : INativeReadback, IDisposable
 {
     private readonly UIA3Automation automation = new();
+    private readonly BoundWindowTracker windowTracker = new();
     private AutomationElement? root;
     private WindowIdentity? identity;
     private long epoch;
@@ -36,7 +37,7 @@ public sealed class UiaReadbackProvider : INativeReadback, IDisposable
     public NativeFrame CaptureFrame()
     {
         if (identity is null || root is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
-        var current = new MisaWindowDiscovery().Bind(identity.WindowHandle, identity.ProcessId);
+        var current = windowTracker.Refresh(identity);
         if (current.ProcessStartUtc != identity.ProcessStartUtc || current.WindowHandle != identity.WindowHandle)
             throw new AutomationException("WINDOW_IDENTITY_CHANGED", "Process hoặc HWND MISA đã thay đổi.");
         identity = current;
@@ -151,5 +152,9 @@ public sealed class UiaReadbackProvider : INativeReadback, IDisposable
         return result;
     }
 
-    public void Dispose() => automation.Dispose();
+    public void Dispose()
+    {
+        windowTracker.Dispose();
+        automation.Dispose();
+    }
 }

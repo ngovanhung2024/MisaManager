@@ -47,13 +47,13 @@ public sealed partial class NativeInputService
     private AutomationElement[] WorkflowScopes(WindowIdentity window, string scopeId)
     {
         RecordQuery(false);
-        var current = new MisaWindowDiscovery().Bind(window.WindowHandle, window.ProcessId);
+        var current = RefreshWindow(window);
         if (current.ProcessStartUtc != window.ProcessStartUtc || current.ExecutablePath != window.ExecutablePath
             || current.Title != window.Title)
             throw new AutomationException("WINDOW_IDENTITY_CHANGED", "Phiên MISA thay đổi trong khi bind scope.");
-        return automation.FromHandle(window.WindowHandle).FindAllDescendants(automation.ConditionFactory.ByAutomationId(scopeId))
-            .Where(element => element.Properties.ProcessId.ValueOrDefault == window.ProcessId
-                && !element.Properties.IsOffscreen.ValueOrDefault).ToArray();
+        return Snapshots(automation.FromHandle(window.WindowHandle),
+                Live(automation.ConditionFactory.ByAutomationId(scopeId), window.ProcessId, enabled: false))
+            .Select(item => item.Element).ToArray();
     }
 
     public Task<NativeTable> ReadTableAsync(NativeFrame frame, string gridId, IReadOnlyList<string> columns, CancellationToken token)
@@ -87,22 +87,23 @@ public sealed partial class NativeInputService
                 {
                     token.ThrowIfCancellationRequested();
                     var cell = pattern.GetItem(row, column.Value);
-                    if (!cell.Patterns.GridItem.IsSupported || cell.Patterns.GridItem.Pattern.Row.Value != row
-                        || cell.Patterns.GridItem.Pattern.Column.Value != column.Value
-                        || cell.Properties.ProcessId.ValueOrDefault != identity!.ProcessId)
-                        throw new AutomationException("GRID_IDENTITY_INVALID", "Native cell đổi vị trí trong khi đọc.");
                     // Realize virtualized cells before reading; scrolling is observational.
-                    cell.Patterns.VirtualizedItem.PatternOrDefault?.Realize();
-                    cell = pattern.GetItem(row, column.Value);
+                    // Identity is proven once, on the cell that is actually read.
+                    var virtualized = cell.Patterns.VirtualizedItem.PatternOrDefault;
+                    if (virtualized is not null)
+                    {
+                        virtualized.Realize();
+                        cell = pattern.GetItem(row, column.Value);
+                    }
                     if (cell.Properties.IsOffscreen.ValueOrDefault && cell.Patterns.ScrollItem.IsSupported)
                     {
                         cell.Patterns.ScrollItem.Pattern.ScrollIntoView();
                         cell = pattern.GetItem(row, column.Value);
                     }
-                    if (!cell.Patterns.GridItem.IsSupported || cell.Patterns.GridItem.Pattern.Row.Value != row
-                        || cell.Patterns.GridItem.Pattern.Column.Value != column.Value
+                    var gridItem = cell.Patterns.GridItem.PatternOrDefault;
+                    if (gridItem is null || gridItem.Row.Value != row || gridItem.Column.Value != column.Value
                         || cell.Properties.ProcessId.ValueOrDefault != identity!.ProcessId)
-                        throw new AutomationException("GRID_IDENTITY_INVALID", "Cell identity changed after realization.");
+                        throw new AutomationException("GRID_IDENTITY_INVALID", "Native cell đổi vị trí trong khi đọc.");
                     var text = ReadCustomCellText(cell, column.Key);
                     values.Add(column.Key, text.Value);
                     rowSources.Add(column.Key, text.Source + "+GridItem");
@@ -126,10 +127,12 @@ public sealed partial class NativeInputService
             RecordQuery();
             GuardWorkflow(frame);
             var values = new Dictionary<string, (string Value, string Source)>();
+            var targets = ResolveMany(fields.Values.ToArray());
+            var index = 0;
             foreach (var field in fields)
             {
                 token.ThrowIfCancellationRequested();
-                values.Add(field.Key, ReadNativeText(Resolve(field.Value)));
+                values.Add(field.Key, ReadNativeText(targets[index++]));
             }
             GuardWorkflow(frame);
             var fresh = Capture();
@@ -334,11 +337,9 @@ public sealed partial class NativeInputService
             var condition = selector.AutomationId.Length > 0
                 ? automation.ConditionFactory.ByAutomationId(selector.AutomationId)
                 : automation.ConditionFactory.ByName(selector.Name);
-            var commands = root!.FindAllDescendants(condition)
-                .Where(command => command.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
-                    && command.ControlType == ControlType.Button
-                    && !command.Properties.IsOffscreen.ValueOrDefault).ToArray();
-            if (commands.Length != 1 || commands[0].Properties.IsEnabled.ValueOrDefault != enabled)
+            var commands = Snapshots(root!, Live(condition.And(automation.ConditionFactory.ByControlType(ControlType.Button)),
+                identity!.ProcessId, enabled: false)).ToArray();
+            if (commands.Length != 1 || commands[0].Enabled != enabled)
                 throw new AutomationException("COMMAND_STATE_MISMATCH", $"Expected one native command with enabled={enabled}; refusing to close the voucher.");
             return true;
         }, token);
@@ -500,11 +501,7 @@ public sealed partial class NativeInputService
             var target = ResolveCell(cell, preserveComboBox: true);
             if (target.ControlType != ControlType.ComboBox)
                 throw new AutomationException("GRID_OPTION_UNSUPPORTED", "Ô không phải ComboBox cho thao tác chọn danh sách.");
-            var editor = target.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Edit))
-                .Where(item => item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                    && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0)
-                .OrderByDescending(item => item.BoundingRectangle.Width)
-                .FirstOrDefault();
+            var editor = WidestEditor(target);
             // Infragistics keeps the embedded dropdown button at 0x0 until the
             // ComboBox itself is activated. Click the visible ComboBox bounds
             // first, then resolve the live editor again before locating its arrow.
@@ -516,24 +513,18 @@ public sealed partial class NativeInputService
                 identity!.WindowHandle, identity.ProcessId);
             Thread.Sleep(50);
             target = ResolveCell(cell, preserveComboBox: true);
-            editor = target.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Edit))
-                .Where(item => item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                    && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0)
-                .OrderByDescending(item => item.BoundingRectangle.Width)
-                .FirstOrDefault() ?? target;
+            editor = WidestEditor(target) ?? target;
             FocusTarget(editor, activateGridCell: true, token: token);
             AutomationElement[] dropdowns = [];
             for (var attempt = 0; attempt < 12 && dropdowns.Length != 1; attempt++)
             {
                 target = ResolveCell(cell, preserveComboBox: true);
                 var bounds = target.BoundingRectangle;
-                dropdowns = target.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Button))
-                    .Where(button => button.Patterns.Invoke.IsSupported && button.Properties.IsEnabled.ValueOrDefault
-                        && !button.Properties.IsOffscreen.ValueOrDefault && button.BoundingRectangle.Width > 0
-                        && button.BoundingRectangle.Height > 0 && button.BoundingRectangle.Y <= bounds.Bottom
-                        && button.BoundingRectangle.Bottom >= bounds.Y
-                        && (button.Properties.AutomationId.ValueOrDefault == "[Editor] dropdown button"
-                            || button.BoundingRectangle.Right >= bounds.Right - 8))
+                dropdowns = Snapshots(target, Live(automation.ConditionFactory.ByControlType(ControlType.Button), identity!.ProcessId))
+                    .Where(button => button.HasArea && button.Bounds.Y <= bounds.Bottom && button.Bounds.Bottom >= bounds.Y
+                        && (button.AutomationId == "[Editor] dropdown button" || button.Bounds.Right >= bounds.Right - 8))
+                    .Select(button => button.Element)
+                    .Where(button => button.Patterns.Invoke.IsSupported)
                     .ToArray();
                 if (dropdowns.Length != 1) Thread.Sleep(50);
             }
@@ -557,13 +548,7 @@ public sealed partial class NativeInputService
             for (var attempt = 0; attempt < 12 && registered.Length == 0; attempt++)
             {
                 token.ThrowIfCancellationRequested();
-                registered = host.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.ListItem))
-                    .Where(item => item.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                        && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                        && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0
-                        && item.BoundingRectangle.Left < cellBounds.Right && item.BoundingRectangle.Right > cellBounds.Left
-                        && Math.Abs(item.BoundingRectangle.Top - cellBounds.Bottom) < 420
-                        && item.Patterns.SelectionItem.IsSupported).ToArray();
+                registered = RegisteredOptions(host, cellBounds);
                 if (registered.Length == 0) Thread.Sleep(50);
             }
             var options = registered.Where(item => item.Properties.IsEnabled.ValueOrDefault
@@ -590,13 +575,7 @@ public sealed partial class NativeInputService
                 for (var attempt = 0; attempt < 12; attempt++)
                 {
                     token.ThrowIfCancellationRequested();
-                    registered = host.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.ListItem))
-                        .Where(item => item.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                            && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                            && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0
-                            && item.BoundingRectangle.Left < cellBounds.Right && item.BoundingRectangle.Right > cellBounds.Left
-                            && Math.Abs(item.BoundingRectangle.Top - cellBounds.Bottom) < 420
-                            && item.Patterns.SelectionItem.IsSupported).ToArray();
+                    registered = RegisteredOptions(host, cellBounds);
                     if (registered.Length == 0) break;
                     Thread.Sleep(50);
                 }
@@ -814,16 +793,14 @@ public sealed partial class NativeInputService
     {
         if (target.ControlType != ControlType.ComboBox) return target;
         var bounds = target.BoundingRectangle;
-        return target.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Edit))
-            .Where(item => item.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
-                && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0
-                && item.BoundingRectangle.X >= bounds.X - 2
-                && item.BoundingRectangle.Right <= bounds.Right + 2
-                && item.BoundingRectangle.Y >= bounds.Y - 2
-                && item.BoundingRectangle.Bottom <= bounds.Bottom + 2)
-            .OrderByDescending(item => item.BoundingRectangle.Width)
-            .FirstOrDefault() ?? target;
+        return Snapshots(target, Live(automation.ConditionFactory.ByControlType(ControlType.Edit), identity!.ProcessId))
+            .Where(item => item.HasArea
+                && item.Bounds.X >= bounds.X - 2
+                && item.Bounds.Right <= bounds.Right + 2
+                && item.Bounds.Y >= bounds.Y - 2
+                && item.Bounds.Bottom <= bounds.Bottom + 2)
+            .OrderByDescending(item => item.Bounds.Width)
+            .FirstOrDefault()?.Element ?? target;
     }
 
     private void RealizeAndScroll(AutomationElement target)
@@ -846,10 +823,10 @@ public sealed partial class NativeInputService
         IReadOnlyList<string>? requestedColumns = null, NativeCell? rowTarget = null,
         bool waitForCode = false, bool requireEmptyCode = false)
     {
-        var headers = grid.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.HeaderItem))
-            .Where(element => element.Properties.ProcessId.ValueOrDefault == identity!.ProcessId)
-            .Select(element => new CustomColumn(element.Name, element.BoundingRectangle.X,
-                element.BoundingRectangle.X + element.BoundingRectangle.Width, element))
+        var headers = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.HeaderItem),
+                identity!.ProcessId, enabled: false, onscreen: false))
+            .Select(element => new CustomColumn(element.Name, element.Bounds.X,
+                element.Bounds.X + element.Bounds.Width, element.Element))
             // Hidden/offscreen headers have no native cell in the current viewport.
             // Keep only columns whose native header is actually exposed so a
             // custom grid cannot be treated as if an invisible column existed.
@@ -868,12 +845,10 @@ public sealed partial class NativeInputService
             headers = headers.Where(column => requested.Contains(column.Name)).ToArray();
         }
 
-        var rows = grid.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.DataItem))
-            .Where(element => element.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
-                && element.Properties.IsEnabled.ValueOrDefault
-                && element.BoundingRectangle.Width > 0 && element.BoundingRectangle.Height > 0)
-            .Where(IsLogicalCustomRow)
-            .OrderBy(element => element.BoundingRectangle.Y).ToArray();
+        var rows = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
+                identity!.ProcessId, onscreen: false))
+            .Where(element => element.HasArea && IsLogicalCustomRow(element))
+            .OrderBy(element => element.Bounds.Y).Select(element => element.Element).ToArray();
         if (rows.Length == 0)
             throw new AutomationException("GRID_ROWS_INVALID", "Không có dòng native của bảng.");
         if (rowTarget is not null)
@@ -881,37 +856,34 @@ public sealed partial class NativeInputService
         return new CustomGridLayout(headers, rows.Select(row => new CustomRow(row, MapCustomCells(row, headers, token))).ToArray());
     }
 
-    private bool IsLogicalCustomRow(AutomationElement row)
+    private static bool IsLogicalCustomRow(ElementSnapshot row)
     {
-        var id = row.Properties.AutomationId.ValueOrDefault;
         // R20 uses -1 for the enabled insertion row even when committed rows
         // already have numeric IDs. The disabled -1 row at the bottom is the
         // grid's placeholder and is excluded by the caller's enabled check.
-        return id != "-1" || row.Properties.IsEnabled.ValueOrDefault;
+        return row.AutomationId != "-1" || row.Enabled;
     }
 
-    private static IReadOnlyList<AutomationElement> MapCustomCells(AutomationElement row,
+    private IReadOnlyList<AutomationElement> MapCustomCells(AutomationElement row,
         IReadOnlyList<CustomColumn> columns, CancellationToken token)
     {
-        var cells = row.FindAllDescendants()
-            .Where(element => element.ControlType is ControlType.Edit or ControlType.ComboBox or ControlType.Text
-                && element.Properties.ProcessId.ValueOrDefault == row.Properties.ProcessId.ValueOrDefault
-                && element.BoundingRectangle.Width > 0 && element.BoundingRectangle.Height > 0)
-            .GroupBy(element => (element.BoundingRectangle.X, element.BoundingRectangle.Y,
-                element.BoundingRectangle.Width, element.BoundingRectangle.Height))
+        var cells = Snapshots(row, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
+                row.Properties.ProcessId.ValueOrDefault, enabled: false, onscreen: false))
+            .Where(element => element.HasArea)
+            .GroupBy(element => element.Bounds)
             .Select(group => group.First()).ToArray();
         return columns.Select(column =>
         {
             token.ThrowIfCancellationRequested();
-            var matches = cells.Select(cell => (cell, overlap: HorizontalOverlap(cell.BoundingRectangle.X,
-                    cell.BoundingRectangle.X + cell.BoundingRectangle.Width, column.Left, column.Right)))
+            var matches = cells.Select(cell => (cell, overlap: HorizontalOverlap(cell.Bounds.X,
+                    cell.Bounds.X + cell.Bounds.Width, column.Left, column.Right)))
                 .Where(item => item.overlap > 0)
                 .OrderByDescending(item => item.overlap)
-                .ThenBy(item => Math.Abs(item.cell.BoundingRectangle.X - column.Left))
+                .ThenBy(item => Math.Abs(item.cell.Bounds.X - column.Left))
                 .ToArray();
             if (matches.Length == 0)
                 throw new AutomationException("GRID_COLUMNS_INVALID", "Không ánh xạ được ô native cho cột " + column.Name);
-            return matches[0].cell;
+            return matches[0].cell.Element;
         }).ToArray();
     }
 
@@ -951,13 +923,7 @@ public sealed partial class NativeInputService
         {
             var clickTarget = target;
             if (target.ControlType == ControlType.ComboBox)
-            {
-                clickTarget = target.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Edit))
-                    .Where(item => item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                        && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0)
-                    .OrderByDescending(item => item.BoundingRectangle.Width)
-                    .FirstOrDefault() ?? target;
-            }
+                clickTarget = WidestEditor(target) ?? target;
             var bounds = clickTarget.BoundingRectangle;
             if (bounds.Width <= 0 || bounds.Height <= 0 || target.Properties.IsOffscreen.ValueOrDefault)
                 throw new AutomationException("GRID_OFFSCREEN", "Grid cell has no visible native bounds.");
@@ -1007,13 +973,7 @@ public sealed partial class NativeInputService
     private AutomationElement ResolveKeyboardTarget(AutomationElement target)
     {
         if (target.ControlType != ControlType.ComboBox) return target;
-        return target.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Edit))
-            .Where(item => item.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
-                && item.Properties.IsEnabled.ValueOrDefault
-                && !item.Properties.IsOffscreen.ValueOrDefault
-                && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0)
-            .OrderByDescending(item => item.BoundingRectangle.Width)
-            .FirstOrDefault() ?? target;
+        return WidestEditor(target) ?? target;
     }
 
     private nint KeyboardHandle(AutomationElement target)
@@ -1064,24 +1024,20 @@ public sealed partial class NativeInputService
         // Some R20 builds expose the modal without a stable form name or
         // AutomationId. Its catalog contract is stable: the result grid is
         // grdData and the search editor is the visible ComboBox with id 4.
-        var grid = element.FindAllDescendants(automation.ConditionFactory.ByAutomationId("grdData"))
-            .Any(child => child.Properties.IsEnabled.ValueOrDefault
-                && !child.Properties.IsOffscreen.ValueOrDefault
-                && child.BoundingRectangle.Width > 0 && child.BoundingRectangle.Height > 0);
+        var grid = Snapshots(element, Live(automation.ConditionFactory.ByAutomationId("grdData"), identity!.ProcessId))
+            .Any(child => child.HasArea);
         return grid;
     }
 
     private void ThrowIfBlockingDialog()
     {
         if (identity is null) return;
-        var host = automation.FromHandle(identity.WindowHandle);
-        var dialogs = host.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Window))
-            .Where(element => element.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-                && element.Properties.IsEnabled.ValueOrDefault
-                && !element.Properties.IsOffscreen.ValueOrDefault
-                && element.Properties.NativeWindowHandle.ValueOrDefault != nint.Zero
-                && element.Properties.NativeWindowHandle.ValueOrDefault != identity.WindowHandle
-                && !string.Equals(element.Properties.AutomationId.ValueOrDefault, "frmSAVoucherDetail", StringComparison.OrdinalIgnoreCase))
+        if (!MayHaveBlockingDialog()) return;
+        var dialogs = HostWindows(identity.ProcessId)
+            .Where(element => element.NativeWindowHandle != nint.Zero
+                && element.NativeWindowHandle != identity.WindowHandle
+                && !string.Equals(element.AutomationId, "frmSAVoucherDetail", StringComparison.OrdinalIgnoreCase))
+            .Select(element => element.Element)
             .Where(element => element.Patterns.Window.IsSupported && element.Patterns.Window.Pattern.IsModal.Value
                 || string.Equals(element.Properties.ClassName.ValueOrDefault, "#32770", StringComparison.Ordinal))
             .Where(element => !IsCatalogDialog(element))
@@ -1101,26 +1057,6 @@ public sealed partial class NativeInputService
             "MISA dialog đang chặn editor. Hãy xử lý dialog trước khi tiếp tục: " + string.Join("; ", details), true);
     }
 
-    private AutomationElement Resolve(NativeSelector selector)
-    {
-        if (root is null || identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa chọn cửa sổ MISA.");
-        var condition = !string.IsNullOrWhiteSpace(selector.AutomationId)
-            ? automation.ConditionFactory.ByAutomationId(selector.AutomationId)
-            : !string.IsNullOrWhiteSpace(selector.Name) ? automation.ConditionFactory.ByName(selector.Name)
-            : automation.ConditionFactory.ByControlType(Enum.Parse<ControlType>(selector.ControlType));
-        var elements = root.FindAllDescendants(condition).Where(element => element.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-            && (selector.Name.Length == 0 || element.Name == selector.Name)
-            && (selector.ControlType.Length == 0 || element.ControlType.ToString() == selector.ControlType)
-            && element.Properties.IsEnabled.ValueOrDefault && !element.Properties.IsOffscreen.ValueOrDefault
-            && element.BoundingRectangle.Width > 0 && element.BoundingRectangle.Height > 0).ToArray();
-        if (elements.Length == 0) throw new AutomationException("TARGET_NOT_FOUND", $"Chưa có native target: {selector.AutomationId}/{selector.Name}.");
-        if (elements.Length != 1) throw new AutomationException("TARGET_AMBIGUOUS", $"Cần đúng một native target: {selector.AutomationId}/{selector.Name}.");
-        return elements[0];
-    }
-
-    private AutomationElement ResolveGrid(string gridId)
-        => Resolve(gridId.Length > 0 ? new(gridId) : new(ControlType: "DataGrid"));
-
     private void GuardWorkflow(NativeFrame frame, bool forInput = false)
     {
         EnsureFrame(frame);
@@ -1133,13 +1069,13 @@ public sealed partial class NativeInputService
             || root.Properties.ProcessId.ValueOrDefault != identity!.ProcessId
             || root.Name != frame.TabIdentity)
             throw new AutomationException("SCOPE_IDENTITY_CHANGED", "Scope đã đổi, bị ẩn hoặc bị khóa; không gửi input.");
+        // Cheap Win32 proof first; the full host scan below walks every grid cell.
+        if (!MayHaveModalDialog()) return;
         var ancestors = new List<AutomationElement>();
         for (var parent = root.Parent; parent is not null && parent.Properties.ProcessId.ValueOrDefault == identity.ProcessId; parent = parent.Parent)
             ancestors.Add(parent);
-        var host = automation.FromHandle(identity!.WindowHandle);
-        var dialogs = host.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Window))
-            .Where(element => element.Properties.IsEnabled.ValueOrDefault && !element.Properties.IsOffscreen.ValueOrDefault
-                && element.Patterns.Window.IsSupported
+        var dialogs = HostWindows(null).Select(element => element.Element)
+            .Where(element => element.Patterns.Window.IsSupported
                 && element.Patterns.Window.Pattern.IsModal.Value && !element.Equals(root)
                 && !ancestors.Any(parent => parent.Equals(element))).ToArray();
         if (dialogs.Length > 0)

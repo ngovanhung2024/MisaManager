@@ -56,11 +56,9 @@ public sealed partial class NativeInputService : IAsyncDisposable
             var candidate = automation.FromHandle(window.WindowHandle);
             if (!string.IsNullOrWhiteSpace(scopeAutomationId))
             {
-                var scopes = candidate.FindAllDescendants(automation.ConditionFactory.ByAutomationId(scopeAutomationId))
-                    .Where(item => item.Properties.ProcessId.ValueOrDefault == window.ProcessId
-                        && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault).ToArray();
+                var scopes = Snapshots(candidate, Live(automation.ConditionFactory.ByAutomationId(scopeAutomationId), window.ProcessId));
                 if (scopes.Length != 1) throw new AutomationException("SCOPE_AMBIGUOUS", "Không xác định duy nhất editor cho input.");
-                candidate = scopes[0];
+                candidate = scopes[0].Element;
             }
             root = candidate;
             identity = window;
@@ -238,12 +236,10 @@ public sealed partial class NativeInputService : IAsyncDisposable
         {
             RecordQuery();
             GuardWorkflow(frame);
-            var editors = root!.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Edit))
-                .Where(item => item.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
-                    && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                    && item.BoundingRectangle.Width > 0 && item.BoundingRectangle.Height > 0
-                    && item.Properties.HasKeyboardFocus.ValueOrDefault)
-                .ToArray();
+            var focused = automation.ConditionFactory.ByControlType(ControlType.Edit)
+                .And(new PropertyCondition(automation.PropertyLibrary.Element.HasKeyboardFocus, true));
+            var editors = Snapshots(root!, Live(focused, identity!.ProcessId))
+                .Where(item => item.HasArea && item.HasKeyboardFocus).Select(item => item.Element).ToArray();
             if (editors.Length != 1) throw new AutomationException("ACTIVE_EDITOR_AMBIGUOUS", "Không xác định duy nhất editor đang nhận focus.");
             var text = ReadNativeText(editors[0]);
             return new Readback("supported", text.Value, text.Source + "+ActiveEditor", DateTimeOffset.UtcNow, null, Capture());
@@ -321,7 +317,7 @@ public sealed partial class NativeInputService : IAsyncDisposable
     private NativeFrame Capture()
     {
         if (root is null || identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
-        var current = new MisaWindowDiscovery().Bind(identity.WindowHandle, identity.ProcessId);
+        var current = RefreshWindow(identity);
         if (current.ProcessStartUtc != identity.ProcessStartUtc || current.WindowHandle != identity.WindowHandle)
             throw new AutomationException("WINDOW_IDENTITY_CHANGED", "Process hoặc HWND MISA đã thay đổi.");
         identity = current;
@@ -331,12 +327,11 @@ public sealed partial class NativeInputService : IAsyncDisposable
     private AutomationElement Find(string automationId, string name, bool allowOffscreen = false)
     {
         if (root is null || identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
-        var candidates = new List<AutomationElement>();
-        if (!string.IsNullOrWhiteSpace(automationId)) candidates.AddRange(root.FindAllDescendants(automation.ConditionFactory.ByAutomationId(automationId)));
-        if (string.IsNullOrWhiteSpace(automationId) && !string.IsNullOrWhiteSpace(name)) candidates.AddRange(root.FindAllDescendants(automation.ConditionFactory.ByName(name)));
-        candidates = candidates.Where(item => item.Properties.ProcessId.ValueOrDefault == identity.ProcessId
-            && (string.IsNullOrWhiteSpace(name) || string.Equals(item.Properties.Name.ValueOrDefault, name, StringComparison.Ordinal))
-            && item.Properties.IsEnabled.ValueOrDefault && (allowOffscreen || !item.Properties.IsOffscreen.ValueOrDefault)).Distinct().ToList();
+        ConditionBase? condition = !string.IsNullOrWhiteSpace(automationId) ? automation.ConditionFactory.ByAutomationId(automationId)
+            : !string.IsNullOrWhiteSpace(name) ? automation.ConditionFactory.ByName(name) : null;
+        var candidates = condition is null ? [] : Snapshots(root, Live(condition, identity.ProcessId, onscreen: !allowOffscreen))
+            .Where(item => string.IsNullOrWhiteSpace(name) || string.Equals(item.Name, name, StringComparison.Ordinal))
+            .Select(item => item.Element).ToList();
         if (candidates.Count != 1) throw new AutomationException(candidates.Count == 0 ? "NOT_FOUND" : "AMBIGUOUS_ELEMENT", $"Không xác định duy nhất control '{automationId}/{name}'.");
         return candidates[0];
     }
@@ -358,6 +353,7 @@ public sealed partial class NativeInputService : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        windowTracker.Dispose();
         if (ownsDispatcher) dispatcher.Dispose();
         return ValueTask.CompletedTask;
     }

@@ -100,6 +100,35 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
         return Bind(handle, expectedProcessId);
     }
 
+    // Re-reads the mutable window state of an already proven binding. The
+    // caller holds the process handle open, so its PID cannot be reused.
+    internal static WindowIdentity? TryRefresh(WindowIdentity bound, Process process)
+    {
+        try
+        {
+            var handle = (HWND)bound.WindowHandle;
+            process.Refresh();
+            if (process.HasExited || PInvoke.GetWindowThreadProcessId(handle, out var pid) == 0
+                || pid != (uint)bound.ProcessId || process.MainWindowHandle != bound.WindowHandle
+                || !PInvoke.GetClientRect(handle, out var rect))
+                return null;
+            var origin = new System.Drawing.Point();
+            if (!PInvoke.ClientToScreen(handle, ref origin) || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393))
+                return null;
+            var dpi = PInvoke.GetDpiForWindow(handle);
+            return bound with
+            {
+                Title = GetWindowTitle(bound.WindowHandle),
+                Dpi = checked((int)dpi),
+                ClientBounds = new(origin.X, origin.Y, rect.right - rect.left, rect.bottom - rect.top)
+            };
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
     private static bool IsMisaExecutable(string path)
         => Regex.IsMatch(Path.GetFileName(path), @"^MISA\.SME(?:\d{4})?\.exe$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
@@ -112,4 +141,55 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
 
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsWow64Process2(nint process, out ushort processMachine, out ushort nativeMachine);
 
+}
+
+// Avoids Process.GetProcessById and MainModule enumeration on every frame.
+// Any mismatch or failure falls back to the full MisaWindowDiscovery.Bind.
+internal sealed class BoundWindowTracker : IDisposable
+{
+    private Process? process;
+    private WindowIdentity? bound;
+
+    public WindowIdentity Refresh(WindowIdentity expected)
+    {
+        if (process is not null && bound is not null && bound.ProcessId == expected.ProcessId
+            && bound.WindowHandle == expected.WindowHandle && bound.ProcessStartUtc == expected.ProcessStartUtc
+            && bound.ExecutablePath == expected.ExecutablePath)
+        {
+            var fast = MisaWindowDiscovery.TryRefresh(bound, process);
+            if (fast is not null) return bound = fast;
+        }
+        Reset();
+        var current = new MisaWindowDiscovery().Bind(expected.WindowHandle, expected.ProcessId);
+        Track(current);
+        return current;
+    }
+
+    private void Track(WindowIdentity current)
+    {
+        Process? candidate = null;
+        try
+        {
+            candidate = Process.GetProcessById(current.ProcessId);
+            _ = candidate.SafeHandle;
+            if (candidate.StartTime.ToUniversalTime() != current.ProcessStartUtc) return;
+            process = candidate;
+            bound = current;
+            candidate = null;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            Trace.TraceWarning("Window tracking: {0}", error.Message);
+        }
+        finally { candidate?.Dispose(); }
+    }
+
+    private void Reset()
+    {
+        process?.Dispose();
+        process = null;
+        bound = null;
+    }
+
+    public void Dispose() => Reset();
 }
