@@ -11,6 +11,10 @@ public static class ControlActions
         , ["runLive"] = "live_run", ["run_live"] = "live_run", ["liveRun"] = "live_run"
     };
     public static string Canonical(string action) => Aliases.GetValueOrDefault(action) ?? action;
+    // Compact read-only actions for the observing MCP agent; they never send MISA input.
+    public static IReadOnlyList<string> AgentActions { get; } = ["wait_run", "failure_report", "ui_find", "perf_report", "compare_report"];
+    public static bool IsAgentAction(string action) => AgentActions.Contains(Canonical(action));
+    public const int MaxWaitSeconds = 1500;
     // Include all checkpoint budgets and transport overhead; a batch must not
     // cancel a ten-minute item transition after spending time on its headers.
     public static TimeSpan RequestTimeout(string action) => Canonical(action) switch
@@ -22,6 +26,7 @@ public static class ControlActions
         // guarded checkpoint instead of cancelling a read-only proof early.
         "recover" => TimeSpan.FromMinutes(15),
         "save" => TimeSpan.FromMinutes(6),
+        "wait_run" => TimeSpan.FromSeconds(MaxWaitSeconds + 60),
         _ => TimeSpan.FromMinutes(4)
     };
     public static bool IsDirect(string action) => Canonical(action) is "native_read" or "native_set" or "native_invoke" or "native_key" or "selectTab" or "scroll";

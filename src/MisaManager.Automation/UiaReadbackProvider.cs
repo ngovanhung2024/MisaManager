@@ -7,7 +7,7 @@ using MisaManager.Core;
 
 namespace MisaManager.Automation;
 
-public sealed class UiaReadbackProvider : INativeReadback, IDisposable
+public sealed partial class UiaReadbackProvider : INativeReadback, IDisposable
 {
     private readonly UIA3Automation automation = new();
     private readonly BoundWindowTracker windowTracker = new();

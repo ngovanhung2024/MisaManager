@@ -184,6 +184,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (SelectedInvoice is not { } selected) { Status = "Chọn một hóa đơn trước khi thêm vào MISA."; return; }
         running = true;
         stopRequested = false;
+        services.BeginUiBatch(selected.Identity.Number);
         ResetPerformance();
         performanceStartedAt = DateTimeOffset.UtcNow;
         performanceInvoice = selected.Identity.Number;
@@ -256,6 +257,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             FinishAllRunning(performanceOutcome);
             FinishTrace(wholeRun, performanceOutcome);
             running = false;
+            services.EndUiBatch(performanceOutcome);
             PerformanceCurrent = "Đã kết thúc";
             NotifyWorkflowChanged();
         }
@@ -306,7 +308,10 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     }
 
     private void RaiseError(string message, string details)
-        => ErrorRaised?.Invoke(this, new(message, details, DateTimeOffset.Now));
+    {
+        services.RecordUiError(message, details);
+        ErrorRaised?.Invoke(this, new(message, details, DateTimeOffset.Now));
+    }
 
     private static string Serialize(object? value)
         => value is null ? "Không có thêm dữ liệu." : JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true });
@@ -468,22 +473,15 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             .AppendLine("```")
             .AppendLine()
             .AppendLine("OPERATING RULES")
-            .AppendLine(repairable
-                ? $"1. The first MCP call must be misa_begin_repair with incident_id={incident} and source_root=C:\\misa. Use its repair packet and fresh native observation; do not call separate state tools unless a concrete conflict requires it."
-                : "1. Start with misa_read action=live_test_state for the current workflow, or action=diagnostics if no workflow is selected. The bridge handshakes automatically. Use the fresh native observation in that response; request another scoped read only when evidence is missing or conflicting.")
-            .AppendLine("2. This is a live TEST repair session. If you need to exercise an invoice, call misa_live_run with executionMode=live_test; it must always Bỏ the test voucher and never write accounting data. Never use live_production from this developer prompt.")
-            .AppendLine("3. Never claim success from a click, keystroke, or screenshot alone. A live-run error is terminal for that attempt; capture the repair incident and never replay the failed checkpoint.")
-            .AppendLine("4. Keep the test bound to the current MISA window identity, workbook/invoice revision, and runtime/source revision. Do not reuse another run or historical incident.")
-            .AppendLine("5. misa_live_run owns the save/discard decision: only a full fresh reconciliation can authorize Cất, and any mismatch is Bỏ. Preserve SaveUncertain/InputUncertain states.")
+            .AppendLine("1. First call misa_failure. One call returns the error, failed step, MISA dialogs and focused element captured at failure time, expected invoice values, comparison mismatches and sourceHints. Call misa_ui only if that evidence is missing or conflicting; misa_compare/misa_perf only when relevant.")
+            .AppendLine("2. The MCP is observer-only and never drives MISA. The user reruns by clicking 'Thêm vào MISA'; then call misa_wait (waitForStart=true) for the result.")
+            .AppendLine("3. Never claim a fix works from code changes alone; it is verified only when a later misa_wait/misa_compare shows the invoice completed and matched.")
             .AppendLine()
-            .AppendLine("LIVE BUG FIX WORKFLOW")
-            .AppendLine($"- If the current workflow is blocked/uncertain/failed, first call misa_begin_repair with incident_id={incident} and source_root=C:\\misa. Do not invent an incident id; if none is available, report that source repair cannot be bound yet.")
-            .AppendLine("- Inspect the failing checkpoint, last action/readback, and the routed source branch. Make the smallest source fix that explains the actual value, expected value, and failure condition.")
-            .AppendLine("- Run source-only syntax/hash/package/build checks required by the project. Do not use Python hot reload or create tests/fixtures/scripts for this repair.")
-            .AppendLine("- Call misa_complete_repair with the real release directory, root cause, affected callers, and message. Call misa_reload with release_directory set to that same checked release, wait for the candidate to return, then call misa_acknowledge_restart with the same incident/session and fresh MISA window identity.")
-            .AppendLine("- Call misa_rebind_after_restart with expectedStatus=Failed, restartFromBeginning=true, the required incident, and a fresh window identity. This submits the same invoice to misa_live_run from Ready; never resume the failed checkpoint.")
-            .AppendLine("- If the new live run fails again, repeat the same repair cycle. If it is SaveUncertain, stop and prove the native save result before any retry.")
-            .AppendLine("- Report changed files, root cause, affected callers, source revision, checks, live verification result, and any uncertain destination/readback.")
+            .AppendLine("FIX WORKFLOW")
+            .AppendLine("- Make the smallest source fix that explains the actual value, expected value and failure condition; start from sourceHints.")
+            .AppendLine("- Run the project build (scripts/build.ps1). Do not create tests, fixtures or scripts for this repair.")
+            .AppendLine("- Ask the user to restart MisaManager on the new build and click 'Thêm vào MISA' again, then call misa_wait; on a new failure call misa_failure again.")
+            .AppendLine("- Report changed files, root cause, checks run and the verified result.")
             .AppendLine()
             .AppendLine("The embedded diagnostics are a launch-time snapshot, not a fresh observation at tool-call time. Begin with the required MCP call and report its fresh observation or explicit failure. Do not ask me to paste a screenshot when a native observation can answer the question.")
             .ToString();

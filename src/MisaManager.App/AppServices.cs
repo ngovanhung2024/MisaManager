@@ -45,6 +45,7 @@ public sealed partial class AppServices : IAsyncDisposable
         Input = new(nativeOwner);
         eventStore = new RunEventStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "logs"));
         workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile);
+        workflowGateway.FailureObserver = CaptureFailureUiAsync;
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
         Repairs = new(State);
         Drafts = new(State);
@@ -82,6 +83,9 @@ public sealed partial class AppServices : IAsyncDisposable
         }
         if (request.Action is "get_operation_status" or "capabilities")
             return await DispatchCoreAsync(request, token);
+        // Agent reads are not operations: no registry entry, no serial gate.
+        if (ControlActions.IsAgentAction(request.Action))
+            return await DispatchAgentAsync(request, token);
         var operationId = ReadOperationId(request);
         using var correlation = OperationContext.Begin(request.RequestId, operationId);
         var started = new OperationStatusSnapshot(operationId, request.RequestId, request.SessionId,
@@ -143,7 +147,7 @@ public sealed partial class AppServices : IAsyncDisposable
             case "capabilities":
                 return new(request.RequestId, "completed", "MisaManager control connected.", Data: new CapabilitySnapshot(
                     typeof(AppServices).Assembly.GetName().Version?.ToString() ?? "0.0.0", ProductIdentity.ControlProtocolVersion,
-                    ProductIdentity.LocatorProfileVersion, WorkflowProfile.Status, ["observe", "inspect", "export_tab", "diagnostics", "live_test_state", "failure_context", "focus", "native_read", "native_set", "native_invoke", "native_key", "click", "type", "pressKey", "scroll", "selectTab", "startWorkflow", "runWorkflow", "liveRun", "getOperationStatus", "start_workflow", "run_workflow", "live_run", "verification_history", "advance", "pause", "resume", "cancel", "save", "discard", "reconcile", "workflow_status", "get_operation_status", "generation_status", "correct_invoice", "recover", "begin_repair", "complete_repair", "acknowledge_restart", "rebind_after_restart", "reload"],
+                    ProductIdentity.LocatorProfileVersion, WorkflowProfile.Status, [.. ControlActions.AgentActions, "observe", "inspect", "export_tab", "diagnostics", "live_test_state", "failure_context", "focus", "native_read", "native_set", "native_invoke", "native_key", "click", "type", "pressKey", "scroll", "selectTab", "startWorkflow", "runWorkflow", "liveRun", "getOperationStatus", "start_workflow", "run_workflow", "live_run", "verification_history", "advance", "pause", "resume", "cancel", "save", "discard", "reconcile", "workflow_status", "get_operation_status", "generation_status", "correct_invoice", "recover", "begin_repair", "complete_repair", "acknowledge_restart", "rebind_after_restart", "reload"],
                     BlockedReason: MisaProfile.Capability.BlockedReason,
                     SourceRevision: ProductIdentity.SourceRevision, StateSchemaVersion: ProductIdentity.StateSchemaVersion,
                     ProfileRevision: WorkflowProfile.Revision, CoreAssemblySha256: ProductIdentity.RuntimeAssemblySha256));
@@ -779,6 +783,7 @@ public sealed partial class AppServices : IAsyncDisposable
                 : false;
             var result = await Workflow.RunLiveAsync(invoice, company, window, token, liveValidation,
                 WorkflowProfile.Revision, allowKgToTon, request.RequestId, ReadOperationId(request), executionMode);
+            RecordLiveRun(result);
             var status = result.Outcome is "saved" or "discarded" or "tested" ? "completed" : "blocked";
             return new(request.RequestId, status,
                 result.Outcome == "saved" ? "Live production hoàn tất: đối chiếu khớp và đã Cất hóa đơn."
