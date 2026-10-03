@@ -4,6 +4,7 @@ using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Conditions;
 using FlaUI.Core.Definitions;
+using FlaUI.Core.Exceptions;
 using MisaManager.Core;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -150,6 +151,12 @@ public sealed partial class NativeInputService
                 var window = automation.FromHandle(handle);
                 if (window.Patterns.Window.IsSupported && window.Patterns.Window.Pattern.IsModal.Value) return true;
             }
+            catch (ElementNotAvailableException)
+            {
+                // A child window can disappear between EnumWindows and UIA
+                // binding while MISA recreates a grid editor.
+                continue;
+            }
             catch (COMException) { return true; }
         }
         return false;
@@ -168,6 +175,12 @@ public sealed partial class NativeInputService
                 if (window.Patterns.Window.IsSupported && window.Patterns.Window.Pattern.IsModal.Value
                     || string.Equals(window.Properties.ClassName.ValueOrDefault, "#32770", StringComparison.Ordinal))
                     return true;
+            }
+            catch (ElementNotAvailableException)
+            {
+                // The owned handle is stale; the next native operation will
+                // resolve the current MISA surface again.
+                continue;
             }
             catch (COMException) { return true; }
         }

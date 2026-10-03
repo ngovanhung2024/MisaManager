@@ -86,7 +86,8 @@ public partial class MainWindow
         if (invoice is null)
         {
             entryFields.Clear();
-            EntryHeading.Visibility = EntryList.Visibility = ComparisonExpander.Visibility = Visibility.Collapsed;
+            EntryHeading.Visibility = EntryList.Visibility = Visibility.Collapsed;
+            ComparisonExpander.Visibility = Visibility.Collapsed;
             EntryEmpty.Visibility = Visibility.Visible;
             SheetChoice.Visibility = workbook is null ? Visibility.Collapsed : Visibility.Visible;
             EntryProgress.Value = 0;
@@ -94,7 +95,9 @@ public partial class MainWindow
             ComparisonSummary.Text = "Chưa có kết quả đối chiếu.";
             return;
         }
-        EntryHeading.Visibility = EntryList.Visibility = ComparisonExpander.Visibility = Visibility.Visible;
+        EntryHeading.Visibility = EntryList.Visibility = Visibility.Visible;
+        // Reconciliation is rendered in the companion window beside the tool.
+        ComparisonExpander.Visibility = Visibility.Collapsed;
         EntryEmpty.Visibility = Visibility.Collapsed;
         SheetChoice.Visibility = workbook is null ? Visibility.Collapsed : Visibility.Visible;
         EntryTitle.Text = $"Hóa đơn {invoice.Identity.Number} · {invoice.Lines.Length} mặt hàng";
@@ -161,7 +164,7 @@ public partial class MainWindow
         EntryProgress.Value = bound?.Snapshot.Status == WorkflowStatus.Saved ? 100
             : checkpoint <= WorkflowStatus.AwaitingSave ? (int)checkpoint * 10 : 0;
         if (workflow.IsRunning || activity == "reconcile") SourceExpander.IsExpanded = false;
-        if (activity == "reconcile") ComparisonExpander.IsExpanded = true;
+        ComparisonExpander.IsExpanded = false;
         var identity = bound is null ? null : bound.Snapshot.RunId + ":" + bound.Reconciliations?.Count;
         if (comparisonClearedIdentity is not null && string.Equals(comparisonClearedIdentity, identity, StringComparison.Ordinal))
         {
@@ -180,7 +183,7 @@ public partial class MainWindow
                 : latest.Result is null ? "Không đọc đủ thông tin: " + latest.Error
                 : $"{(visibleValues.All(value => value.Matched) ? "Tất cả thông tin khớp" : "Có thông tin chưa khớp")} · {visibleValues.Count(value => value.Matched)}/{visibleValues.Length} trường"
                     + $" · {latest.Result.ObservedAt.ToLocalTime():HH:mm:ss}";
-            if (latest is not null) { ComparisonExpander.IsExpanded = true; SourceExpander.IsExpanded = false; }
+            if (latest is not null) SourceExpander.IsExpanded = false;
         }
     }
 

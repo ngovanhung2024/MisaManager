@@ -36,10 +36,19 @@ public sealed partial class NativeInputService
                 throw new AutomationException("TARGET_NOT_FOUND", "MISA new-item dialog is not ready.");
             if (dialogs.Length != 1)
                 throw new AutomationException("NEW_ITEM_DIALOG_AMBIGUOUS", "More than one native new-item dialog is visible.");
-            root = dialogs[0];
+            var dialog = dialogs[0];
+            // R20 can expose the modal window during its opening transition.
+            // Wait for one enabled, onscreen observation before binding the
+            // input scope so GuardWorkflow does not race that transition.
+            if (!dialog.Properties.IsEnabled.ValueOrDefault || dialog.Properties.IsOffscreen.ValueOrDefault)
+                throw new AutomationException("TARGET_NOT_FOUND", "MISA new-item dialog is still opening.");
+            root = dialog;
             epoch++;
             var frame = Capture();
-            GuardWorkflow(frame);
+            if (!root.Properties.IsEnabled.ValueOrDefault || root.Properties.IsOffscreen.ValueOrDefault
+                || root.Properties.ProcessId.ValueOrDefault != identity!.ProcessId
+                || root.Name != frame.TabIdentity)
+                throw new AutomationException("TARGET_NOT_FOUND", "MISA new-item dialog scope is not stable yet.");
             return frame;
         }, token), _ => true, "NEW_ITEM_DIALOG_MISSING", "MISA new-item dialog did not open.", token,
             timeoutMilliseconds: 10000);

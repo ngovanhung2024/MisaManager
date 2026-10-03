@@ -120,7 +120,8 @@ public sealed partial class NativeInputService : IAsyncDisposable
                     NativeKeyboard.Click(
                         checked((int)Math.Round(bounds.X + bounds.Width / 2d)),
                         checked((int)Math.Round(bounds.Y + bounds.Height / 2d)),
-                        identity!.WindowHandle, identity.ProcessId);
+                        identity!.WindowHandle, identity.ProcessId,
+                        automationId.StartsWith("[Toolbar :", StringComparison.Ordinal) ? WorkflowTargetHandle(element) : nint.Zero);
                 }
                 else if (element.Patterns.SelectionItem.IsSupported)
                 {

@@ -404,6 +404,27 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Reads the voucher tab so auxiliary UI can close when the MISA tab is closed.</summary>
+    public async Task<(bool IsOpen, WindowIdentity? Window)> ObserveVoucherEditorAsync(CancellationToken token = default)
+    {
+        var window = SelectedWindow ?? ResolveWindow(services.Workflow.Current?.Snapshot.WindowIdentity);
+        if (window is null) return (false, null);
+        try
+        {
+            var observation = await services.Native.ObserveAsync(window.WindowHandle, null, token,
+                services.WorkflowProfile.EditorId);
+            var open = observation.Elements.Any(element =>
+                element.AutomationId == services.WorkflowProfile.EditorId
+                && element.ControlType == "Window" && element.Enabled && !element.Offscreen);
+            return (open, observation.Frame.Window);
+        }
+        catch (Exception error) when (error is AutomationException or ArgumentException
+            or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return (false, null);
+        }
+    }
+
     private static WindowIdentity? ResolveWindow(string? identity)
     {
         if (string.IsNullOrWhiteSpace(identity)) return null;

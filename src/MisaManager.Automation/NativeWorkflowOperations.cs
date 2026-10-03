@@ -124,7 +124,8 @@ public sealed partial class NativeInputService
             return new NativeTable(rows, Capture(), sources);
         }, token);
 
-    public Task<NativeFields> ReadFieldsAsync(NativeFrame frame, IReadOnlyDictionary<string, NativeSelector> fields, CancellationToken token)
+    public Task<NativeFields> ReadFieldsAsync(NativeFrame frame, IReadOnlyDictionary<string, NativeSelector> fields,
+        CancellationToken token, bool preferDisplayText = false)
         => dispatcher.RunAsync(() =>
         {
             RecordQuery();
@@ -135,7 +136,9 @@ public sealed partial class NativeInputService
             foreach (var field in fields)
             {
                 token.ThrowIfCancellationRequested();
-                values.Add(field.Key, ReadNativeText(targets[index++]));
+                values.Add(field.Key, preferDisplayText
+                    ? ReadDisplayText(targets[index++])
+                    : ReadNativeText(targets[index++]));
             }
             GuardWorkflow(frame);
             var fresh = Capture();
@@ -294,8 +297,12 @@ public sealed partial class NativeInputService
             var dialogHandle = (nint)dialog.Properties.NativeWindowHandle.ValueOrDefault;
             if (editorHandle == nint.Zero || dialogHandle == nint.Zero || !OwnedBy(dialogHandle, editorHandle))
                 throw new AutomationException("SAVE_PROMPT_OWNER_INVALID", "Tax prompt is not owned by the bound voucher.");
-            var vouchers = editor.FindAllDescendants(automation.ConditionFactory.ByAutomationId(voucherField.AutomationId));
-            if (vouchers.Length != 1 || ReadNativeText(vouchers[0]).Value != expectedVoucher)
+            var vouchers = editor.FindAllDescendants(automation.ConditionFactory.ByAutomationId(voucherField.AutomationId))
+                .Where(item => item.Properties.ProcessId.ValueOrDefault == window.ProcessId
+                    && !item.Properties.IsOffscreen.ValueOrDefault)
+                .Where(item => string.Equals(ReadNativeText(item).Value, expectedVoucher, StringComparison.Ordinal))
+                .ToArray();
+            if (vouchers.Length == 0)
                 throw new AutomationException("VOUCHER_IDENTITY_CHANGED", "Tax prompt voucher identity differs from the run.");
             var messages = dialog.FindAllDescendants(automation.ConditionFactory.ByAutomationId("lblMessage"));
             if (messages.Length != 1)
@@ -454,10 +461,15 @@ public sealed partial class NativeInputService
                 if (target.Properties.IsOffscreen.ValueOrDefault)
                     throw new AutomationException("GRID_OFFSCREEN", "Row cell remains offscreen after native realization.");
                 var sent = false;
+                // Infragistics virtual cells expose a reliable ValuePattern but
+                // can report focus on the grid host instead of the clicked cell.
+                // Keep the final row readback as the business guard while allowing
+                // the native value write and Tab commit to proceed.
+                var allowUnverifiedFocus = IsVirtualGridEditor(target);
                 try
                 {
-                    SetNativeValue(target, write.Text, token, ref sent);
-                    Commit(target, "Tab", token);
+                    SetNativeValue(target, write.Text, token, ref sent, allowUnverifiedFocus);
+                    Commit(target, "Tab", token, allowUnverifiedFocus);
                     epoch++;
                     current = Capture();
                 }
@@ -572,15 +584,26 @@ public sealed partial class NativeInputService
             }
             var host = automation.FromHandle(identity!.WindowHandle);
             AutomationElement[] registered = [];
-            for (var attempt = 0; attempt < 12 && registered.Length == 0; attempt++)
+            AutomationElement[] options = [];
+            var expectedName = NormalizeOptionName(expected);
+            for (var attempt = 0; attempt < 12; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 registered = RegisteredOptions(host, cellBounds);
-                if (registered.Length == 0) Thread.Sleep(50);
+                // R20 can expose the same ValueList row more than once through
+                // UIA, and can populate the list in more than one pass. Read
+                // each name once, normalize invisible formatting, then keep a
+                // single representative for each logical option.
+                options = registered.Where(item => item.Properties.IsEnabled.ValueOrDefault
+                    && !item.Properties.IsOffscreen.ValueOrDefault && item.Patterns.SelectionItem.IsSupported)
+                    .Select(item => (Element: item, Name: NormalizeOptionName(item.Name)))
+                    .Where(item => item.Name == expectedName)
+                    .GroupBy(item => item.Name, StringComparer.Ordinal)
+                    .Select(group => group.First().Element)
+                    .ToArray();
+                if (options.Length > 0 || registered.Length == 0) break;
+                Thread.Sleep(50);
             }
-            var options = registered.Where(item => item.Properties.IsEnabled.ValueOrDefault
-                && !item.Properties.IsOffscreen.ValueOrDefault && item.Patterns.SelectionItem.IsSupported
-                && string.Equals(item.Name?.Trim(), expected.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
             if (options.Length == 0 && allowMissing)
             {
                 // Absence requires a complete native list, never a failed search
@@ -599,15 +622,53 @@ public sealed partial class NativeInputService
                 MarkWorkflowInput();
                 NativeKeyboard.PressFocused(identity.WindowHandle, identity.ProcessId, "Escape", token);
                 epoch++;
-                for (var attempt = 0; attempt < 12; attempt++)
+                var toggleCloseSent = false;
+                for (var attempt = 0; attempt < 24; attempt++)
                 {
                     token.ThrowIfCancellationRequested();
                     registered = RegisteredOptions(host, cellBounds);
                     if (registered.Length == 0) break;
+
+                    // R20 can leave the Infragistics ValueList focused after
+                    // Escape. Re-resolve the same arrow and toggle it closed
+                    // only after a fresh readback still proves the list open.
+                    if (!toggleCloseSent && attempt == 3)
+                    {
+                        var closeTarget = ResolveCell(cell, preserveComboBox: true);
+                        var closeBounds = closeTarget.BoundingRectangle;
+                        var closeDropdowns = Snapshots(closeTarget,
+                                Live(automation.ConditionFactory.ByControlType(ControlType.Button), identity.ProcessId))
+                            .Where(button => button.HasArea && button.Bounds.Y <= closeBounds.Bottom
+                                && button.Bounds.Bottom >= closeBounds.Y
+                                && (button.AutomationId == "[Editor] dropdown button"
+                                    || button.Bounds.Right >= closeBounds.Right - 8))
+                            .Select(button => button.Element)
+                            .Where(button => button.Patterns.Invoke.IsSupported)
+                            .ToArray();
+                        if (closeDropdowns.Length == 1)
+                        {
+                            try
+                            {
+                                MarkWorkflowInput();
+                                var closeArrowBounds = closeDropdowns[0].BoundingRectangle;
+                                NativeKeyboard.Click(closeArrowBounds.X + closeArrowBounds.Width / 2,
+                                    closeArrowBounds.Y + closeArrowBounds.Height / 2,
+                                    identity.WindowHandle, identity.ProcessId);
+                                epoch++;
+                                toggleCloseSent = true;
+                            }
+                            catch (Exception error)
+                            {
+                                throw new AutomationException("INPUT_UNCERTAIN",
+                                    "Không xác nhận được đóng danh sách ĐVT sau Escape.", true, error);
+                            }
+                        }
+                    }
                     Thread.Sleep(50);
                 }
                 if (registered.Length != 0)
-                    throw new AutomationException("GRID_DROPDOWN_NOT_CLOSED", "Registered unit list remained open after Escape.", true);
+                    throw new AutomationException("GRID_DROPDOWN_NOT_CLOSED",
+                        "Registered unit list remained open after Escape and close-toggle.", true);
                 return Capture();
             }
             if (options.Length != 1)
@@ -648,6 +709,27 @@ public sealed partial class NativeInputService
                 "READBACK_MISMATCH", "Native readback chưa khớp giá trị vừa nhập.", token);
         }
         catch (Exception error) { throw new AutomationException("INPUT_UNCERTAIN", error.Message, true, error); }
+    }
+
+    private static string NormalizeOptionName(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        var result = new StringBuilder(value.Length);
+        var pendingSpace = false;
+        foreach (var character in value.Normalize(NormalizationForm.FormKC))
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category == UnicodeCategory.Format || char.IsControl(character)) continue;
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = result.Length > 0;
+                continue;
+            }
+            if (pendingSpace) result.Append(' ');
+            pendingSpace = false;
+            result.Append(char.ToUpperInvariant(character));
+        }
+        return result.ToString().Trim();
     }
 
     public Task<int> GridRowCountAsync(NativeFrame frame, string gridId, CancellationToken token)
@@ -1079,6 +1161,9 @@ public sealed partial class NativeInputService
                 && element.NativeWindowHandle != identity.WindowHandle
                 && !string.Equals(element.AutomationId, "frmSAVoucherDetail", StringComparison.OrdinalIgnoreCase))
             .Select(element => element.Element)
+            // The new-item editor is itself a modal scope. While that scope is
+            // bound, its own window must not be reported as an unrelated blocker.
+            .Where(element => root is null || !element.Equals(root))
             .Where(element => element.Patterns.Window.IsSupported && element.Patterns.Window.Pattern.IsModal.Value
                 || string.Equals(element.Properties.ClassName.ValueOrDefault, "#32770", StringComparison.Ordinal))
             .Where(element => !IsCatalogDialog(element))
@@ -1158,6 +1243,21 @@ public sealed partial class NativeInputService
         if (SendMessageTimeoutText(handle, 0x000D, (nuint)buffer.Capacity, buffer, 2, 500, out var copied) == nint.Zero
             || copied != length) throw new AutomationException("READBACK_TRUNCATED", "WM_GETTEXT không đọc đủ giá trị.");
         return (buffer.ToString(), "Win32.WM_GETTEXT");
+    }
+
+    private (string Value, string Source) ReadDisplayText(AutomationElement element)
+    {
+        if (element.ControlType == ControlType.ComboBox)
+        {
+            var selected = element.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.ListItem))
+                .Where(item => item.Patterns.SelectionItem.IsSupported
+                    && item.Patterns.SelectionItem.Pattern.IsSelected.Value
+                    && !string.IsNullOrWhiteSpace(item.Name))
+                .ToArray();
+            if (selected.Length == 1)
+                return (selected[0].Name, "UIA3.SelectionItem+DisplayText");
+        }
+        return ReadNativeText(element);
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint SendMessageTimeout(nint hwnd, uint message, nuint wparam, nint lparam, uint flags, uint timeout, out nuint result);

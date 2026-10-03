@@ -121,8 +121,15 @@ public partial class MainWindow : Window
 
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (IsLoaded && !positioningRail) PositionRail(SystemParameters.WorkArea);
+        if (IsLoaded && !positioningRail)
+        {
+            PositionRail(SystemParameters.WorkArea);
+            PositionComparisonWindow(null);
+        }
     }
+
+    private void Window_LocationChanged(object? sender, EventArgs e)
+        => PositionComparisonWindow(null);
 
     private void PositionRail(System.Windows.Rect workArea)
     {
@@ -472,7 +479,7 @@ public partial class MainWindow : Window
                 StatusLabel.Text = response.Message;
                 RefreshWorkflowPanel();
                 WorkspaceTabs.SelectedIndex = 0;
-                ComparisonExpander.IsExpanded = true;
+                await RefreshComparisonWindowAsync();
             }
             catch (Exception error) { StatusLabel.Text = error.Message; }
             return;
@@ -481,6 +488,19 @@ public partial class MainWindow : Window
             ? "Đối chiếu nguồn: workbook còn lỗi chặn."
             : "Đối chiếu nguồn hoàn tất; chọn một hóa đơn để xem chi tiết.";
         ShowWorkbookIssues();
+    }
+
+    private async void ComparisonWindow_ReconcileRequested(object? sender, EventArgs e)
+    {
+        if (workflow.IsRunning) return;
+        try
+        {
+            var response = await workflow.ReconcileAsync();
+            StatusLabel.Text = response.Message;
+            RefreshWorkflowPanel();
+            await RefreshComparisonWindowAsync();
+        }
+        catch (Exception error) { StatusLabel.Text = error.Message; }
     }
 
     private void Developer_Click(object sender, RoutedEventArgs e)
@@ -547,8 +567,8 @@ public partial class MainWindow : Window
         comparisonProbeBusy = true;
         try
         {
-            var surface = await workflow.ObserveSalesSurfaceAsync();
-            if (!surface.IsOpen)
+            var editor = await workflow.ObserveVoucherEditorAsync();
+            if (!editor.IsOpen)
             {
                 CloseComparisonWindow();
                 return;
@@ -561,25 +581,32 @@ public partial class MainWindow : Window
                 : latest.Result is null ? "Khong doc du thong tin: " + latest.Error
                 : $"{(latest.Result.Matched ? "Tat ca thong tin khop" : "Co thong tin chua khop")}"
                     + $" - {latest.Result.Values.Count(value => value.Matched)}/{latest.Result.Values.Count} truong";
-            comparisonWindow ??= new ComparisonWindow { Owner = this };
-            comparisonWindow.UpdateComparison($"Hoa don {invoice.Identity.Number}", summary, rows);
-            PositionComparisonWindow(surface.Window);
+            if (comparisonWindow is null)
+            {
+                comparisonWindow = new ComparisonWindow { Owner = this };
+                comparisonWindow.ReconcileRequested += ComparisonWindow_ReconcileRequested;
+            }
+            comparisonWindow.UpdateComparison($"Hóa đơn {invoice.Identity.Number}", summary, rows);
+            comparisonWindow.SetReconcileEnabled(!workflow.IsRunning);
+            PositionComparisonWindow(editor.Window);
             if (!comparisonWindow.IsVisible) comparisonWindow.Show();
         }
         finally { comparisonProbeBusy = false; }
     }
 
-    private void PositionComparisonWindow(WindowIdentity? misaWindow)
+    private void PositionComparisonWindow(WindowIdentity? _)
     {
         if (comparisonWindow is null) return;
         var workArea = SystemParameters.WorkArea;
-        var bounds = misaWindow?.ClientBounds;
-        var left = bounds is { Width: > 0 } ? bounds.X - comparisonWindow.Width - 12 : workArea.Left;
-        var top = bounds is { Height: > 0 } ? bounds.Y : workArea.Top;
-        comparisonWindow.Width = Math.Clamp(comparisonWindow.Width, comparisonWindow.MinWidth, 520);
-        comparisonWindow.Height = bounds is { Height: > 0 }
-            ? Math.Min(workArea.Height, bounds.Height)
-            : workArea.Height;
+        var width = Math.Clamp(ActualWidth > 0 ? ActualWidth : Width,
+            comparisonWindow.MinWidth, comparisonWindow.MaxWidth);
+        var height = Math.Clamp(ActualHeight > 0 ? ActualHeight : Height,
+            comparisonWindow.MinHeight, workArea.Height);
+        comparisonWindow.Width = width;
+        comparisonWindow.Height = height;
+        var left = Left + width / 2 >= workArea.Left + workArea.Width / 2
+            ? workArea.Left : workArea.Right - width;
+        var top = Top;
         comparisonWindow.Left = Math.Max(workArea.Left, Math.Min(left, workArea.Right - comparisonWindow.Width));
         comparisonWindow.Top = Math.Max(workArea.Top, Math.Min(top, workArea.Bottom - comparisonWindow.Height));
     }

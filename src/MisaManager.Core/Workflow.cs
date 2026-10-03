@@ -831,10 +831,18 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             if (save && current.Snapshot.Status != WorkflowStatus.AwaitingSave)
                 throw new InvalidOperationException("Chỉ Cất sau khi đối chiếu toàn bộ chứng từ.");
             var discardUncertain = !save && resolveSaveUncertain
-                && current.Snapshot.Status == WorkflowStatus.SaveUncertain
-                && current.Snapshot.PausedFromStatus == WorkflowStatus.AwaitingSave;
+                && ((current.Snapshot.Status == WorkflowStatus.SaveUncertain
+                        && current.Snapshot.PausedFromStatus == WorkflowStatus.AwaitingSave)
+                    || (current.Snapshot.Status == WorkflowStatus.Blocked
+                        && (current.Snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain
+                            || current.Snapshot.PausedFromStatus == WorkflowStatus.Blocked
+                                && current.Snapshot.LastErrorCode == "EDITOR_NOT_FOUND")));
             if ((current.Snapshot.Status == WorkflowStatus.SaveUncertain && !discardUncertain) || IsTerminal(current.Snapshot.Status)
-                || current.Snapshot.Status == WorkflowStatus.Blocked && current.Snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain)
+                || current.Snapshot.Status == WorkflowStatus.Blocked
+                    && (current.Snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain
+                        || current.Snapshot.PausedFromStatus == WorkflowStatus.Blocked
+                            && current.Snapshot.LastErrorCode == "EDITOR_NOT_FOUND")
+                    && !discardUncertain)
                 throw new InvalidOperationException("Không lặp Cất/Bỏ khi kết quả đã lưu hoặc chưa rõ.");
             if (await FileDigest.Sha256Async(current.Invoice.Source.FilePath, token) != current.Invoice.Source.Sha256)
                 throw new InvalidDataException("Workbook đã thay đổi; không Cất/Bỏ với revision cũ.");
@@ -875,7 +883,10 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             var status = observation.Confirmed ? target : save
                 ? observation.Status == WorkflowStatus.SaveUncertain ? WorkflowStatus.SaveUncertain : WorkflowStatus.Blocked
                 : observation.InputMayHaveBeenSent ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked;
-            current = Replace(current, status, observation.NativeFrame, current.Snapshot.Status, observation.Message);
+            WorkflowStatus? pausedFrom = observation.Confirmed
+                ? null
+                : discardUncertain ? WorkflowStatus.SaveUncertain : current.Snapshot.Status;
+            current = Replace(current, status, observation.NativeFrame, pausedFrom, observation.Message);
             current = current with { Snapshot = current.Snapshot with { InputPending = false, PendingAction = null,
                 InputMayHaveBeenSent = current.Snapshot.InputMayHaveBeenSent || observation.InputMayHaveBeenSent,
                 LastInputDisposition = observation.InputDisposition, LastErrorCode = observation.ErrorCode,

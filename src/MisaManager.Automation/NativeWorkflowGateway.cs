@@ -211,8 +211,10 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 if (transition.To is WorkflowStatus.Saved or WorkflowStatus.Discarded)
                 {
                     if (transition.To == WorkflowStatus.Saved) await VerifySavedAndCloseEditor(context, token, afterSave: false);
-                    else await WaitEditor(context, false, token);
-                    var finishedFrame = Frame(await input.CaptureAsync(token));
+                    await VerifyFinished(context, transition.To == WorkflowStatus.Saved, token);
+                    // Closing the editor can invalidate the previous native root;
+                    // bind the sales surface again before capturing final proof.
+                    var finishedFrame = Frame(await BindSales(context, token, activate: false));
                     sent = input.WorkflowInputSequence != inputSequence;
                     return new(true, transition.To, finishedFrame, "Rebound by native readback; no input replayed.",
                         sent ? InputDisposition.Verified : InputDisposition.NotSent, sent);
@@ -256,7 +258,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             {
                 // Entry steps skip readbacks the final reconciliation repeats (voucher number,
                 // dates, invoice fields, line values). Recovery still verifies via ObserveAsync.
-                await BindEditor(context, token);
+                // A confirmed discard may be retried after the editor has already closed;
+                // let its fresh register readback decide whether an editor is needed.
+                if (transition.To != WorkflowStatus.Discarded
+                    || await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                    await BindEditor(context, token);
                 switch (transition.To)
                 {
                     case WorkflowStatus.CustomerVerified:
@@ -300,6 +306,8 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         comparison = beforeSave;
                         if (!beforeSave.Matched) throw new AutomationException("RECONCILIATION_FAILED", "Chứng từ đã đổi; không Cất.");
                         Entering("save");
+                        // R20 exposes txtRefNo only on the receipt tab, including during a save prompt.
+                        await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
                         var saveFrame = await input.CaptureAsync(token);
                         var beforeSaveInput = input.WorkflowInputSequence;
                         try { await input.InvokeWorkflowAsync(saveFrame, profile.SaveVoucher, token, leavesScope: true); }
@@ -309,7 +317,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         await VerifySavedAndCloseEditor(context, token, afterSave: true);
                         break;
                     case WorkflowStatus.Discarded:
-                        if (context.Snapshot.Status == WorkflowStatus.SaveUncertain)
+                        if (context.Snapshot.Status == WorkflowStatus.SaveUncertain
+                            || context.Snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain
+                            || context.Snapshot.Status == WorkflowStatus.Blocked
+                                && context.Snapshot.PausedFromStatus == WorkflowStatus.Blocked
+                                && context.Snapshot.LastErrorCode == "EDITOR_NOT_FOUND")
                         {
                             // Absence requires a fresh complete table, never saved
                             // error text or the register's currently visible page.
@@ -318,15 +330,22 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                                 SalesFinishedColumns(), token);
                             if (register.Rows.Any(row =>
                                 Match(Saved(context, "voucher_number"), row[profile.SalesColumns["voucher_number"]], NativeValueKind.Exact)
-                                || Match(context.Invoice.Identity.Number, row[profile.SalesColumns["number"]], NativeValueKind.Exact)))
-                                throw new AutomationException("DISCARD_SAVE_PROOF_PRESENT", "Register contains the voucher or invoice; verify Saved instead of discarding.");
+                                && Match(context.Invoice.Identity.Number, row[profile.SalesColumns["number"]], NativeValueKind.Exact)))
+                                throw new AutomationException("DISCARD_SAVE_PROOF_PRESENT", "Register contains the expected voucher and invoice; verify Saved instead of discarding.");
+                            // An earlier explicit discard may have closed the editor before
+                            // its result was persisted; fresh register absence is sufficient.
+                            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                                break;
                             await BindEditor(context, token);
                             await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
                             await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), profile.SaveVoucher, true, token);
                         }
-                        await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token,
-                            leavesScope: true, discardChanges: true); sent = true;
-                        await WaitEditor(context, false, token);
+                        if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                        {
+                            await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token,
+                                leavesScope: true, discardChanges: true); sent = true;
+                            await WaitEditor(context, false, token);
+                        }
                         break;
                     default: throw new AutomationException("TRANSITION_INVALID", "Checkpoint không thuộc profile R20.");
                 }
@@ -379,8 +398,12 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewName,
             line.Name, line.Name, NativeValueKind.Text, profile.Culture, "Tab", token,
             verifyAfterWrite: false);
+        // MISA's unit catalog stores the kilogram option as lowercase "kg".
+        // Normalize this alias before writing so the ComboBox actually selects it.
+        var itemUnitValue = string.Equals(line.Unit.Trim(), "Kg", StringComparison.OrdinalIgnoreCase)
+            ? "kg" : line.Unit;
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewUnit,
-            line.Unit, line.Unit, NativeValueKind.Text, profile.Culture, "Tab", token,
+            itemUnitValue, line.Unit, NativeValueKind.Text, profile.Culture, "Tab", token,
             allowUnverifiedFocus: true, verifyAfterWrite: false);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewStock,
             "KHH", "KHH", NativeValueKind.Exact, profile.Culture, "Tab", token,
@@ -396,7 +419,8 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             ["stock"] = profile.ItemNewStock,
             ["tax"] = profile.ItemNewTaxRate
         };
-        await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token), required, token),
+        await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token), required, token,
+                preferDisplayText: true),
             values => Match(code, values.Values["code"].Value, NativeValueKind.Exact)
                 && CatalogNameMatch(line.Name, values.Values["name"].Value)
                 && Match(line.Unit, values.Values["unit"].Value, NativeValueKind.Text)
@@ -703,7 +727,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             await WaitEditor(context, false, token);
             return;
         }
-        var frame = await BindSales(context, token);
+        var frame = await BindSales(context, token, activate: false);
         bool MatchesResult(NativeTable table)
         {
             frame = table.Frame;
@@ -740,7 +764,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             profile.Fields["voucher_number"], Saved(context, "voucher_number"), context.Invoice.TaxTotal!.Value,
             context.Invoice.Lines.Length, token);
         // R20 closes the editor itself only after a successful Save; an unsaved editor never closes silently.
-        if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return;
+        if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+        {
+            await BindSales(context, token, activate: false);
+            return;
+        }
         var savedEditor = await BindEditor(context, token);
         if (!afterSave) await VerifyVoucherIdentity(context, savedEditor, token);
         if (preservedTax)

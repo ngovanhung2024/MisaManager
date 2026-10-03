@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FlaUI.Core.Conditions;
 using FlaUI.Core.Definitions;
 using MisaManager.Core;
 
@@ -20,6 +21,35 @@ public sealed partial class NativeInputService
             return grid.Patterns.Grid.IsSupported && grid.Patterns.Table.IsSupported;
         }, token);
         if (indexed) return await ReadTableAsync(frame, gridId, columns, token);
+
+        // R20's Infragistics register exposes every row as a UIA DataItem but
+        // omits GridPattern and ScrollPattern. Validate the native row ordinal
+        // range and the embedded DataRowCount before treating that tree as a
+        // complete table.
+        var exposedRowCount = await dispatcher.RunAsync(() =>
+        {
+            GuardWorkflow(frame);
+            var grid = ResolveGrid(gridId);
+            return TryCustomDataRowCount(grid, token);
+        }, token);
+        if (exposedRowCount is { } count)
+        {
+            string? previous = null;
+            return await NativeWait.UntilAsync(() => dispatcher.RunAsync(() =>
+            {
+                GuardWorkflow(frame);
+                var grid = ResolveGrid(gridId);
+                var table = ReadCustomCompleteTable(grid, columns, count, token);
+                return table with { Sources = table.Sources.Select(row => (IReadOnlyDictionary<string, string>)
+                    row.ToDictionary(value => value.Key, value => value.Value + "+CompleteCustomTree")).ToArray() };
+            }, token), table =>
+            {
+                var fingerprint = JsonSerializer.Serialize(table.Rows);
+                var stable = previous == fingerprint;
+                previous = fingerprint;
+                return stable;
+            }, "GRID_NOT_STABLE", "Native register rows did not settle.", token);
+        }
 
         var terminal = await dispatcher.RunAsync(() =>
         {
@@ -96,6 +126,132 @@ public sealed partial class NativeInputService
         }
         throw new AutomationException("GRID_LIMIT", "Native table traversal exceeded 128 pages.");
     }
+
+    private int? TryCustomDataRowCount(FlaUI.Core.AutomationElements.AutomationElement grid,
+        CancellationToken token)
+    {
+        if (grid.Patterns.Grid.IsSupported || grid.Patterns.Table.IsSupported || grid.Patterns.Scroll.IsSupported)
+            return null;
+        var exposed = Snapshots(grid, TrueCondition.Default);
+        var declared = exposed.Select(item => TryParseDataRowCount(item.Element.Properties.ItemStatus.ValueOrDefault))
+            .FirstOrDefault(value => value is not null);
+        if (declared is { } declaredCount)
+        {
+            var ids = exposed.Where(item => item.ControlType == ControlType.DataItem
+                    && int.TryParse(item.AutomationId, out var ordinal) && ordinal >= 0)
+                .Select(item => int.Parse(item.AutomationId, System.Globalization.CultureInfo.InvariantCulture))
+                .Distinct().OrderBy(value => value).ToArray();
+            if (ids.Length == declaredCount && ids.SequenceEqual(Enumerable.Range(0, declaredCount)))
+                return declaredCount;
+        }
+        var regions = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.Tree),
+            identity!.ProcessId, enabled: false, onscreen: false));
+        foreach (var region in regions)
+        {
+            token.ThrowIfCancellationRequested();
+            if (TryParseDataRowCount(region.Element.Properties.ItemStatus.ValueOrDefault) is not { } count)
+                continue;
+            var rows = NumericRows(region.Element);
+            if (rows.Length == count && rows.Select(row => row.Ordinal)
+                    .SequenceEqual(Enumerable.Range(0, count))) return count;
+        }
+        var numericRows = NumericRows(grid);
+        if (numericRows.Length > 0 && numericRows.Select(row => row.Ordinal)
+                .SequenceEqual(Enumerable.Range(0, numericRows[^1].Ordinal + 1)))
+            return numericRows.Length;
+        return null;
+    }
+
+    private static int? TryParseDataRowCount(string? status)
+    {
+        const string marker = "DataRowCount^IG_TOKEN_SEPERATOR^";
+        var start = (status ?? "").IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return null;
+        start += marker.Length;
+        var end = status!.IndexOf("^IG_TOKEN_SEPERATOR^", start, StringComparison.Ordinal);
+        if (end < 0) end = status.IndexOf("^IG_TOKEN_DELIMETER^", start, StringComparison.Ordinal);
+        var value = end < 0 ? status[start..] : status[start..end];
+        return int.TryParse(value, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var count) && count is >= 0 and <= 5000
+            ? count : null;
+    }
+
+    private (int Ordinal, FlaUI.Core.AutomationElements.AutomationElement Element)[] NumericRows(
+        FlaUI.Core.AutomationElements.AutomationElement scope)
+        => Snapshots(scope, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
+                identity!.ProcessId, enabled: false, onscreen: false))
+            .Where(row => int.TryParse(row.AutomationId, out var ordinal) && ordinal >= 0)
+            .Select(row => (Ordinal: int.Parse(row.AutomationId, System.Globalization.CultureInfo.InvariantCulture), row.Element))
+            .GroupBy(row => row.Ordinal).Where(group => group.Count() == 1)
+            .Select(group => group.Single()).OrderBy(row => row.Ordinal).ToArray();
+
+    private NativeTable ReadCustomCompleteTable(FlaUI.Core.AutomationElements.AutomationElement grid,
+        IReadOnlyList<string> requestedColumns, int expectedRowCount, CancellationToken token)
+    {
+        var headers = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.HeaderItem),
+                identity!.ProcessId, enabled: false, onscreen: false))
+            .Select(element => new CustomCompleteColumn(element.Name,
+                element.Bounds.X, element.Bounds.X + element.Bounds.Width, element.Element))
+            .Where(column => !string.IsNullOrWhiteSpace(column.Name) && column.Right > column.Left)
+            .GroupBy(column => column.Name, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(column => column.Right - column.Left).First())
+            .OrderBy(column => column.Left).ToArray();
+        if (headers.Length == 0)
+            throw new AutomationException("GRID_COLUMNS_INVALID", "Không có tiêu đề cột native của bảng.");
+        var requested = requestedColumns.ToHashSet(StringComparer.Ordinal);
+        var missing = requested.Where(name => headers.All(column => column.Name != name)).ToArray();
+        if (missing.Length > 0)
+            throw new AutomationException("GRID_COLUMN_AMBIGUOUS", "Native grid is missing requested column(s): " + string.Join(", ", missing));
+        headers = headers.Where(column => requested.Count == 0 || requested.Contains(column.Name)).ToArray();
+
+        var rowScope = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.Tree),
+                identity!.ProcessId, enabled: false, onscreen: false))
+            .Where(region => TryParseDataRowCount(region.Element.Properties.ItemStatus.ValueOrDefault) == expectedRowCount)
+            .Select(region => (Scope: region.Element, Rows: NumericRows(region.Element)))
+            .FirstOrDefault(candidate => candidate.Rows.Length == expectedRowCount
+                && candidate.Rows.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)));
+        var rows = rowScope.Scope is not null ? rowScope.Rows : NumericRows(grid);
+        if (rows.Length != expectedRowCount
+            || !rows.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)))
+            throw new AutomationException("GRID_INCOMPLETE", "Native row ordinals do not cover the complete register.");
+
+        var values = new List<IReadOnlyDictionary<string, string>>(rows.Length);
+        var sources = new List<IReadOnlyDictionary<string, string>>(rows.Length);
+        foreach (var row in rows)
+        {
+            token.ThrowIfCancellationRequested();
+            var cells = Snapshots(row.Element, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
+                    identity!.ProcessId, enabled: false, onscreen: false))
+                .Select(item => item.Element).ToArray();
+            var rowValues = new Dictionary<string, string>(StringComparer.Ordinal);
+            var rowSources = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var column in headers)
+            {
+                var visible = cells.Select(cell => (Cell: cell, Bounds: cell.BoundingRectangle))
+                    .Where(item => item.Bounds.Width > 0 && item.Bounds.Height > 0)
+                    .Select(item => (item.Cell, Overlap: HorizontalOverlap(item.Bounds.X, item.Bounds.Right,
+                        column.Left, column.Right)))
+                    .Where(item => item.Overlap > 0)
+                    .OrderByDescending(item => item.Overlap).FirstOrDefault().Cell;
+                var target = visible ?? cells.Where(cell => string.Equals(cell.Properties.Name.ValueOrDefault,
+                    column.Name, StringComparison.Ordinal)).ToArray() switch
+                {
+                    { Length: 1 } match => match[0],
+                    _ => throw new AutomationException("GRID_COLUMNS_INVALID",
+                        "Không ánh xạ được ô native cho cột " + column.Name)
+                };
+                var text = ReadCustomCellText(target, column.Name);
+                rowValues[column.Name] = text.Value;
+                rowSources[column.Name] = text.Source + "+UIA3.CustomGrid.DataItem";
+            }
+            values.Add(rowValues);
+            sources.Add(rowSources);
+        }
+        return new NativeTable(values, Capture(), sources);
+    }
+
+    private sealed record CustomCompleteColumn(string Name, double Left, double Right,
+        FlaUI.Core.AutomationElements.AutomationElement Header);
 
     private Task<NativeFrame> ScrollTableAsync(NativeFrame frame, string gridId, bool top, CancellationToken token)
         => dispatcher.RunAsync(() =>

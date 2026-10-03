@@ -1,11 +1,11 @@
 <Window x:Class="MisaManager.App.ComparisonWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Bang doi chieu" Width="420" MinWidth="340" MinHeight="520"
+        Title="Đối chiếu MISA" Width="333" MinWidth="275" MaxWidth="435" MinHeight="560"
         ShowInTaskbar="False" ShowActivated="False" Topmost="True"
         WindowStartupLocation="Manual" WindowStyle="SingleBorderWindow"
-        ResizeMode="CanMinimize" Background="#FAFBFA" FontFamily="Segoe UI"
-        FontSize="12" Foreground="#263630" UseLayoutRounding="True"
+        ResizeMode="CanMinimize" Background="#F4F6FA"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12" Foreground="#111827" UseLayoutRounding="True"
         SnapsToDevicePixels="True">
   <Grid Margin="8,6,8,5">
     <Grid.RowDefinitions>
@@ -14,12 +14,21 @@
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
     </Grid.RowDefinitions>
-    <TextBlock x:Name="TitleLabel" FontSize="14" FontWeight="SemiBold"
-               TextWrapping="Wrap" Margin="0,0,0,3"/>
-    <TextBlock x:Name="SummaryLabel" Grid.Row="1" Foreground="#65776D"
-               TextWrapping="Wrap" Margin="0,0,0,7"/>
+    <Border Background="White" BorderBrush="#E4E8EF" BorderThickness="1" CornerRadius="8" Padding="8,6">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" x:Name="ReconcileButton" Content="Đọc lại"
+                Click="ReconcileButton_Click" Padding="8,3" Margin="8,0,0,0"
+                FontSize="10.5" FontWeight="SemiBold"/>
+        <StackPanel>
+          <TextBlock x:Name="TitleLabel" FontSize="14" FontWeight="SemiBold"
+                     TextWrapping="Wrap" Margin="0,0,0,3"/>
+          <TextBlock x:Name="SummaryLabel" Foreground="#6B7280"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
     <UniformGrid Grid.Row="2" Columns="2" Margin="8,0,8,5">
-      <TextBlock Text="NGUON EXCEL" FontSize="9" Foreground="#87948B"/>
+      <TextBlock Text="NGUỒN EXCEL" FontSize="9" Foreground="#87948B"/>
       <TextBlock Text="MISA" FontSize="9" Foreground="#87948B"/>
     </UniformGrid>
     <ListView x:Name="ComparisonList" Grid.Row="3" Background="White"
