@@ -18,7 +18,7 @@
     <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="CornerRadius" Value="6"/>
-    <Setter Property="Padding" Value="6,4"/>
+    <Setter Property="Padding" Value="5,3"/>
   </Style>
 
   <Style x:Key="Caption" TargetType="TextBlock">
@@ -142,7 +142,7 @@
 
   <!-- Shared Excel-vs-MISA row (comparison window and profile tab): green when matched, red when mismatched. -->
   <DataTemplate x:Key="ComparisonRowTemplate">
-    <Border x:Name="RowBorder" Padding="6,3,6,3" Margin="0,0,0,1" BorderThickness="3,0,0,0" BorderBrush="#D1D5DB" Background="#F3F4F6" ToolTip="{Binding Evidence}">
+    <Border x:Name="RowBorder" Padding="5,2,5,2" Margin="0,0,0,1" BorderThickness="3,0,0,0" BorderBrush="#D1D5DB" Background="#F3F4F6" ToolTip="{Binding Evidence}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="76"/>
