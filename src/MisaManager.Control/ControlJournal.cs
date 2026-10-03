@@ -66,6 +66,16 @@ internal sealed class ControlJournal
         }
     }
 
+    // Removes a pending reservation for a request that was never dispatched, so the key stays retryable.
+    public void Release(string idempotencyKey)
+    {
+        var path = PathFor(idempotencyKey);
+        lock (gate)
+        {
+            if (Read(idempotencyKey) is { State: "pending" }) File.Delete(path);
+        }
+    }
+
     public void WriteCompleted(string idempotencyKey, string body, OperationResult result, DateTimeOffset now)
         => Write(new ControlJournalRecord(idempotencyKey, body, "completed", now, result));
 
@@ -91,7 +101,7 @@ internal sealed class ControlJournal
                 stream.Write(bytes);
                 stream.Flush(flushToDisk: true);
             }
-            if (File.Exists(path)) File.Replace(temporary, path, null); else File.Move(temporary, path);
+            StateFiles.Commit(temporary, path);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }

@@ -501,6 +501,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         catch (OperationCanceledException error)
         {
             if (current is null) throw;
+            current = Refreshed(current);
             current = await MarkLiveFailureAsync(current, error.Message, "LIVE_RUN_CANCELLED", CancellationToken.None);
             return await CompleteLiveRecordAsync(current, startedAt, "failed", comparison is not null,
                 comparison?.Matched == true, comparison, error.Message, CancellationToken.None);
@@ -508,6 +509,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         catch (Exception error)
         {
             if (current is null) throw;
+            current = Refreshed(current);
             current = await TryDiscardFailedVoucherAsync(current);
             var rerunSafe = error is AutomationException { Code: var code } && InterferenceRetry.IsTransient(code)
                 && current.Snapshot.Status == WorkflowStatus.Discarded;
@@ -517,6 +519,11 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 comparison?.Matched == true, comparison, error.Message, CancellationToken.None, rerunSafe);
         }
     }
+
+    // The local copy can be stale after a failed step (e.g. Save clicked, then persisting failed and the
+    // runner moved to SaveUncertain); writing Failed over that would allow a duplicate Save on rerun.
+    private WorkflowContext Refreshed(WorkflowContext local)
+        => Current is { } latest && latest.Snapshot.RunId == local.Snapshot.RunId ? latest : local;
 
     /// <summary>Reconciliation only reads (and switches view tabs), so a disturbed read is simply repeated.</summary>
     private async Task<ReconciliationResult> ReconcileWithRetryAsync(CancellationToken token)
@@ -694,6 +701,13 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     try { await Task.Delay(InterferenceRetry.Delay(attempt), token); }
                     catch (OperationCanceledException) { break; }
                 }
+                // A "confirmed" step that landed on another checkpoint is not a success; input may
+                // already be in MISA, so it must stop as uncertain instead of being replayed.
+                if (observation.Confirmed && observation.Status != transition.To)
+                    observation = observation with { Confirmed = false, InputMayHaveBeenSent = mayInput || observation.InputMayHaveBeenSent,
+                        InputDisposition = mayInput ? InputDisposition.Uncertain : observation.InputDisposition,
+                        ErrorCode = "CHECKPOINT_MISMATCH",
+                        Message = $"MISA ở checkpoint {observation.Status}, không phải {transition.To}; kiểm tra chứng từ trước khi chạy tiếp." };
                 if (observation.Comparison is not null || transition.To == WorkflowStatus.TotalsVerified)
                     current = WithComparison(current, transition.Checkpoint, observation.Comparison,
                         observation.Comparison is null ? observation.Message : null);
@@ -753,12 +767,15 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             WorkflowContext current;
             lock (gate) current = context ?? throw new InvalidOperationException("Chưa có workflow active.");
-            if (current.Snapshot.Status is WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain)
+            if (current.Snapshot.Status is WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain or WorkflowStatus.Paused)
                 return;
             if (current.Snapshot.Status is WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain or WorkflowStatus.Cancelled
                 or WorkflowStatus.Saved or WorkflowStatus.Discarded)
                 throw new InvalidOperationException("Workflow cannot be paused in its current state.");
-            var paused = Replace(current, WorkflowStatus.Paused, null, current.Snapshot.Status);
+            // A step cancelled by this pause ends as Blocked with the real checkpoint in PausedFromStatus; keep it so Resume works.
+            var resumeFrom = current.Snapshot.Status == WorkflowStatus.Blocked
+                ? current.Snapshot.PausedFromStatus ?? current.Snapshot.Status : current.Snapshot.Status;
+            var paused = Replace(current, WorkflowStatus.Paused, null, resumeFrom);
             lock (gate) context = paused;
             await PersistAsync(paused, CancellationToken.None);
         }

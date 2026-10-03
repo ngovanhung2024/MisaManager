@@ -33,7 +33,25 @@ public sealed class WorkbookReader
     public Task<WorkbookData> ReadAsync(string path, CancellationToken token = default)
         => Task.Run(() => Read(path, new WorkbookLimits(), token), token);
 
+    // Every failure surfaces as WorkbookImportException with a user-actionable message.
     private static WorkbookData Read(string path, WorkbookLimits limits, CancellationToken token)
+    {
+        try { return ReadCore(path, limits, token); }
+        catch (Exception error) when (error is IOException and not FileNotFoundException and not DirectoryNotFoundException)
+        {
+            throw new WorkbookImportException("WORKBOOK_LOCKED", "Không mở được file Excel (đang bị khóa hoặc đang lưu). Lưu/đóng file trong Excel rồi thử lại. " + error.Message);
+        }
+        catch (UnauthorizedAccessException error)
+        {
+            throw new WorkbookImportException("WORKBOOK_ACCESS_DENIED", "Không có quyền đọc file Excel: " + error.Message);
+        }
+        catch (Exception error) when (error is not (WorkbookImportException or OperationCanceledException or FileNotFoundException or DirectoryNotFoundException))
+        {
+            throw new WorkbookImportException("WORKBOOK_INVALID", "File Excel bị lỗi hoặc không đúng định dạng .xlsx: " + error.Message);
+        }
+    }
+
+    private static WorkbookData ReadCore(string path, WorkbookLimits limits, CancellationToken token)
     {
         var timer = Stopwatch.StartNew();
         void Check()
@@ -45,7 +63,8 @@ public sealed class WorkbookReader
         var full = Path.GetFullPath(path);
         if (!Path.GetExtension(full).Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
             throw Fault("UNSUPPORTED_EXTENSION", "Chỉ nhận file Excel .xlsx.");
-        using var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
+        // Excel keeps an open workbook with write access; FileShare.Read alone would refuse to open it.
+        using var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         if (stream.Length > limits.CompressedBytes) throw Fault("WORKBOOK_TOO_LARGE", "Workbook vượt 32 MiB.");
         ValidatePackage(stream, limits, Check);
         stream.Position = 0;

@@ -68,6 +68,11 @@ public sealed class GenerationStore
                 {
                     var relative = Path.GetRelativePath(sourcePath, source).Replace('\\', '/');
                     if (relative is "generation.json" or "migration-journal.json") continue;
+                    if (StateFiles.IsAbandonedTemp(source))
+                    {
+                        File.Delete(source);
+                        continue;
+                    }
                     if (relative.EndsWith(".tmp", StringComparison.Ordinal)) throw new InvalidDataException("Pending state write requires recovery: " + relative);
                     var destination = StateFiles.UnderRoot(target.Path, relative);
                     var before = FileDigest.Sha256Async(source).GetAwaiter().GetResult();

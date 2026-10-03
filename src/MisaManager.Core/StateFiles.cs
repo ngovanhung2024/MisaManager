@@ -51,8 +51,30 @@ public static partial class StateFiles
         {
             using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.WriteThrough))
             { JsonSerializer.Serialize(stream, value, ContractJson.Options); stream.Flush(true); }
-            if (File.Exists(path)) File.Replace(temp, path, null); else File.Move(temp, path);
+            Commit(temp, path);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
+
+    // Antivirus, indexers and concurrent readers briefly lock the target on Windows; retry the swap.
+    public static void Commit(string temp, string path)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path)) File.Replace(temp, path, null); else File.Move(temp, path);
+                return;
+            }
+            catch (Exception error) when (attempt < 6 && error is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(25 * attempt);
+            }
+        }
+    }
+
+    // A temp file left by a crash between write and replace is never authoritative: the live file is intact.
+    public static bool IsAbandonedTemp(string path)
+        => path.EndsWith(".tmp", StringComparison.Ordinal)
+            && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) > TimeSpan.FromMinutes(1);
 }

@@ -80,6 +80,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// <summary>Hard stop: cancels the step in flight; Resume continues from the paused checkpoint.</summary>
     public async Task StopNowAsync()
     {
+        if (!running) return;
         stopRequested = true;
         if (services.Workflow.Current is null) return;
         try { Status = (await services.ExecuteAsync("pause")).Message; }
@@ -90,6 +91,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     {
         if (running) return;
         if (services.Workflow.Current?.Snapshot.Status != WorkflowStatus.Paused) return;
+        stopRequested = false;
         running = true;
         operation = "resume";
         NotifyWorkflowChanged();
@@ -677,7 +679,12 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private sealed class ActionCommand(Func<Task> action) : ICommand
     {
         public bool CanExecute(object? parameter) => true;
-        public async void Execute(object? parameter) => await action();
+        // async void: an escaped exception would reach the dispatcher, so surface it as status instead.
+        public async void Execute(object? parameter)
+        {
+            try { await action(); }
+            catch (Exception error) { System.Diagnostics.Trace.TraceError("Command failed: {0}", error); App.WriteCrashLog("command", error); }
+        }
         public event EventHandler? CanExecuteChanged { add { } remove { } }
     }
 }

@@ -38,9 +38,14 @@ public sealed class JsonStateStore : IStateStore
     {
         var path = SafePath(relativePath);
         if (!File.Exists(path)) return default;
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
-            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var envelope = await JsonSerializer.DeserializeAsync<StateEnvelope<T>>(stream, Json, cancellationToken);
+        StateEnvelope<T>? envelope;
+        // ReadWrite|Delete so a reader never blocks the writer's File.Replace.
+        await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            try { envelope = await JsonSerializer.DeserializeAsync<StateEnvelope<T>>(stream, Json, cancellationToken); }
+            catch (JsonException error) { throw new InvalidDataException($"State document '{relativePath}' is corrupt.", error); }
+        }
         if (envelope is null || envelope.DocumentType != documentType || envelope.SchemaVersion != ProductIdentity.StateSchemaVersion
             || string.IsNullOrWhiteSpace(envelope.AppVersion) || envelope.CreatedAt == default
             || envelope.UpdatedAt < envelope.CreatedAt || envelope.Data is null)
@@ -73,8 +78,7 @@ public sealed class JsonStateStore : IStateStore
                     stream.Flush(flushToDisk: true);
                 }
                 cancellationToken.ThrowIfCancellationRequested();
-                if (File.Exists(path)) File.Replace(temp, path, null);
-                else File.Move(temp, path);
+                StateFiles.Commit(temp, path);
             }
             finally { if (File.Exists(temp)) File.Delete(temp); }
         }

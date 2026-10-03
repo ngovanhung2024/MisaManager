@@ -322,10 +322,11 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                             duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 800, token);
                             if (duplicate is null) await VerifySavedAndCloseEditor(context, token, afterSave: true);
                         }
-                        catch (AutomationException) when (!token.IsCancellationRequested)
+                        catch (Exception error) when (error is not OperationCanceledException && !token.IsCancellationRequested)
                         {
-                            // A slow prompt makes the editor modal, so the saved-proof reads fail first.
-                            duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 1500, token);
+                            // A slow prompt makes the editor modal, so the saved-proof reads fail first
+                            // (as AutomationException or a raw UIA/COM error); look for it before failing.
+                            duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 3000, token);
                             if (duplicate is null) throw;
                         }
                         if (duplicate is not null)
@@ -961,7 +962,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             await input.CaptureAsync(token), fields, token),
             actual => expected.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)
                 || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)),
-            "READBACK_MISMATCH", "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.", token);
+            "READBACK_MISMATCH", "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.", token, timeoutMilliseconds: 15000);
         if (CustomerTaxField(context) is { } tax)
         {
             var tab = await CustomerTaxTab(token);
@@ -969,7 +970,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token),
                     new Dictionary<string, NativeSelector> { [tax.Key] = profile.Fields[tax.Key] }, token),
                 actual => Match(tax.Expected, actual.Values[tax.Key].Value, tax.Kind),
-                "READBACK_MISMATCH", $"Mã số thuế khách hàng MISA (tab {tab}) chưa khớp nguồn {tax.Expected}.", token);
+                "READBACK_MISMATCH", $"Mã số thuế khách hàng MISA (tab {tab}) chưa khớp nguồn {tax.Expected}.", token, timeoutMilliseconds: 15000);
             if (tab != profile.ReceiptTab) await Tab(profile.ReceiptTab, token);
         }
         return customer;
