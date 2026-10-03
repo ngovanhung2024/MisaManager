@@ -8,7 +8,6 @@ using MisaManager.Core;
 
 namespace MisaManager.App;
 
-public sealed record DeveloperDiagnostics(string Summary, string TechnicalDetails, string LiveTestingPrompt);
 
 public enum MisaConnection { Unknown, Connected, Lost }
 
@@ -18,9 +17,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private string status = "Sẵn sàng. Chọn hóa đơn để tiếp tục.";
     private bool running;
     private bool stopRequested;
-    private bool pauseRequested;
-    private bool paused;
-    private bool queueActive;
     private readonly HashSet<string> checkedFingerprints = new(StringComparer.Ordinal);
     private readonly HashSet<string> handledInBatch = new(StringComparer.Ordinal);
     private int batchIndex;
@@ -40,15 +36,12 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public WorkflowViewModel(AppServices services)
     {
         this.services = services;
-        AddCommand = new ActionCommand(async () => await RunOrPauseAsync());
-        PauseCommand = new ActionCommand(() => { RequestPause(); return Task.CompletedTask; });
+        AddCommand = new ActionCommand(async () => await RunAsync());
         ResumeCommand = new ActionCommand(ResumeAsync);
     }
 
     public InvoiceDocument? SelectedInvoice { get; set; }
-    public WindowIdentity? SelectedWindow { get; set; }
     public ICommand AddCommand { get; }
-    public ICommand PauseCommand { get; }
     public ICommand ResumeCommand { get; }
     public bool IsRunning => running;
     public WorkflowContext? CurrentContext => services.Workflow.Current;
@@ -66,7 +59,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new(nameof(CurrentContext)));
         PropertyChanged?.Invoke(this, new(nameof(CanEditSource)));
         PropertyChanged?.Invoke(this, new(nameof(CanStart)));
-        PropertyChanged?.Invoke(this, new(nameof(CanPause)));
         PropertyChanged?.Invoke(this, new(nameof(CanResume)));
         PropertyChanged?.Invoke(this, new(nameof(State)));
         WorkflowChanged?.Invoke(this, EventArgs.Empty);
@@ -85,7 +77,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         catch (Exception error) { Status = "Không đọc được phiên trước: " + error.Message; }
     }
 
-    /// <summary>Hard stop: cancels the step in flight. A live run interrupted this way ends as Failed.</summary>
+    /// <summary>Hard stop: cancels the step in flight; Resume continues from the paused checkpoint.</summary>
     public async Task StopNowAsync()
     {
         stopRequested = true;
@@ -94,30 +86,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         catch (Exception error) { Status = error.Message; }
     }
 
-    /// <summary>Safe pause: lets the current live_run finish, then stops before the next invoice.</summary>
-    public void RequestPause()
-    {
-        if (!queueActive || pauseRequested)
-        {
-            if (!queueActive) Status = "Không có lượt chạy nào để tạm dừng.";
-            return;
-        }
-        pauseRequested = true;
-        stopRequested = true;
-        Status = "Đang tạm dừng sau bước hiện tại…";
-        NotifyWorkflowChanged();
-    }
-
     public async Task ResumeAsync()
     {
         if (running) return;
-        if (paused)
-        {
-            paused = false;
-            Status = "Đang tiếp tục các hóa đơn còn lại…";
-            await RunOrPauseAsync(resume: true);
-            return;
-        }
         if (services.Workflow.Current?.Snapshot.Status != WorkflowStatus.Paused) return;
         running = true;
         operation = "resume";
@@ -179,9 +150,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public bool HasPerformanceData => PerformanceEntries.Count > 0 || performanceStartedAt is not null;
     public bool CanEditSource => !running;
     public bool CanStart => !running;
-    public bool CanPause => queueActive && !pauseRequested;
-    public bool CanResume => !running && (paused || services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused);
-    public bool IsPaused => paused;
+    public bool CanResume => !running && services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused;
     public MisaConnection Connection => connection;
 
     public void RefreshPerformance()
@@ -268,9 +237,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public void ClearPerformance() => ResetPerformance();
 
-    private async Task RunOrPauseAsync(bool resume = false)
+    private async Task RunAsync(bool resume = false)
     {
-        if (running) { RequestPause(); return; }
+        if (running) return;
         // Ticked invoices run in list order; with none ticked, fall back to "from the selected invoice onward".
         var ticked = InvoiceQueue.Where(invoice => checkedFingerprints.Contains(invoice.Fingerprint)).ToArray();
         var explicitRun = ticked.Length > 0;
@@ -290,9 +259,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var batchTotal = batchIndex + queue.Length;
         var first = queue[0];
         running = true;
-        queueActive = true;
-        paused = false;
-        pauseRequested = false;
         stopRequested = false;
         lastError = null;
         operation = "connect";
@@ -353,7 +319,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
                 performanceInvoice = invoice.Identity.Number;
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
-                Status = $"{position} · đang nhập và đối chiếu. Esc hoặc nút Tạm dừng để dừng sau hóa đơn này."
+                Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để hủy bước đang chạy."
                     + (explicitRun ? "" : " Chưa tick hóa đơn nào nên chạy từ hóa đơn đang chọn trở đi.");
                 PerformanceCurrent = "live_run · đang chạy";
                 var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
@@ -400,13 +366,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             }
             if (performanceOutcome == "Hoàn tất")
             {
-                var remaining = queue.Any(invoice => !invoice.IsBlocked && !handledInBatch.Contains(invoice.Fingerprint));
-                if (pauseRequested && remaining)
-                {
-                    paused = true;
-                    Status = "Đã tạm dừng. Bấm Tiếp tục để chạy các hóa đơn còn lại" + (explicitRun ? " đã tick." : ".");
-                }
-                else if ((!stopRequested || pauseRequested) && stopNote is null)
+                if (!stopRequested && stopNote is null)
                 {
                     var parts = new List<string>();
                     if (saved > 0) parts.Add($"{saved} đã lưu");
@@ -434,8 +394,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             FinishAllRunning(performanceOutcome);
             FinishTrace(wholeRun, performanceOutcome);
             running = false;
-            queueActive = false;
-            pauseRequested = false;
             operation = null;
             services.EndUiBatch(performanceOutcome);
             PerformanceCurrent = "Đã kết thúc";
@@ -505,19 +463,13 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     {
         var windows = await services.Native.FindCandidatesAsync();
         if (windows.Count == 0) SetConnection(MisaConnection.Lost, "Không thấy cửa sổ MISA SME 2023 R20.");
-        if (SelectedWindow is null && windows.Count != 1)
+        if (windows.Count != 1)
         {
-            Status = "Chuột phải Thêm vào MISA để chọn đúng phiên đang mở.";
+            Status = "Cần đúng một phiên MISA đang mở; hãy đóng bớt phiên thừa rồi thử lại.";
             return null;
         }
         if (stopRequested) return null;
-        var window = SelectedWindow is null ? windows[0] : windows.SingleOrDefault(item => item.WindowHandle == SelectedWindow.WindowHandle
-            && item.ProcessId == SelectedWindow.ProcessId && item.ProcessStartUtc == SelectedWindow.ProcessStartUtc);
-        if (window is null)
-        {
-            Status = "Phiên MISA đã thay đổi; chọn lại cửa sổ.";
-            return null;
-        }
+        var window = windows[0];
         return $"pid={window.ProcessId};start={window.ProcessStartUtc:O};hwnd={window.WindowHandle};exe={window.ExecutablePath}";
     }
 
@@ -536,25 +488,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         }
         finally { if (owned) { running = false; operation = null; NotifyWorkflowChanged(); } }
     }
-
-    public async Task FinishAsync(bool save)
-    {
-        if (running) { Status = "Tạm dừng workflow trước khi Cất/Bỏ."; return; }
-        var current = services.Workflow.Current;
-        if (current is null) { Status = "Chưa có chứng từ được gắn với workflow."; return; }
-        running = true;
-        operation = save ? "save" : "discard";
-        NotifyWorkflowChanged();
-        try
-        {
-            Status = (await services.ExecuteAsync(save ? "save" : "discard", new { confirmed = true }, current.Invoice.Fingerprint)).Message;
-            NotifyWorkflowChanged();
-        }
-        catch (Exception error) { Status = error.Message; }
-        finally { running = false; operation = null; NotifyWorkflowChanged(); }
-    }
-
-    public Task<IReadOnlyList<WindowIdentity>> WindowsAsync() => services.Native.FindCandidatesAsync();
 
     private void SetConnection(MisaConnection value, string detail)
     {
@@ -580,9 +513,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             }
             var windows = await services.Native.FindCandidatesAsync();
             if (windows.Count == 0) SetConnection(MisaConnection.Lost, "Không thấy cửa sổ MISA SME 2023 R20.");
-            else if (SelectedWindow is { } chosen && !windows.Any(window => window.ProcessId == chosen.ProcessId
-                && window.WindowHandle == chosen.WindowHandle))
-                SetConnection(MisaConnection.Lost, "Phiên MISA đã chọn không còn; chọn lại phiên đang mở.");
             else SetConnection(MisaConnection.Connected, "");
         }
         catch (Exception error)
@@ -604,8 +534,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             var invoiceText = number is null ? "" : $"Hóa đơn {number}";
             if (running)
             {
-                if (pauseRequested)
-                    return new(ToolStateKind.PauseRequested, ToolState.LabelOf(ToolStateKind.PauseRequested), "Đang tạm dừng sau bước hiện tại…");
                 var activityField = services.Activity?.Field;
                 return (activityField is "reconcile" or "save" or "discard" ? activityField : operation) switch
                 {
@@ -622,8 +550,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     ErrorHints.For("NOT_CONNECTED")!);
             if (connection == MisaConnection.Unknown)
                 return new(ToolStateKind.Connecting, ToolState.LabelOf(ToolStateKind.Connecting), "Đang kiểm tra phiên MISA…");
-            if (paused)
-                return new(ToolStateKind.Paused, ToolState.LabelOf(ToolStateKind.Paused), "Bấm Tiếp tục để chạy các hóa đơn còn lại.");
             if (bound is { } context)
             {
                 var snapshot = context.Snapshot;
@@ -663,7 +589,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// </summary>
     public async Task<(bool IsOpen, WindowIdentity? Window)> ObserveSalesSurfaceAsync(CancellationToken token = default)
     {
-        var window = SelectedWindow ?? ResolveWindow(services.Workflow.Current?.Snapshot.WindowIdentity);
+        var window = ResolveWindow(services.Workflow.Current?.Snapshot.WindowIdentity);
         if (window is null) return (false, null);
         try
         {
@@ -681,7 +607,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// <summary>Reads the voucher tab so auxiliary UI can close when the MISA tab is closed.</summary>
     public async Task<(bool IsOpen, WindowIdentity? Window)> ObserveVoucherEditorAsync(CancellationToken token = default)
     {
-        var window = SelectedWindow ?? ResolveWindow(services.Workflow.Current?.Snapshot.WindowIdentity);
+        var window = ResolveWindow(services.Workflow.Current?.Snapshot.WindowIdentity);
         if (window is null) return (false, null);
         try
         {
@@ -718,90 +644,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         {
             return null;
         }
-    }
-
-    public void SelectWindow(WindowIdentity window) => SelectedWindow = window;
-
-    public async Task<DeveloperDiagnostics> DiagnosticsAsync()
-    {
-        var native = await services.Native.DiagnosticsAsync();
-        var current = services.Workflow.Current;
-        var data = new
-        {
-            product = ProductIdentity.DisplayName,
-            runtime = new RuntimeStateIdentity(ProductIdentity.RuntimeVersion, ProductIdentity.SourceRevision, services.WorkflowProfile.Revision),
-            profile = new { services.MisaProfile.Id, services.MisaProfile.Revision, services.MisaProfile.Status, capability = services.MisaProfile.Capability },
-            native,
-            workflow = current?.Snapshot
-        };
-        var summary = new StringBuilder()
-            .AppendLine($"Thời điểm đọc: {native.ObservedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss}")
-            .AppendLine($"Ứng dụng: {ProductIdentity.DisplayName} {ProductIdentity.RuntimeVersion}")
-            .AppendLine($"Hồ sơ MISA: {services.MisaProfile.Id} ({services.MisaProfile.Status})")
-            .AppendLine($"Nguồn đọc: {native.ReadbackBackend}")
-            .AppendLine($"Phiên MISA tìm thấy: {native.Candidates.Count}");
-
-        foreach (var window in native.Candidates)
-            summary.AppendLine($"  PID {window.ProcessId} | {window.Title} | DPI {window.Dpi}");
-
-        summary.AppendLine($"Cửa sổ đọc được: {native.Observations.Count}/{native.Candidates.Count}")
-            .AppendLine($"Thành phần đọc được: {native.Observations.Sum(item => item.Elements.Count)}")
-            .AppendLine($"Hàng đợi native: {native.Queue.QueueLength}/{native.Queue.QueueCapacity}")
-            .AppendLine($"Lần đọc native: {native.Queue.LastMilliseconds} ms")
-            .AppendLine($"Workflow: {(current is null ? "chưa có phiên" : $"{current.Invoice.Identity.Number} - {current.Snapshot.Status}")}");
-
-        if (native.Candidates.Count == 0)
-            summary.AppendLine("Chưa tìm thấy cửa sổ MISA. Hãy mở MISA rồi xem lại chẩn đoán.");
-        foreach (var skipped in native.Skipped ?? [])
-            summary.AppendLine($"Không đọc được cửa sổ: {skipped}");
-
-        var technicalDetails = System.Text.Json.JsonSerializer.Serialize(data, ContractJson.Options);
-        var run = current?.Snapshot;
-        var repairable = run is not null && run.Status is WorkflowStatus.Blocked or WorkflowStatus.InputUncertain
-            or WorkflowStatus.SaveUncertain or WorkflowStatus.Failed;
-        var incident = repairable ? run!.RunId : "<no repairable incident bound>";
-        var prompt = new StringBuilder()
-            .AppendLine("You are the live testing and repair agent for the current MISA Excel Manager session.")
-            .AppendLine("Use the connected MISA MCP tools to inspect and operate the CURRENT desktop session. Do not invent UI values and do not rely on screenshots, saved logs, or old incidents when a fresh native read is available.")
-            .AppendLine()
-            .AppendLine("CURRENT SESSION EVIDENCE (captured by Developer mode just now)")
-            .AppendLine($"- App: {ProductIdentity.DisplayName} {ProductIdentity.RuntimeVersion}")
-            .AppendLine($"- Source revision: {ProductIdentity.SourceRevision}")
-            .AppendLine($"- Workflow profile: {services.WorkflowProfile.Revision} ({services.WorkflowProfile.Status})")
-            .AppendLine($"- MISA profile: {services.MisaProfile.Id} {services.MisaProfile.Revision} ({services.MisaProfile.Status})")
-            .AppendLine($"- Candidate windows: {native.Candidates.Count}; readable observations: {native.Observations.Count}")
-            .AppendLine($"- Current run/incident id: {incident}")
-            .AppendLine($"- Current workflow: {(run is null ? "none" : $"{run.Status}; mode={services.Workflow.Current?.ExecutionMode}; invoice={run.InvoiceId}; revision={run.InvoiceRevision}; updated={run.UpdatedAt:O}")}")
-            .AppendLine()
-            .AppendLine("TECHNICAL DIAGNOSTICS JSON")
-            .AppendLine("```json")
-            .AppendLine(technicalDetails)
-            .AppendLine("```")
-            .AppendLine()
-            .AppendLine("OPERATING RULES")
-            .AppendLine("1. First call misa_failure. One call returns the error, failed step, MISA dialogs and focused element captured at failure time, expected invoice values, comparison mismatches and sourceHints. Call misa_ui only if that evidence is missing or conflicting; misa_compare/misa_perf only when relevant.")
-            .AppendLine("2. The MCP is observer-only and never drives MISA. The user reruns by clicking 'Thêm vào MISA'; then call misa_wait (waitForStart=true) for the result.")
-            .AppendLine("3. Never claim a fix works from code changes alone; it is verified only when a later misa_wait/misa_compare shows the invoice completed and matched.")
-            .AppendLine()
-            .AppendLine("FIX WORKFLOW")
-            .AppendLine("- Make the smallest source fix that explains the actual value, expected value and failure condition; start from sourceHints.")
-            .AppendLine("- Run the project build (scripts/build.ps1). Do not create tests, fixtures or scripts for this repair.")
-            .AppendLine("- Ask the user to restart MisaManager on the new build and click 'Thêm vào MISA' again, then call misa_wait; on a new failure call misa_failure again.")
-            .AppendLine("- Report changed files, root cause, checks run and the verified result.")
-            .AppendLine()
-            .AppendLine("The embedded diagnostics are a launch-time snapshot, not a fresh observation at tool-call time. Begin with the required MCP call and report its fresh observation or explicit failure. Do not ask me to paste a screenshot when a native observation can answer the question.")
-            .ToString();
-
-        return new(summary.ToString(), technicalDetails, prompt);
-    }
-
-    public async Task RecoverAsync(WorkflowStatus expectedStatus)
-    {
-        var current = services.Workflow.Current;
-        if (current is null || SelectedWindow is null) { Status = "Chọn phiên MISA mới trước khi khôi phục."; return; }
-        var window = SelectedWindow;
-        var identity = $"pid={window.ProcessId};start={window.ProcessStartUtc:O};hwnd={window.WindowHandle};exe={window.ExecutablePath}";
-        Status = (await services.ExecuteAsync("recover", new { windowIdentity = identity, expectedStatus }, current.Invoice.Fingerprint)).Message;
     }
 
     private sealed class ActionCommand(Func<Task> action) : ICommand
