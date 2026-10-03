@@ -21,6 +21,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private bool pauseRequested;
     private bool paused;
     private bool queueActive;
+    private readonly HashSet<string> checkedFingerprints = new(StringComparer.Ordinal);
+    private readonly HashSet<string> handledInBatch = new(StringComparer.Ordinal);
+    private int batchIndex;
     private bool probing;
     private string? operation;
     private MisaConnection connection = MisaConnection.Unknown;
@@ -112,7 +115,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         {
             paused = false;
             Status = "Đang tiếp tục các hóa đơn còn lại…";
-            await RunOrPauseAsync();
+            await RunOrPauseAsync(resume: true);
             return;
         }
         if (services.Workflow.Current?.Snapshot.Status != WorkflowStatus.Paused) return;
@@ -125,6 +128,40 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     }
 
     public IReadOnlyList<InvoiceDocument> InvoiceQueue { get; set; } = [];
+
+    /// <summary>Raised when the set of invoices ticked for the next run changes.</summary>
+    public event EventHandler? CheckedChanged;
+    public int CheckedCount => InvoiceQueue.Count(invoice => checkedFingerprints.Contains(invoice.Fingerprint));
+    public bool IsChecked(string fingerprint) => checkedFingerprints.Contains(fingerprint);
+
+    public void SetChecked(string fingerprint, bool value)
+    {
+        if (value ? checkedFingerprints.Add(fingerprint) : checkedFingerprints.Remove(fingerprint))
+            CheckedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetCheckedMany(IEnumerable<string> fingerprints)
+    {
+        checkedFingerprints.Clear();
+        checkedFingerprints.UnionWith(fingerprints);
+        CheckedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Drops ticks for invoices that are no longer in the list (after a re-import).</summary>
+    public void KeepCheckedIn(IEnumerable<string> available)
+    {
+        if (checkedFingerprints.RemoveWhere(fingerprint => !available.Contains(fingerprint)) > 0)
+            CheckedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Invoices that can still be entered: not blocked and neither saved nor already in MISA.</summary>
+    public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice));
+
+    private bool IsDone(InvoiceDocument invoice) => History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
+        && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot)));
+
+    private bool HasDiscardedRun(InvoiceDocument invoice) => History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
+        && run.Snapshot.Status == WorkflowStatus.Discarded);
     public IReadOnlyList<WorkflowContext> History { get; private set; } = [];
     public WorkflowActivity? Activity => services.Activity;
     public ObservableCollection<PerformanceTraceEntry> PerformanceEntries { get; } = [];
@@ -231,10 +268,27 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public void ClearPerformance() => ResetPerformance();
 
-    private async Task RunOrPauseAsync()
+    private async Task RunOrPauseAsync(bool resume = false)
     {
         if (running) { RequestPause(); return; }
-        if (SelectedInvoice is not { } selected) { Status = "Chọn một hóa đơn trước khi thêm vào MISA."; return; }
+        // Ticked invoices run in list order; with none ticked, fall back to "from the selected invoice onward".
+        var ticked = InvoiceQueue.Where(invoice => checkedFingerprints.Contains(invoice.Fingerprint)).ToArray();
+        var explicitRun = ticked.Length > 0;
+        if (!explicitRun && SelectedInvoice is null)
+        { Status = "Tick chọn các hóa đơn cần chạy (hoặc chọn một hóa đơn) trước khi thêm vào MISA."; return; }
+        if (!resume) { handledInBatch.Clear(); batchIndex = 0; }
+        InvoiceDocument[] queue;
+        if (explicitRun) queue = ticked;
+        else
+        {
+            var selected = SelectedInvoice!;
+            var offset = InvoiceQueue.ToList().FindIndex(invoice => invoice.Fingerprint == selected.Fingerprint);
+            queue = offset < 0 ? [selected] : [.. InvoiceQueue.Skip(offset)];
+        }
+        queue = [.. queue.Where(invoice => !handledInBatch.Contains(invoice.Fingerprint))];
+        if (queue.Length == 0) { Status = "Không còn hóa đơn nào cần chạy."; return; }
+        var batchTotal = batchIndex + queue.Length;
+        var first = queue[0];
         running = true;
         queueActive = true;
         paused = false;
@@ -242,13 +296,18 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         stopRequested = false;
         lastError = null;
         operation = "connect";
-        var processed = 0;
-        services.BeginUiBatch(selected.Identity.Number);
+        var saved = 0;
+        var existing = 0;
+        var mismatched = 0;
+        var skipped = 0;
+        var blockedNumbers = new List<string>();
+        string? stopNote = null;
+        services.BeginUiBatch(first.Identity.Number);
         ResetPerformance();
         performanceStartedAt = DateTimeOffset.UtcNow;
-        performanceInvoice = selected.Identity.Number;
+        performanceInvoice = first.Identity.Number;
         PerformanceCurrent = "Chuẩn bị phiên";
-        var wholeRun = BeginTrace("Toàn bộ function Thêm vào MISA", selected.Identity.Number);
+        var wholeRun = BeginTrace("Toàn bộ function Thêm vào MISA", first.Identity.Number);
         var performanceOutcome = "Hoàn tất";
         NotifyWorkflowChanged();
         try
@@ -257,8 +316,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             await services.Initialization;
             await LoadHistoryAsync();
             FinishTrace(initialize, "Hoàn tất");
-            var offset = InvoiceQueue.ToList().FindIndex(invoice => invoice.Fingerprint == selected.Fingerprint);
-            var queue = offset < 0 ? new[] { selected } : InvoiceQueue.Skip(offset).ToArray();
             if (services.ItemCatalog.Count == 0 && queue.Any(invoice => invoice.Lines.Any(line => line.ItemCode.Trim().Length == 0)))
             {
                 Status = "Chưa nạp database mã hàng. Bấm 'Mã hàng' và chọn file danh mục vật tư, hàng hóa trước khi nhập.";
@@ -274,16 +331,30 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             foreach (var invoice in queue)
             {
                 if (stopRequested) break;
-                if (History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
-                    && run.Snapshot.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded))
+                var fingerprint = invoice.Fingerprint;
+                var position = $"Hóa đơn {++batchIndex}/{batchTotal}: {invoice.Identity.Number}";
+                if (IsDone(invoice) || (!explicitRun && HasDiscardedRun(invoice)))
+                {
+                    handledInBatch.Add(fingerprint);
+                    SetChecked(fingerprint, false);
+                    skipped++;
                     continue;
+                }
                 if (invoice.IsBlocked)
-                { Status = $"Hóa đơn {invoice.Identity.Number} còn lỗi nguồn; cần bổ sung dữ liệu."; break; }
+                {
+                    if (!explicitRun)
+                    { stopNote = $"Hóa đơn {invoice.Identity.Number} còn lỗi nguồn; cần bổ sung dữ liệu."; Status = stopNote; break; }
+                    handledInBatch.Add(fingerprint);
+                    blockedNumbers.Add(invoice.Identity.Number);
+                    Status = $"{position} · còn lỗi nguồn, bỏ qua và chuyển sang hóa đơn kế tiếp.";
+                    continue;
+                }
                 SelectedInvoice = invoice;
                 PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
                 performanceInvoice = invoice.Identity.Number;
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
-                Status = $"Đang nhập và đối chiếu hóa đơn {invoice.Identity.Number}. Esc hoặc nút Tạm dừng để dừng sau hóa đơn này.";
+                Status = $"{position} · đang nhập và đối chiếu. Esc hoặc nút Tạm dừng để dừng sau hóa đơn này."
+                    + (explicitRun ? "" : " Chưa tick hóa đơn nào nên chạy từ hóa đơn đang chọn trở đi.");
                 PerformanceCurrent = "live_run · đang chạy";
                 var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
                 var response = await services.ExecuteAsync("live_run", new
@@ -295,7 +366,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     allowKgToTon = true
                 });
                 FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
-                processed++;
                 Status = response.Message;
                 NotifyWorkflowChanged();
                 if (response.Status != "completed")
@@ -303,28 +373,51 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     performanceOutcome = response.Status;
                     RaiseError(response.Message, Serialize(response.Data));
                 }
-                // A completed save or verified discard advances the queue. Any
-                // error stops here so repair can rebuild and rerun from Ready.
                 // Update history in memory instead of re-reading every run file from disk.
                 if (services.Workflow.Current is { } finished)
                 {
                     History = [finished, .. History.Where(run => run.Snapshot.RunId != finished.Snapshot.RunId)];
                     NotifyWorkflowChanged();
                 }
+                // A completed run (saved, verified discard, or number already in MISA) advances the queue.
+                // Any other response stops here so repair can rebuild and rerun from Ready.
                 if (response.Status != "completed") break;
-                var final = services.Workflow.Current?.Snapshot.Status;
-                if (stopRequested || final is not (WorkflowStatus.Saved or WorkflowStatus.Discarded)) break;
+                var current = services.Workflow.Current;
+                var final = current?.Invoice.Fingerprint == fingerprint ? current.Snapshot : null;
+                if (final?.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded)
+                {
+                    handledInBatch.Add(fingerprint);
+                    if (final.Status == WorkflowStatus.Saved) { saved++; SetChecked(fingerprint, false); }
+                    else if (RunOutcome.IsExisting(final))
+                    {
+                        existing++;
+                        SetChecked(fingerprint, false);
+                        Status = $"{position} · số hóa đơn đã tồn tại trong MISA: đã chọn Không, đóng tab và chuyển sang hóa đơn tiếp theo.";
+                    }
+                    else mismatched++;
+                }
+                if (stopRequested || final?.Status is not (WorkflowStatus.Saved or WorkflowStatus.Discarded)) break;
             }
             if (performanceOutcome == "Hoàn tất")
             {
-                var remaining = queue.Any(invoice => !invoice.IsBlocked && !History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
-                    && run.Snapshot.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded));
+                var remaining = queue.Any(invoice => !invoice.IsBlocked && !handledInBatch.Contains(invoice.Fingerprint));
                 if (pauseRequested && remaining)
                 {
                     paused = true;
-                    Status = "Đã tạm dừng. Bấm Tiếp tục để chạy các hóa đơn còn lại.";
+                    Status = "Đã tạm dừng. Bấm Tiếp tục để chạy các hóa đơn còn lại" + (explicitRun ? " đã tick." : ".");
                 }
-                else if (processed == 0 && !stopRequested) Status = "Không còn hóa đơn nào cần chạy từ vị trí đã chọn.";
+                else if ((!stopRequested || pauseRequested) && stopNote is null)
+                {
+                    var parts = new List<string>();
+                    if (saved > 0) parts.Add($"{saved} đã lưu");
+                    if (mismatched > 0) parts.Add($"{mismatched} đã bỏ vì lệch");
+                    if (existing > 0) parts.Add($"{existing} đã tồn tại trong MISA");
+                    if (skipped > 0) parts.Add($"{skipped} bỏ qua (đã nhập trước đó)");
+                    if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
+                    var scope = explicitRun ? "các hóa đơn đã tick" : "từ hóa đơn đang chọn (chưa tick hóa đơn nào)";
+                    Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy " + (explicitRun ? "trong danh sách đã tick." : "từ vị trí đã chọn.")
+                        : $"Xong {scope}: {string.Join(" · ", parts)}.";
+                }
             }
         }
         catch (Exception error)
@@ -541,6 +634,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 {
                     case WorkflowStatus.Saved:
                         return new(ToolStateKind.Saved, ToolState.LabelOf(ToolStateKind.Saved), invoiceText);
+                    case WorkflowStatus.Discarded when RunOutcome.IsExisting(snapshot):
+                        return new(ToolStateKind.Existing, ToolState.LabelOf(ToolStateKind.Existing),
+                            invoiceText + " · số hóa đơn đã có trong MISA, đã chọn Không và đóng tab");
                     case WorkflowStatus.Discarded:
                         return new(ToolStateKind.Discarded, ToolState.LabelOf(ToolStateKind.Discarded), invoiceText + " · dữ liệu lệch, chứng từ đã được bỏ an toàn");
                     case WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain:

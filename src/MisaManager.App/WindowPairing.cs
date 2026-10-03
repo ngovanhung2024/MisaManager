@@ -14,6 +14,8 @@ internal sealed class WindowPairing : IDisposable
     private const uint SwpNoSize = 0x0001, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010, SwpNoOwnerZOrder = 0x0200;
     private const int GwlExStyle = -20, WsExNoActivate = 0x08000000;
     private const uint MonitorDefaultToNearest = 2;
+    /// <summary>The popup is wider than the tool so the Excel and MISA columns have room to sit side by side.</summary>
+    private const double PopupWidthFactor = 1.2;
 
     private readonly Window tool;
     private readonly Window popup;
@@ -69,7 +71,7 @@ internal sealed class WindowPairing : IDisposable
 
         var work = WorkArea(toolHandle);
         if (work.Width <= 0 || work.Height <= 0) return;
-        var width = Math.Min(t.Width, work.Width);
+        var width = Math.Min((int)Math.Round(t.Width * PopupWidthFactor), work.Width);
         var height = Math.Min(t.Height, work.Height);
         popupOnRight = t.Left + t.Width / 2 < work.Left + work.Width / 2;
         // Fall back to the other side when the preferred one cannot hold the whole popup.
@@ -92,8 +94,10 @@ internal sealed class WindowPairing : IDisposable
         popupOnRight = p.Left + p.Width / 2 >= t.Left + t.Width / 2;
         var work = WorkArea(popupHandle);
         if (work.Width <= 0 || work.Height <= 0) return;
-        var left = popupOnRight ? p.Left - t.Width : p.Right;
-        left = Math.Clamp(left, work.Left, Math.Max(work.Left, work.Right - t.Width));
+        // Keep the whole pair (tool + wider popup) inside the work area.
+        var pairLeft = popupOnRight ? p.Left - t.Width : p.Left;
+        pairLeft = Math.Clamp(pairLeft, work.Left, Math.Max(work.Left, work.Right - t.Width - p.Width));
+        var left = popupOnRight ? pairLeft : pairLeft + p.Width;
         var top = Math.Clamp(p.Top, work.Top, Math.Max(work.Top, work.Bottom - t.Height));
         expectedTool = new Rect32(left, top, left + t.Width, top + t.Height);
         if (expectedTool != t) Apply(toolHandle, expectedTool, resize: false);

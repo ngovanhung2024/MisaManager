@@ -310,7 +310,7 @@ public sealed partial class AppServices : IAsyncDisposable
                         liveValidation: true, profileRevision: WorkflowProfile.Revision,
                         allowKgToTon: reboundCurrent.AllowKgToTon, requestId: request.RequestId,
                         operationId: ReadOperationId(request), executionMode: reboundCurrent.ExecutionMode);
-                    return new(request.RequestId, rerun.Outcome is "saved" or "discarded" or "tested" ? "completed" : "blocked",
+                    return new(request.RequestId, rerun.Outcome is "saved" or "discarded" or "tested" or "existing" ? "completed" : "blocked",
                         "Đã chạy lại cùng hóa đơn từ Ready; không tiếp tục checkpoint cũ.",
                         rerun.Context.Snapshot.InputMayHaveBeenSent, Data: new
                         {
@@ -809,10 +809,11 @@ public sealed partial class AppServices : IAsyncDisposable
             var result = await Workflow.RunLiveAsync(invoice, company, window, token, liveValidation,
                 WorkflowProfile.Revision, allowKgToTon, request.RequestId, ReadOperationId(request), executionMode);
             RecordLiveRun(result);
-            var status = result.Outcome is "saved" or "discarded" or "tested" ? "completed" : "blocked";
+            var status = result.Outcome is "saved" or "discarded" or "tested" or "existing" ? "completed" : "blocked";
             return new(request.RequestId, status,
                 result.Outcome == "saved" ? "Live production hoàn tất: đối chiếu khớp và đã Cất hóa đơn."
                 : result.Outcome == "discarded" ? "Live run hoàn tất: đối chiếu không khớp, đã Bỏ hóa đơn."
+                : result.Outcome == "existing" ? "Hóa đơn đã tồn tại trong MISA: đã bấm No, đóng chứng từ và chuyển sang hóa đơn tiếp theo."
                 : result.Outcome == "tested" ? "Live test hoàn tất: đã đối chiếu và Bỏ chứng từ thử nghiệm, không ghi sổ."
                 : "Live run lỗi; không được tiếp tục checkpoint. Hãy sửa/build version mới rồi chạy lại cùng hóa đơn từ đầu.",
                 result.Context.Snapshot.InputMayHaveBeenSent,

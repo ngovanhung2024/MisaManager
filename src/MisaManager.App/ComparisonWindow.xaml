@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:MisaManager.App"
-        Title="Đối chiếu MISA" Width="366" MinWidth="302" MaxWidth="479" MinHeight="520"
+        Title="Đối chiếu MISA" Width="439" MinWidth="362" MaxWidth="575" MinHeight="520"
         ShowInTaskbar="False" ShowActivated="False" Topmost="True"
         WindowStartupLocation="Manual" WindowStyle="SingleBorderWindow"
         ResizeMode="CanMinimize" Background="#F4F6FA"
@@ -11,10 +11,10 @@
   <Window.Resources>
     <DataTemplate x:Key="SectionTemplate">
       <StackPanel Margin="0,0,0,5">
-        <Border x:Name="SectionHeader" Background="#EEF1F6" Padding="6,2" BorderThickness="3,0,0,0" BorderBrush="#9CA3AF">
+        <Border x:Name="SectionHeader" Background="#EEF1F6" Padding="6,2" BorderThickness="3,0,0,0" BorderBrush="#9CA3AF" Margin="0,0,0,1">
           <DockPanel>
             <TextBlock x:Name="SectionBadge" DockPanel.Dock="Right" Text="{Binding Badge}" FontSize="9.5" FontWeight="SemiBold" Foreground="#6B7280" VerticalAlignment="Center"/>
-            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}" Foreground="#1F2937"/>
+            <TextBlock x:Name="SectionTitle" Text="{Binding Title}" FontWeight="SemiBold" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}" Foreground="#1F2937"/>
           </DockPanel>
         </Border>
         <ItemsControl ItemsSource="{Binding Rows}" ItemTemplate="{StaticResource ComparisonRowTemplate}"/>
@@ -22,10 +22,14 @@
       <DataTemplate.Triggers>
         <DataTrigger Binding="{Binding HasMismatch}" Value="True">
           <Setter TargetName="SectionHeader" Property="Background" Value="#FECACA"/>
-          <Setter TargetName="SectionHeader" Property="BorderBrush" Value="#DC2626"/>
+          <Setter TargetName="SectionHeader" Property="BorderBrush" Value="#B91C1C"/>
+          <Setter TargetName="SectionTitle" Property="Foreground" Value="#7F1D1D"/>
           <Setter TargetName="SectionBadge" Property="Foreground" Value="#991B1B"/>
         </DataTrigger>
         <DataTrigger Binding="{Binding AllMatched}" Value="True">
+          <Setter TargetName="SectionHeader" Property="Background" Value="#BBF7D0"/>
+          <Setter TargetName="SectionHeader" Property="BorderBrush" Value="#15803D"/>
+          <Setter TargetName="SectionTitle" Property="Foreground" Value="#14532D"/>
           <Setter TargetName="SectionBadge" Property="Foreground" Value="#15803D"/>
         </DataTrigger>
       </DataTemplate.Triggers>
@@ -71,13 +75,13 @@
       </StackPanel>
     </Border>
 
-    <Grid Grid.Row="1" Margin="3,6,3,2">
+    <Grid Grid.Row="1" Margin="10,6,7,2">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="76"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="30"/>
+        <ColumnDefinition Width="76"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="22"/>
       </Grid.ColumnDefinitions>
       <TextBlock Text="TRƯỜNG" Style="{StaticResource Caption}"/>
-      <TextBlock Grid.Column="1" Text="NGUỒN EXCEL (mong đợi)" Style="{StaticResource Caption}"/>
-      <TextBlock Grid.Column="2" Text="MISA (đọc được)" Style="{StaticResource Caption}"/>
+      <TextBlock Grid.Column="1" Text="EXCEL (nguồn, mong đợi)" Margin="4,0,0,0" Style="{StaticResource Caption}"/>
+      <TextBlock Grid.Column="2" Text="MISA (đọc được trên màn hình)" Margin="4,0,0,0" Style="{StaticResource Caption}"/>
     </Grid>
 
     <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="6">

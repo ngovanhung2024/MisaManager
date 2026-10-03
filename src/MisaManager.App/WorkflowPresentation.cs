@@ -14,6 +14,18 @@ public sealed record EntryFieldRow(string Key, string Label, string Expected, st
     public bool HasMismatch => MismatchCount > 0;
     public int MismatchCount => Children is null ? (IsMismatch ? 1 : 0) : Children.Count(child => child.IsMismatch);
     public string MismatchBadge => MismatchCount == 0 ? "" : $"{MismatchCount} lệch";
+    public bool AllComplete => Children is { Count: > 0 } && Children.All(child => child.IsComplete);
+}
+
+/// <summary>Run outcome that is neither a save nor a data mismatch: MISA already had this invoice number.</summary>
+public static class RunOutcome
+{
+    public const string ExistingCode = "INVOICE_ALREADY_EXISTS";
+    public const string ExistingLabel = "Đã tồn tại trong MISA";
+    public const string ExistingColor = "#3F6C9A";
+
+    public static bool IsExisting(WorkflowSnapshot snapshot)
+        => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode == ExistingCode;
 }
 
 public sealed record ComparisonRow(ValueComparison Value, string Label, string SectionName = "", bool Pending = false)
@@ -22,6 +34,8 @@ public sealed record ComparisonRow(ValueComparison Value, string Label, string S
     /// <summary>match, mismatch or pending; drives the row styling.</summary>
     public string Kind => Pending ? "pending" : Value.Matched ? "match" : "mismatch";
     public string ResultLabel => Pending ? "…" : Matched ? "Khớp" : "Lệch";
+    public string ResultIcon => Pending ? "…" : Matched ? "✓" : "✕";
+    public string ResultTip => Pending ? "Chưa đọc từ MISA" : Matched ? "Khớp với Excel" : "Lệch so với Excel";
     public string Section => SectionName.Length > 0 ? SectionName
         : Value.Field.StartsWith("line:", StringComparison.Ordinal) ? Label.Split(" · ")[0]
         : Value.Field is "subtotal" or "tax_total" or "grand_total" or "item_row_count" or "tax_row_count" ? "Tổng cộng"
@@ -47,9 +61,10 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
 {
     public string Title => $"{Context.Invoice.Identity.Series} {Context.Invoice.Identity.Number}";
     public string Subtitle => $"{Context.Invoice.Buyer.Name} · {Runs.Count} lần xử lý";
-    public string Status => Context.Snapshot.Status == WorkflowStatus.Discarded && Context.Reconciliations?.Any(attempt => attempt.Result is { Matched: false }) == true
+    public string Status => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingLabel
+        : Context.Snapshot.Status == WorkflowStatus.Discarded && Context.Reconciliations?.Any(attempt => attempt.Result is { Matched: false }) == true
         ? "Lệch · Đã bỏ" : StatusLabel(Context.Snapshot.Status);
-    public string StatusColor => Context.Snapshot.Status switch
+    public string StatusColor => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingColor : Context.Snapshot.Status switch
     {
         WorkflowStatus.Saved => "#15803D",
         WorkflowStatus.Discarded => "#BE123C",
@@ -58,6 +73,8 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
         WorkflowStatus.Blocked => "#B45309",
         _ => "#617B70"
     };
+    public static string StatusLabel(WorkflowSnapshot snapshot)
+        => RunOutcome.IsExisting(snapshot) ? RunOutcome.ExistingLabel : StatusLabel(snapshot.Status);
     public static string StatusLabel(WorkflowStatus status) => status switch
     {
         WorkflowStatus.Saved => "Đã lưu",
@@ -189,7 +206,7 @@ public partial class MainWindow
             : activity == "save" ? "Đang Cất và xác minh kết quả..."
             : activity == "discard" ? "Đang đóng bỏ và xác minh kết quả..."
             : activeLabel is not null ? $"Đang nhập: {activeLabel.Label} · {activeLabel.Expected}"
-            : bound is not null ? ProfileRecord.StatusLabel(bound.Snapshot.Status)
+            : bound is not null ? ProfileRecord.StatusLabel(bound.Snapshot)
             : "Dữ liệu nguồn · Chưa nhập vào MISA";
         var checkpoint = bound?.Snapshot.PausedFromStatus ?? bound?.Snapshot.Status ?? WorkflowStatus.Ready;
         EntryProgress.Value = bound?.Snapshot.Status == WorkflowStatus.Saved ? 100
@@ -222,7 +239,8 @@ public partial class MainWindow
         finally { updatingProfiles = false; }
         ProfileSummary.Text = records.Length == 0 ? "Chưa có hóa đơn trong hồ sơ."
             : $"{records.Length} hóa đơn · {records.Count(record => record.Context.Snapshot.Status == WorkflowStatus.Saved)} đã lưu"
-                + $" · {records.Count(record => record.Context.Snapshot.Status == WorkflowStatus.Discarded)} đã bỏ";
+                + $" · {records.Count(record => record.Context.Snapshot.Status == WorkflowStatus.Discarded && !RunOutcome.IsExisting(record.Context.Snapshot))} đã bỏ"
+                + $" · {records.Count(record => RunOutcome.IsExisting(record.Context.Snapshot))} đã có trong MISA";
         foreach (var row in invoices) row.Refresh();
         RefreshRunSummary();
         ShowProfile();
@@ -258,8 +276,9 @@ public partial class MainWindow
             ProfileOutcome.Text = record.Context.Snapshot.Status switch
             {
                 WorkflowStatus.Saved => "Đã Cất thành công",
+                WorkflowStatus.Discarded when RunOutcome.IsExisting(record.Context.Snapshot) => "Số hóa đơn đã tồn tại trong MISA, không nhập lại",
                 WorkflowStatus.Discarded => "Hóa đơn đã được bỏ",
-                _ => ProfileRecord.StatusLabel(record.Context.Snapshot.Status)
+                _ => ProfileRecord.StatusLabel(record.Context.Snapshot)
             };
             ProfileEvidence.Text = $"{record.Context.Snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm} · "
                 + $"{System.IO.Path.GetFileName(record.Context.Invoice.Source.FilePath)} · bản dữ liệu {record.Context.Invoice.Revision}";
@@ -279,9 +298,10 @@ public partial class MainWindow
         ProfileOutcome.Text = context.Snapshot.Status switch
         {
             WorkflowStatus.Saved => "Đã Cất thành công",
+            WorkflowStatus.Discarded when RunOutcome.IsExisting(context.Snapshot) => "Số hóa đơn đã tồn tại trong MISA, không nhập lại",
             WorkflowStatus.Discarded when comparison is { Matched: false } => "Đã bỏ vì thông tin không khớp",
             WorkflowStatus.Discarded => "Hóa đơn đã được bỏ",
-            _ => ProfileRecord.StatusLabel(context.Snapshot.Status)
+            _ => ProfileRecord.StatusLabel(context.Snapshot)
         };
         ProfileEvidence.Text = $"{context.Snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm} · "
             + $"{System.IO.Path.GetFileName(context.Invoice.Source.FilePath)} · bản dữ liệu {context.Invoice.Revision}";

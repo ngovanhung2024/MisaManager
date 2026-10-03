@@ -105,6 +105,7 @@ public partial class MainWindow : Window
         workflow.WorkflowChanged += (_, _) => { RefreshWorkflowPanel(); RefreshRunSummary(); };
         ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
+        workflow.CheckedChanged += (_, _) => RefreshChecked();
         uiTimer.Tick += UiTimer_Tick;
         uiTimer.Start();
         PreviewKeyDown += Window_PreviewKeyDown;
@@ -226,11 +227,26 @@ public partial class MainWindow : Window
         CatalogDetail.Visibility = Visibility.Visible;
     }
 
+    private void RefreshChecked()
+    {
+        foreach (var row in invoices) row.RefreshChecked();
+        CheckedCounter.Text = $"Đã chọn {workflow.CheckedCount:N0}/{invoices.Count:N0}";
+    }
+
+    private void CheckAll_Click(object sender, RoutedEventArgs e)
+        => workflow.SetCheckedMany(invoices.Where(row => !row.Invoice.IsBlocked).Select(row => row.Invoice.Fingerprint));
+
+    private void UncheckAll_Click(object sender, RoutedEventArgs e) => workflow.SetCheckedMany([]);
+
+    private void CheckPending_Click(object sender, RoutedEventArgs e)
+        => workflow.SetCheckedMany(workflow.PendingInvoices.Select(invoice => invoice.Fingerprint));
+
     private void RefreshRunSummary()
     {
         var kinds = invoices.Select(row => row.StatusKind).ToArray();
         SavedCount.Text = kinds.Count(kind => kind == "saved").ToString("N0");
         DiscardedCount.Text = kinds.Count(kind => kind == "discarded").ToString("N0");
+        ExistingCount.Text = kinds.Count(kind => kind == "existing").ToString("N0");
         AttentionCount.Text = kinds.Count(kind => kind is "uncertain" or "attention" or "failed" or "paused").ToString("N0");
         PendingCount.Text = kinds.Count(kind => kind is "ready" or "running").ToString("N0");
         InvoiceHeader.Text = invoices.Count == 0 ? "Hóa đơn" : $"Hóa đơn ({invoices.Count:N0})";
@@ -371,8 +387,10 @@ public partial class MainWindow : Window
                 .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
                 .ToArray();
             invoices.Clear();
-            foreach (var invoice in ordered) invoices.Add(new(invoice));
+            foreach (var invoice in ordered) invoices.Add(new(invoice, workflow));
             workflow.InvoiceQueue = ordered;
+            workflow.KeepCheckedIn(ordered.Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal));
+            RefreshChecked();
             if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
             RefreshCatalogLabel();
             RefreshRunSummary();
@@ -415,6 +433,7 @@ public partial class MainWindow : Window
     private void ShowImportError(Exception error)
     {
         ClearImportResult();
+        workflow.SetCheckedMany([]);
         SetVisibleIssues(new[] { new ImportIssue(
             error is WorkbookImportException fault ? fault.Code : "IMPORT_ERROR", IssueSeverity.Blocking,
             error.Message, Resolution: "Kiểm tra file Excel và các cột đã chọn.") });
@@ -675,7 +694,8 @@ public partial class MainWindow : Window
             kind = mismatched == 0 ? ToolStateKind.Saved : ToolStateKind.Error;
             label = mismatched == 0 ? "Đã đối chiếu: khớp" : $"Có {mismatched} dòng lệch";
         }
-        var summary = latest is null ? "Chưa đối chiếu. Dữ liệu bên MISA sẽ hiện sau khi nhập hoặc bấm Đọc lại."
+        var summary = RunOutcome.IsExisting(current.Snapshot) ? "Số hóa đơn đã tồn tại trong MISA: tool đã chọn Không, đóng tab và không nhập lại."
+            : latest is null ? "Chưa đối chiếu. Dữ liệu bên MISA sẽ hiện sau khi nhập hoặc bấm Đọc lại."
             : latest.Result is null ? "Không đọc đủ thông tin từ MISA: " + latest.Error
                 + (ErrorHints.For(ErrorHints.FindCode(latest.Error)) is { } hint ? " " + hint : "")
             : mismatched == 0 ? "Tất cả thông tin khớp với nguồn Excel."
@@ -892,8 +912,11 @@ public partial class MainWindow : Window
             {
                 importModel.ApplyCorrection(corrected.Invoice);
                 var index = invoices.IndexOf(selected);
-                invoices[index] = new InvoiceRow(corrected.Invoice);
+                var wasChecked = workflow.IsChecked(selected.Invoice.Fingerprint);
+                workflow.SetChecked(selected.Invoice.Fingerprint, false);
+                invoices[index] = new InvoiceRow(corrected.Invoice, workflow);
                 workflow.InvoiceQueue = invoices.Select(row => row.Invoice).ToArray();
+                workflow.SetChecked(corrected.Invoice.Fingerprint, wasChecked);
                 InvoiceList.SelectedIndex = index;
             }
             StatusLabel.Text = response.Message;
@@ -917,6 +940,13 @@ public partial class MainWindow : Window
     private sealed class InvoiceRow : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
+        private readonly WorkflowViewModel selection;
+        public bool IsChecked
+        {
+            get => selection.IsChecked(Invoice.Fingerprint);
+            set => selection.SetChecked(Invoice.Fingerprint, value);
+        }
+        public void RefreshChecked() => PropertyChanged?.Invoke(this, new(nameof(IsChecked)));
         public void Refresh()
         {
             PropertyChanged?.Invoke(this, new(nameof(DisplayStatus)));
@@ -924,7 +954,11 @@ public partial class MainWindow : Window
             PropertyChanged?.Invoke(this, new(nameof(DisplaySummary)));
         }
         public InvoiceDocument Invoice { get; }
-        public InvoiceRow(InvoiceDocument invoice) => Invoice = invoice;
+        public InvoiceRow(InvoiceDocument invoice, WorkflowViewModel selection)
+        {
+            Invoice = invoice;
+            this.selection = selection;
+        }
         public string DisplayIdentity => (Invoice.Identity.Series.Length == 0 ? "HĐ " : Invoice.Identity.Series + " ")
             + $"{Invoice.Identity.Number} · {Invoice.Buyer.Name}";
         public string DisplayDate => Invoice.Issued?.ToString("dd/MM/yyyy") ?? "Thiếu";
@@ -936,7 +970,7 @@ public partial class MainWindow : Window
             get
             {
                 if (Invoice.IsBlocked) return "Thiếu dữ liệu";
-                if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot.Status);
+                if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot);
                 return "Sẵn sàng nhập";
             }
         }
@@ -946,7 +980,9 @@ public partial class MainWindow : Window
             get
             {
                 if (Invoice.IsBlocked) return "attention";
-                return LatestRun()?.Snapshot.Status switch
+                var snapshot = LatestRun()?.Snapshot;
+                if (snapshot is not null && RunOutcome.IsExisting(snapshot)) return "existing";
+                return snapshot?.Status switch
                 {
                     null or WorkflowStatus.Ready or WorkflowStatus.Cancelled => "ready",
                     WorkflowStatus.Saved => "saved",

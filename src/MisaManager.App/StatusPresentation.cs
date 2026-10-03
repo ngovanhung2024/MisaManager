@@ -7,7 +7,7 @@ namespace MisaManager.App;
 public enum ToolStateKind
 {
     Connecting, Ready, Disconnected, Entering, Reconciling, Saving, PauseRequested, Paused,
-    Saved, Discarded, Uncertain, NeedsAction, Error
+    Saved, Discarded, Existing, Uncertain, NeedsAction, Error
 }
 
 /// <summary>What the user should see about the run: short label, one-line detail and a remediation hint.</summary>
@@ -29,6 +29,7 @@ public sealed record ToolState(ToolStateKind Kind, string Label, string Detail =
         ToolStateKind.Paused => "Đã tạm dừng",
         ToolStateKind.Saved => "Đã lưu",
         ToolStateKind.Discarded => "Đã bỏ",
+        ToolStateKind.Existing => RunOutcome.ExistingLabel,
         ToolStateKind.Uncertain => "Chưa rõ",
         ToolStateKind.NeedsAction => "Cần xử lý",
         _ => "Lỗi"
@@ -55,6 +56,7 @@ public static class StatePalette
         [ToolStateKind.Ready] = (Make("#15803D"), Make("#ECFDF3")),
         [ToolStateKind.Saved] = (Make("#15803D"), Make("#D1FADF")),
         [ToolStateKind.Discarded] = (Make("#BE123C"), Make("#FFE4E6")),
+        [ToolStateKind.Existing] = (Make(RunOutcome.ExistingColor), Make("#E3ECF6")),
         [ToolStateKind.Uncertain] = (Make("#6D28D9"), Make("#EDE9FE")),
         [ToolStateKind.NeedsAction] = (Make("#B45309"), Make("#FEF3C7")),
         [ToolStateKind.Disconnected] = (Make("#B91C1C"), Make("#FEE2E2")),

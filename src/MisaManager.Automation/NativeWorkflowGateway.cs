@@ -309,12 +309,34 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                         // R20 exposes txtRefNo only on the receipt tab, including during a save prompt.
                         await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
                         var saveFrame = await input.CaptureAsync(token);
+                        var editorHandle = await input.BoundScopeHandleAsync(token);
                         var beforeSaveInput = input.WorkflowInputSequence;
                         try { await input.InvokeWorkflowAsync(saveFrame, profile.SaveVoucher, token, leavesScope: true); }
                         catch (AutomationException error) { saveSent = error.InputMayHaveBeenSent; throw; }
                         finally { saveSent |= input.WorkflowInputSequence != beforeSaveInput; }
                         sent = true;
-                        await VerifySavedAndCloseEditor(context, token, afterSave: true);
+                        string? duplicate;
+                        try
+                        {
+                            duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 800, token);
+                            if (duplicate is null) await VerifySavedAndCloseEditor(context, token, afterSave: true);
+                        }
+                        catch (AutomationException) when (!token.IsCancellationRequested)
+                        {
+                            // A slow prompt makes the editor modal, so the saved-proof reads fail first.
+                            duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 1500, token);
+                            if (duplicate is null) throw;
+                        }
+                        if (duplicate is not null)
+                        {
+                            // After "No" the voucher must still be the open, unsaved editor (Cất enabled).
+                            await WaitEditor(context, visible: true, token);
+                            await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), profile.SaveVoucher, true, token);
+                            saveSent = false;
+                            throw new AutomationException("INVOICE_ALREADY_EXISTS",
+                                $"MISA báo hóa đơn ký hiệu {context.Invoice.Identity.Series}, số {context.Invoice.Identity.Number} đã tồn tại; "
+                                + "đã bấm No (không tự tăng số hóa đơn), chứng từ chưa được Cất.");
+                        }
                         break;
                     case WorkflowStatus.Discarded:
                         if (context.Snapshot.Status == WorkflowStatus.SaveUncertain

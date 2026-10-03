@@ -129,39 +129,44 @@
     </Setter>
   </Style>
 
-  <!-- Shared source-vs-MISA row used by the comparison window and the profile tab. -->
+  <!-- Shared Excel-vs-MISA row (comparison window and profile tab): green when matched, red when mismatched. -->
   <DataTemplate x:Key="ComparisonRowTemplate">
-    <Border x:Name="RowBorder" Padding="6,3" BorderThickness="3,0,0,1" BorderBrush="#EEF1F5" Background="White" ToolTip="{Binding Evidence}">
+    <Border x:Name="RowBorder" Padding="6,3,6,3" Margin="0,0,0,1" BorderThickness="3,0,0,0" BorderBrush="#D1D5DB" Background="#F3F4F6" ToolTip="{Binding Evidence}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="76"/>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="22"/>
         </Grid.ColumnDefinitions>
-        <TextBlock x:Name="LabelText" Text="{Binding ShortLabel}" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,6,0"/>
-        <TextBlock x:Name="ExpectedText" Grid.Column="1" Text="{Binding ExpectedValue}" FontSize="11" TextWrapping="Wrap" Margin="0,0,6,0" Foreground="#111827"/>
-        <TextBlock x:Name="ActualText" Grid.Column="2" Text="{Binding ActualValue}" FontSize="11" TextWrapping="Wrap" Margin="0,0,4,0" Foreground="#111827"/>
-        <TextBlock x:Name="MarkText" Grid.Column="3" Text="{Binding ResultLabel}" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource Success}" VerticalAlignment="Top" MinWidth="26" TextAlignment="Right"/>
+        <TextBlock x:Name="LabelText" Text="{Binding ShortLabel}" ToolTip="{Binding Value.Field}" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,6,0"/>
+        <Border x:Name="ExpectedCell" Grid.Column="1" Margin="0,0,3,0" Padding="4,2" CornerRadius="3" Background="#B3FFFFFF" ToolTip="{Binding ExpectedText}">
+          <TextBlock x:Name="ExpectedText" Text="{Binding ExpectedValue}" FontSize="11" TextWrapping="Wrap" Foreground="#111827"/>
+        </Border>
+        <Border x:Name="ActualCell" Grid.Column="2" Padding="4,2" CornerRadius="3" Background="#B3FFFFFF" ToolTip="{Binding ActualText}">
+          <TextBlock x:Name="ActualText" Text="{Binding ActualValue}" FontSize="11" TextWrapping="Wrap" Foreground="#111827"/>
+        </Border>
+        <TextBlock x:Name="MarkText" Grid.Column="3" Text="{Binding ResultIcon}" ToolTip="{Binding ResultTip}" FontSize="13" FontWeight="Bold" Foreground="#9CA3AF"
+                   HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,0,0"/>
       </Grid>
     </Border>
     <DataTemplate.Triggers>
-      <DataTrigger Binding="{Binding Kind}" Value="match">
-        <Setter TargetName="LabelText" Property="Foreground" Value="#9CA3AF"/>
-        <Setter TargetName="ExpectedText" Property="Foreground" Value="#6B7280"/>
-        <Setter TargetName="ActualText" Property="Foreground" Value="#6B7280"/>
-        <Setter TargetName="MarkText" Property="Foreground" Value="#86B99A"/>
-      </DataTrigger>
       <DataTrigger Binding="{Binding Kind}" Value="pending">
         <Setter TargetName="ActualText" Property="Foreground" Value="#9CA3AF"/>
-        <Setter TargetName="MarkText" Property="Foreground" Value="#9CA3AF"/>
+      </DataTrigger>
+      <DataTrigger Binding="{Binding Kind}" Value="match">
+        <Setter TargetName="RowBorder" Property="Background" Value="#DCFCE7"/>
+        <Setter TargetName="RowBorder" Property="BorderBrush" Value="#15803D"/>
+        <Setter TargetName="LabelText" Property="Foreground" Value="#15803D"/>
+        <Setter TargetName="ExpectedText" Property="Foreground" Value="#166534"/>
+        <Setter TargetName="ActualText" Property="Foreground" Value="#166534"/>
+        <Setter TargetName="MarkText" Property="Foreground" Value="#15803D"/>
       </DataTrigger>
       <DataTrigger Binding="{Binding Kind}" Value="mismatch">
-        <Setter TargetName="RowBorder" Property="Background" Value="{StaticResource DangerStrong}"/>
-        <Setter TargetName="RowBorder" Property="BorderBrush" Value="{StaticResource Danger}"/>
-        <Setter TargetName="LabelText" Property="Foreground" Value="#7F1D1D"/>
-        <Setter TargetName="LabelText" Property="FontWeight" Value="SemiBold"/>
-        <Setter TargetName="ExpectedText" Property="FontWeight" Value="SemiBold"/>
+        <Setter TargetName="RowBorder" Property="Background" Value="#FEE2E2"/>
+        <Setter TargetName="RowBorder" Property="BorderBrush" Value="#B91C1C"/>
+        <Setter TargetName="LabelText" Property="Foreground" Value="#B91C1C"/>
+        <Setter TargetName="ExpectedText" Property="Foreground" Value="#7F1D1D"/>
         <Setter TargetName="ActualText" Property="FontWeight" Value="Bold"/>
         <Setter TargetName="ActualText" Property="Foreground" Value="#B91C1C"/>
         <Setter TargetName="MarkText" Property="Foreground" Value="#B91C1C"/>
