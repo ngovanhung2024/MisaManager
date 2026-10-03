@@ -59,10 +59,13 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
         {
             try
             {
-                if (process.MainWindowHandle == nint.Zero || process.HasExited) continue;
+                // ProcessName needs no process access; skip MainModule enumeration for every other process.
+                if (!MisaProcessName.IsMatch(process.ProcessName) || process.HasExited) continue;
                 var path = process.MainModule?.FileName ?? "";
                 if (!IsMisaExecutable(path)) continue;
-                result.Add(Bind(process.MainWindowHandle));
+                var handle = SessionWindow(process.Id, process.MainWindowHandle);
+                if (handle == nint.Zero) continue;
+                result.Add(Bind(handle, process.Id));
             }
             catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or AutomationException)
             { Trace.TraceWarning("Window discovery: {0}: {1}", process.Id, error.Message); }
@@ -76,7 +79,7 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
         if (handle == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)handle, out var pid) == 0 || (expectedProcessId.HasValue && pid != expectedProcessId))
             throw new AutomationException("WINDOW_NOT_FOUND", "Không xác định được cửa sổ MISA theo HWND/PID.");
         using var process = Process.GetProcessById((int)pid);
-        if (process.MainWindowHandle != handle) throw new AutomationException("WINDOW_IDENTITY_CHANGED", "HWND không còn là cửa sổ chính của process đã chọn.");
+        if (!IsTopLevelWindow(handle)) throw new AutomationException("WINDOW_IDENTITY_CHANGED", "HWND không còn là cửa sổ chính của process đã chọn.");
         var path = process.MainModule?.FileName ?? "";
         if (!IsMisaExecutable(path)) throw new AutomationException("NOT_MISA", "Process được chọn không phải MISA.");
         if (!PInvoke.GetClientRect((HWND)handle, out var rect)) throw new AutomationException("WINDOW_BOUNDS_UNREADABLE", "Không đọc được client bounds MISA.");
@@ -109,7 +112,7 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
             var handle = (HWND)bound.WindowHandle;
             process.Refresh();
             if (process.HasExited || PInvoke.GetWindowThreadProcessId(handle, out var pid) == 0
-                || pid != (uint)bound.ProcessId || process.MainWindowHandle != bound.WindowHandle
+                || pid != (uint)bound.ProcessId || !IsTopLevelWindow(bound.WindowHandle)
                 || !PInvoke.GetClientRect(handle, out var rect))
                 return null;
             var origin = new System.Drawing.Point();
@@ -128,6 +131,39 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
             return null;
         }
     }
+
+    private static readonly Regex MisaProcessName = new(@"^MISA\.SME(?:\d{4})?$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex SessionTitle = new(@"^MISA SME \d{4}\b.* - ", RegexOptions.CultureInvariant);
+
+    // Process.MainWindowHandle is "first visible unowned window in z-order", so it flips to MISA's
+    // unowned popups (Thêm vật tư, notifications) and to the login/"Mở dữ liệu" window. Bind by
+    // structure instead: an unowned top-level window of the process, preferring the logged-in session.
+    internal static bool IsTopLevelWindow(nint handle)
+        => PInvoke.IsWindow((HWND)handle)
+            && (nint)PInvoke.GetAncestor((HWND)handle, GET_ANCESTOR_FLAGS.GA_ROOT) == handle
+            && (nint)PInvoke.GetWindow((HWND)handle, GET_WINDOW_CMD.GW_OWNER) == nint.Zero
+            && (PInvoke.IsWindowVisible((HWND)handle) || PInvoke.IsIconic((HWND)handle));
+
+    public static bool IsSessionTitle(string title) => SessionTitle.IsMatch(title);
+
+    private static nint SessionWindow(int processId, nint fallback)
+    {
+        var windows = new List<nint>();
+        EnumWindows((handle, _) =>
+        {
+            if (PInvoke.GetWindowThreadProcessId((HWND)handle, out var pid) != 0 && pid == (uint)processId
+                && IsTopLevelWindow(handle)) windows.Add(handle);
+            return true;
+        }, nint.Zero);
+        return windows.FirstOrDefault(handle => IsSessionTitle(GetWindowTitle(handle)))
+            is var session and not 0 ? session
+            : windows.Contains(fallback) ? fallback
+            : windows.FirstOrDefault(handle => GetWindowTitle(handle).StartsWith("MISA", StringComparison.Ordinal));
+    }
+
+    private delegate bool EnumWindowsProc(nint handle, nint parameter);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, nint parameter);
 
     private static bool IsMisaExecutable(string path)
         => Regex.IsMatch(Path.GetFileName(path), @"^MISA\.SME(?:\d{4})?\.exe$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);

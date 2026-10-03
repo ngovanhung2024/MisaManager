@@ -75,7 +75,7 @@ public static partial class ErrorHints
         ["STALE_NATIVE_FRAME"] = "Màn hình MISA vừa thay đổi nên dữ liệu đọc đã cũ. Chờ MISA ổn định, không thao tác thêm, rồi bấm Đọc lại.",
         ["EDITOR_NOT_FOUND"] = "Không thấy form chứng từ bán hàng. Mở lại chứng từ 'Bán hàng hóa, dịch vụ trong nước' trong MISA rồi chạy lại.",
         ["SALES_SURFACE_MISSING"] = "MISA chưa ở màn hình Bán hàng. Vào Bán hàng > Chứng từ bán hàng rồi chạy lại.",
-        ["WINDOW_IDENTITY_CHANGED"] = "Cửa sổ MISA đã được đóng/mở lại. Bấm ••• > Chọn phiên MISA để chọn đúng phiên đang đăng nhập.",
+        ["WINDOW_IDENTITY_CHANGED"] = "Phiên MISA đã đóng/mở lại hoặc đổi dữ liệu. Đăng nhập đúng dữ liệu rồi bấm Thêm vào MISA để chạy lại hóa đơn từ đầu.",
         ["ITEM_CATALOG_MISSING"] = "Chưa nạp danh mục mã hàng. Bấm nút Mã hàng và chọn file danh mục vật tư xuất từ MISA.",
         ["ITEM_AMBIGUOUS"] = "Tên hàng trùng nhiều mã trong danh mục. Bổ sung cột Mã hàng cho dòng này (••• > Bổ sung dữ liệu nguồn) để chọn đúng mã.",
         ["ITEM_UNIT_CONFLICT"] = "Tên hàng đã có nhưng khác đơn vị tính. Chọn đúng mã hàng theo đơn vị rồi điền vào nguồn; tool không tự tạo mã mới.",
