@@ -107,19 +107,11 @@ public partial class MainWindow
     private string? scrolledActiveKey;
     private bool updatingProfiles;
     private bool presentationInitialized;
-    private bool showOnlyMismatch;
     private WorkflowContext? profileContext;
     private IReadOnlyList<WorkflowContext>? profileHistory;
 
     private static string FormatNumber(decimal? value) => value?.ToString("N2", CultureInfo.GetCultureInfo("vi-VN")) ?? "Chưa có";
     private static string FormatDay(DateOnly? value) => value?.ToString("dd/MM/yyyy") ?? "Chưa có";
-
-    private void OnlyMismatch_Changed(object sender, RoutedEventArgs e)
-    {
-        showOnlyMismatch = OnlyMismatchToggle.IsChecked == true;
-        presentationInitialized = false;
-        RefreshWorkflowPanel();
-    }
 
     private void RefreshWorkflowPanel()
     {
@@ -151,19 +143,10 @@ public partial class MainWindow
         EntryHeading.Visibility = EntryList.Visibility = EntryColumns.Visibility = Visibility.Visible;
         EntryEmpty.Visibility = Visibility.Collapsed;
         EntryTitle.Text = $"Hóa đơn {invoice.Identity.Number} · {invoice.Lines.Length} mặt hàng";
-        var latest = bound?.Reconciliations?.LastOrDefault();
-        var comparisons = latest?.Result?.Values.Where(value => !IsHiddenDisplayField(value.Field))
-            .GroupBy(value => value.Field, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.FirstOrDefault(value => !value.Matched) ?? group.Last(), StringComparer.Ordinal);
+        // The main panel only shows the source invoice; MISA readback belongs to the comparison window.
         var fields = new List<EntryFieldRow>();
         EntryFieldRow Create(string key, string label, string? value, bool section = false)
-        {
-            var read = comparisons?.GetValueOrDefault(key);
-            var expected = string.IsNullOrEmpty(value) ? read?.Expected : value;
-            return new(key, label, string.IsNullOrEmpty(expected) ? "(trống)" : expected,
-                read is null ? "" : read.Actual is null ? "Không đọc được" : read.Actual.Length == 0 ? "(trống)" : read.Actual,
-                section, activity == key, read?.Matched == true, read?.Matched == false);
-        }
+            => new(key, label, string.IsNullOrEmpty(value) ? "(trống)" : value, "", section, activity == key);
         void Add(string key, string label, string? value, bool section = false)
             => fields.Add(Create(key, label, value, section));
         Add("customer", "Mã khách hàng", invoice.Buyer.Code);
@@ -183,8 +166,6 @@ public partial class MainWindow
                 Create(key + "code", "Mã hàng", line.ItemCode.Trim().Length == 0 ? "(tra theo danh mục)" : line.ItemCode),
                 Create(key + "unit", "Đơn vị tính", line.Unit)
             };
-            if (comparisons?.ContainsKey(key + "debit_account") == true)
-                children.Add(Create(key + "debit_account", "Tài khoản", null));
             children.Add(Create(key + "quantity", "Số lượng", FormatNumber(line.Quantity)));
             children.Add(Create(key + "unit_price", "Đơn giá", bound?.NativeValues?.GetValueOrDefault("price:" + line.LineId)
                 ?? "MISA tự tính từ thành tiền / số lượng"));
@@ -198,14 +179,6 @@ public partial class MainWindow
         Add("tax_total", "Tổng thuế", FormatNumber(invoice.TaxTotal));
         Add("grand_total", "Tổng thanh toán", FormatNumber(invoice.GrandTotal));
         var activeRow = fields.FirstOrDefault(field => field.IsActive || field.Children?.Any(child => child.IsActive) == true);
-        var mismatches = fields.Sum(field => field.MismatchCount);
-        if (showOnlyMismatch && comparisons is not null)
-        {
-            fields = [.. fields.Select(field => field.IsLineSection
-                    ? field.MismatchCount > 0 ? field with { Children = [.. field.Children!.Where(child => child.IsMismatch)] } : null
-                    : field.IsMismatch ? field : null).OfType<EntryFieldRow>()];
-            if (fields.Count == 0) fields.Add(new("none", "Kết quả", "Không có dòng lệch"));
-        }
         for (var i = 0; i < fields.Count; i++)
         {
             if (i >= entryFields.Count) entryFields.Add(fields[i]);
@@ -216,8 +189,6 @@ public partial class MainWindow
         // Only follow the active field when it moves, so the user can scroll freely in between.
         if (active is not null && active.Key != scrolledActiveKey) EntryList.ScrollIntoView(active);
         scrolledActiveKey = active?.Key;
-        OnlyMismatchToggle.Content = comparisons is null ? "Chỉ dòng lệch" : mismatches == 0 ? "Chỉ dòng lệch · 0" : $"Chỉ dòng lệch · {mismatches}";
-        OnlyMismatchToggle.IsEnabled = comparisons is not null;
         var activeLabel = activeRow?.Children?.FirstOrDefault(child => child.IsActive) ?? activeRow;
         ActivityLabel.Text = activity == "reconcile" ? "Đang đọc lại toàn bộ thông tin từ MISA..."
             : activity == "save" ? "Đang Cất và xác minh kết quả..."
@@ -228,7 +199,6 @@ public partial class MainWindow
         var checkpoint = bound?.Snapshot.PausedFromStatus ?? bound?.Snapshot.Status ?? WorkflowStatus.Ready;
         EntryProgress.Value = bound?.Snapshot.Status == WorkflowStatus.Saved ? 100
             : checkpoint <= WorkflowStatus.AwaitingSave ? (int)checkpoint * 10 : 0;
-        if (workflow.IsRunning || activity == "reconcile" || latest is not null) SourceExpander.IsExpanded = false;
     }
 
     private void RefreshProfiles()

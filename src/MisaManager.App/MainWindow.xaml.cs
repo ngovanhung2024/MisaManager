@@ -178,6 +178,7 @@ public partial class MainWindow : Window
             }
             finally { updatingSheet = false; }
             StatusLabel.Text = "Chọn trang tính dữ liệu để tiếp tục.";
+            if (SheetChoice.SelectedIndex < 0) OpenSourceSettings();
         }
         catch (OperationCanceledException) when (work.IsCancellationRequested) { return; }
         catch (Exception error) { if (IsCurrent(work)) ShowImportError(error); return; }
@@ -243,12 +244,6 @@ public partial class MainWindow : Window
 
     private void RefreshRunSummary()
     {
-        var kinds = invoices.Select(row => row.StatusKind).ToArray();
-        SavedCount.Text = kinds.Count(kind => kind == "saved").ToString("N0");
-        DiscardedCount.Text = kinds.Count(kind => kind == "discarded").ToString("N0");
-        ExistingCount.Text = kinds.Count(kind => kind == "existing").ToString("N0");
-        AttentionCount.Text = kinds.Count(kind => kind is "uncertain" or "attention" or "failed" or "paused").ToString("N0");
-        PendingCount.Text = kinds.Count(kind => kind is "ready" or "running").ToString("N0");
         InvoiceHeader.Text = invoices.Count == 0 ? "Hóa đơn" : $"Hóa đơn ({invoices.Count:N0})";
         RefreshStateBadge();
     }
@@ -396,7 +391,10 @@ public partial class MainWindow : Window
             RefreshRunSummary();
             ShowWorkbookIssues();
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
+            {
                 MappingExpander.IsExpanded = true;
+                OpenSourceSettings();
+            }
             StatusLabel.Text = imported.IsBlocked ? "Cần bổ sung dữ liệu trước khi nhập." :
                 $"{imported.Invoices.Count:N0} hóa đơn · {imported.ReadRows:N0} dòng dữ liệu";
         }
@@ -625,15 +623,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Mirrors the tool's data into the comparison window: shown while a run is active or the MISA voucher tab is open,
-    /// closed as soon as the tab closes, refreshed whenever a new reconciliation arrives.
+    /// Mirrors the tool's data into the comparison window. It opens only once every value has been entered
+    /// (items done, before Cất) or a reconciliation exists, closes as soon as the MISA tab closes, and
+    /// refreshes whenever a new reconciliation arrives.
     /// </summary>
     private void UpdateComparisonPopup()
     {
         var current = workflow.CurrentContext;
         var state = workflow.State;
         var bound = IsComparisonBound() && current is not null;
-        var wanted = bound && IsVisible && state.Kind != ToolStateKind.Disconnected
+        var wanted = bound && IsVisible && state.Kind != ToolStateKind.Disconnected && EntryFinished(current!)
             && (workflow.IsRunning || editorOpen == true || (editorOpen is null && comparisonWindow is not null));
         if (!wanted || current is null)
         {
@@ -674,6 +673,13 @@ public partial class MainWindow : Window
             comparisonWindow.UpdateComparison(BuildComparisonModel(current, state));
         }
         comparisonWindow.SetReconcileEnabled(!workflow.IsRunning);
+    }
+
+    private static bool EntryFinished(WorkflowContext context)
+    {
+        if (context.Reconciliations is { Count: > 0 }) return true;
+        var checkpoint = context.Snapshot.PausedFromStatus ?? context.Snapshot.Status;
+        return checkpoint is >= WorkflowStatus.ItemsVerified and <= WorkflowStatus.Saved;
     }
 
     private ComparisonModel BuildComparisonModel(WorkflowContext current, ToolState state)
@@ -722,6 +728,12 @@ public partial class MainWindow : Window
         }
         catch (Exception error) { StatusLabel.Text = "Không xóa được lịch sử hồ sơ: " + error.Message; }
     }
+
+    private void SourceSettings_Click(object sender, RoutedEventArgs e) => OpenSourceSettings();
+
+    // Deferred so the closing context menu does not immediately dismiss the StaysOpen=False popup.
+    private void OpenSourceSettings()
+        => Dispatcher.BeginInvoke(() => SourcePopup.IsOpen = true, System.Windows.Threading.DispatcherPriority.Background);
 
     private void More_Click(object sender, RoutedEventArgs e)
     {
