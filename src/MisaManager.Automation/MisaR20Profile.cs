@@ -40,30 +40,6 @@ public sealed class MisaR20Profile
         && elements.Any(element => element.AutomationId == "TabItem Key SAVoucher"
             && string.Equals(element.Name, "Bán hàng", StringComparison.Ordinal));
 
-    public bool HasVoucherEditorForCompany(IReadOnlyList<ElementIdentity> elements, string expectedCompany,
-        out string? actualCompany)
-    {
-        actualCompany = null;
-        var editors = elements.Where(element => element.AutomationId == "frmSAVoucherDetail"
-            && element.ControlType == "Window" && element.Enabled && !element.Offscreen).ToArray();
-        if (editors.Length == 0) return false;
-        actualCompany = editors.Length == 1 ? ExtractCompany(editors[0].Name) : null;
-        return editors.Length == 1 && string.Equals(actualCompany, expectedCompany, StringComparison.Ordinal);
-    }
-
-    public string? VoucherEditorCompany(IReadOnlyList<ElementIdentity> elements)
-    {
-        var editor = elements.Where(element => element.AutomationId == "frmSAVoucherDetail"
-            && element.ControlType == "Window" && element.Enabled && !element.Offscreen).ToArray();
-        return editor.Length == 1 ? ExtractCompany(editor[0].Name) : null;
-    }
-
-    private static string? ExtractCompany(string title)
-    {
-        var separator = title.LastIndexOf(" - ", StringComparison.Ordinal);
-        return separator >= 0 && separator + 3 < title.Length ? title[(separator + 3)..].Trim() : null;
-    }
-
     public IReadOnlyList<string> MissingLiveMatrix(WorkflowStatus target)
         => target switch
         {

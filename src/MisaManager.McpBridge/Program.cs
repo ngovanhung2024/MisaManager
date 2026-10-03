@@ -578,29 +578,50 @@ internal static class Program
         finally { Capacity.Release(); }
     }
 
+    private enum SendFailure { None, NotConnected, Dropped }
+
+    private const int ConnectAttemptMilliseconds = 5_000;
+    private const int MaxConnectAttempts = 4;
+    private const string PipeUnavailableMessage =
+        "Chưa kết nối được MisaManager.App (app chưa chạy, đang khởi động lại hoặc pipe điều khiển chưa sẵn sàng). Mở MISA Excel Manager rồi gọi lại; bridge sẽ tự bắt tay lại.";
+
     private static async Task<OperationResult> ForwardRequestAsync(ControlRequest request, CancellationToken token = default)
     {
         ContractValidation.Validate(request);
         token.ThrowIfCancellationRequested();
         if (request.Action == "capabilities" && string.IsNullOrWhiteSpace(request.SessionNonce))
-            return await SendRequestAsync(request, token);
+            return (await SendWithReconnectAsync(request, token)).Result;
 
-        var sessionResult = await EnsureSessionAsync(request, token);
-        if (sessionResult is not null)
-            return sessionResult with { RequestId = request.RequestId };
-
-        if (runtimeMismatch is not null && ControlActions.MayMutate(request.Action))
-            return new(request.RequestId, "error", runtimeMismatch + " Mutations are blocked; reads still work.");
-        var response = await SendRequestAsync(request with { SessionNonce = sessionNonce }, token);
-        if (response.Status == "error" && response.Message.Contains("nonce", StringComparison.OrdinalIgnoreCase))
+        // One transparent re-handshake covers an app restart (stale nonce) or a pipe
+        // dropped before a read completed; a possibly delivered mutation is never resent.
+        for (var attempt = 0; ; attempt++)
         {
-            sessionNonce = null;
-            var retryResult = await EnsureSessionAsync(request, token);
-            if (retryResult is not null)
-                return retryResult with { RequestId = request.RequestId };
-            return await SendRequestAsync(request with { SessionNonce = sessionNonce }, token);
+            var sessionResult = await EnsureSessionAsync(request, token);
+            if (sessionResult is not null)
+                return sessionResult with { RequestId = request.RequestId };
+
+            if (runtimeMismatch is not null && ControlActions.MayMutate(request.Action))
+                return new(request.RequestId, "error", runtimeMismatch + " Mutations are blocked; reads still work.");
+            var (response, failure) = await SendWithReconnectAsync(request with { SessionNonce = sessionNonce }, token);
+            var staleNonce = response.Status == "error" && response.Message.Contains("nonce", StringComparison.OrdinalIgnoreCase);
+            if (failure == SendFailure.Dropped || staleNonce) sessionNonce = null;
+            if (attempt == 0 && (staleNonce || failure == SendFailure.Dropped && !ControlActions.MayMutate(request.Action)))
+                continue;
+            return response;
         }
-        return response;
+    }
+
+    private static async Task<(OperationResult Result, SendFailure Failure)> SendWithReconnectAsync(
+        ControlRequest request, CancellationToken token)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var sent = await SendCoreAsync(request, token);
+            if (sent.Failure != SendFailure.NotConnected || attempt >= MaxConnectAttempts || token.IsCancellationRequested)
+                return sent;
+            try { await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), token); }
+            catch (OperationCanceledException) { return sent; }
+        }
     }
 
     private static async Task<OperationResult?> EnsureSessionAsync(ControlRequest request, CancellationToken token)
@@ -613,7 +634,7 @@ internal static class Program
             var now = DateTimeOffset.UtcNow;
             var deadline = request.Deadline < now.AddSeconds(30) ? request.Deadline : now.AddSeconds(30);
             if (deadline <= now)
-                return new(request.RequestId, "expired", "Control handshake deadline expired.");
+                return new(request.RequestId, "expired", "Hết thời gian chờ bắt tay điều khiển (Control handshake deadline expired).");
             var handshake = new ControlRequest(
                 ProductIdentity.ControlProtocolVersion,
                 "capabilities-" + Guid.NewGuid().ToString("N"),
@@ -624,11 +645,11 @@ internal static class Program
                 "capabilities",
                 null,
                 EmptyPayload());
-            var result = await SendRequestAsync(handshake, token);
+            var result = (await SendWithReconnectAsync(handshake, token)).Result;
             if (result.Status is "error" or "blocked" or "expired" or "cancelled" or "uncertain")
-                return new(request.RequestId, result.Status, "Control handshake failed: " + result.Message, result.InputMayHaveBeenSent, result.Data);
+                return new(request.RequestId, result.Status, "Bắt tay điều khiển thất bại: " + result.Message, result.InputMayHaveBeenSent, result.Data);
             if (!TryReadSessionNonce(result.Data, out var nonce))
-                return new(request.RequestId, "error", "Control handshake did not return a session nonce.");
+                return new(request.RequestId, "error", "Bắt tay điều khiển không trả về session nonce.");
             sessionNonce = nonce;
             return null;
         }
@@ -636,16 +657,19 @@ internal static class Program
     }
 
     private static async Task<OperationResult> SendRequestAsync(ControlRequest request, CancellationToken token = default)
+        => (await SendCoreAsync(request, token)).Result;
+
+    private static async Task<(OperationResult Result, SendFailure Failure)> SendCoreAsync(ControlRequest request, CancellationToken token)
     {
         var sent = false;
         try
         {
             var remaining = request.Deadline - DateTimeOffset.UtcNow;
-            if (remaining <= TimeSpan.Zero) return new(request.RequestId, "expired", "Control deadline expired before send.");
+            if (remaining <= TimeSpan.Zero) return (new(request.RequestId, "expired", "Control deadline expired before send."), SendFailure.None);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(remaining);
             using var pipe = new NamedPipeClientStream(".", ProductIdentity.TechnicalName + ".control", PipeDirection.InOut, PipeOptions.Asynchronous);
-            await pipe.ConnectAsync(Math.Clamp((int)remaining.TotalMilliseconds, 1, 30_000), deadline.Token);
+            await pipe.ConnectAsync(Math.Clamp((int)remaining.TotalMilliseconds, 1, ConnectAttemptMilliseconds), deadline.Token);
             using var pipeReader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
             await using var pipeWriter = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
             sent = true;
@@ -660,13 +684,13 @@ internal static class Program
                     : "BRIDGE_APP_IDENTITY_MISMATCH: app and bridge are different builds (version/source/Core SHA/protocol/schema). Restart Codex's MCP bridge from the same release.";
                 if (TryReadSessionNonce(result.Data, out var nonce)) sessionNonce = nonce;
                 if (runtimeMismatch is not null && request.SessionNonce is null && !request.RequestId.StartsWith("capabilities-", StringComparison.Ordinal))
-                    return result with { Status = "error", Message = runtimeMismatch + " No action was dispatched." };
+                    return (result with { Status = "error", Message = runtimeMismatch + " No action was dispatched." }, SendFailure.None);
             }
-            return result;
+            return (result, SendFailure.None);
         }
         catch (Exception error) when (!sent && (error is TimeoutException or IOException))
         {
-            return new(request.RequestId, "blocked", "MisaManager.App is not running or the named pipe is not ready.");
+            return (new(request.RequestId, "blocked", PipeUnavailableMessage), SendFailure.NotConnected);
         }
         catch (Exception error)
         {
@@ -679,9 +703,14 @@ internal static class Program
                     JsonSerializer.SerializeToElement(new { requestId = request.RequestId }), request.SessionNonce);
                 await SendRequestAsync(cancel);
             }
+            var dropped = sent && error is IOException or JsonException;
             var uncertain = sent && MisaManager.Control.ControlServer.MayMutate(request.Action);
-            return new(request.RequestId, uncertain ? "uncertain" : error is OperationCanceledException ? "cancelled" : "error",
-                error.Message, sent && ControlActions.MaySendInput(request.Action));
+            var message = dropped
+                ? "Mất kết nối tới MisaManager.App (" + error.Message + ")."
+                    + (uncertain ? " Lệnh có thể đã chạy: không gửi lại; mở lại app rồi kiểm tra bằng get_operation_status/workflow_status." : " Bridge sẽ tự bắt tay lại ở lần gọi sau.")
+                : error.Message;
+            return (new(request.RequestId, uncertain ? "uncertain" : error is OperationCanceledException ? "cancelled" : "error",
+                message, sent && ControlActions.MaySendInput(request.Action)), dropped ? SendFailure.Dropped : SendFailure.None);
         }
     }
 

@@ -88,7 +88,13 @@ public sealed partial class AppServices : IAsyncDisposable
         {
             try { await Initialization.WaitAsync(token); }
             catch (OperationCanceledException) { throw; }
-            catch (Exception error) { return new(request.RequestId, "blocked", "Không khôi phục được state: " + error.Message); }
+            catch (Exception)
+            {
+                // A faulted startup task is cached forever; Workflow.InitializeAsync is re-entrant, so retry it per call.
+                try { await Workflow.InitializeAsync(token); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception error) { return new(request.RequestId, "blocked", "Không khôi phục được state: " + error.Message); }
+            }
         }
         if (request.Action is "advance" or "resume" or "save" or "discard" or "reconcile" or "recover")
         {
@@ -187,7 +193,11 @@ public sealed partial class AppServices : IAsyncDisposable
                     return new(request.RequestId, "blocked", "Cần windowHandle từ diagnostics hiện tại.");
                 try
                 {
-                    var focused = Windows.Focus((nint)focusHandle);
+                    // Never raise the login/"Mở dữ liệu" window over an open session: validate before activating.
+                    var focusTarget = Windows.Bind((nint)focusHandle);
+                    if (!focusTarget.Title.StartsWith(WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal))
+                        return new(request.RequestId, "blocked", "Cửa sổ này không phải phiên MISA đã đăng nhập (có thể là màn hình đăng nhập/mở dữ liệu); không kích hoạt để tránh che phiên đang mở.");
+                    var focused = Windows.Focus((nint)focusHandle, focusTarget.ProcessId);
                     return new(request.RequestId, "completed", "Đã đưa đúng cửa sổ MISA lên trước; chưa gửi nghiệp vụ.", false, focused);
                 }
                 catch (Exception error) { return new(request.RequestId, "blocked", error.Message); }

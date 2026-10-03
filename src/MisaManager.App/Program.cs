@@ -14,10 +14,12 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        var restarting = args.Contains("--wait-for-pid");
         args = WaitForPreviousInstance(args);
         if (args.Length > 0) return RunCommandAsync(args).GetAwaiter().GetResult();
-        using var instance = new Mutex(true, "Local\\MisaManager.App", out var created);
-        if (!created) return 10;
+        var instance = AcquireInstanceMutex(restarting);
+        if (instance is null) return 10;
+        using var owned = instance;
         try
         {
             var app = new App();
@@ -25,6 +27,19 @@ public static class Program
             return app.Run();
         }
         finally { instance.ReleaseMutex(); }
+    }
+
+    // A restart may race the old process's mutex release; a plain launch must not wait.
+    private static Mutex? AcquireInstanceMutex(bool restarting)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var mutex = new Mutex(true, "Local\\MisaManager.App", out var created);
+            if (created) return mutex;
+            mutex.Dispose();
+            if (!restarting || attempt >= 20) return null;
+            Thread.Sleep(500);
+        }
     }
 
     private static string[] WaitForPreviousInstance(string[] args)

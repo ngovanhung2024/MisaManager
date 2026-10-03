@@ -829,7 +829,8 @@ public sealed partial class NativeInputService
                 values[column.Key] = text.Value;
                 rowSources[column.Key] = text.Source + "+UIA3.CustomGrid.DataItem";
             }
-            if (values.Values.All(string.IsNullOrWhiteSpace)) continue;
+            // The add-new row shows a prompt instead of data.
+            if (values.Values.All(value => string.IsNullOrWhiteSpace(value) || IsCustomNewRowPrompt(value))) continue;
             rows.Add(values);
             sources.Add(rowSources);
         }
@@ -928,9 +929,16 @@ public sealed partial class NativeInputService
         return matches.OrderByDescending(item => item.column.Right - item.column.Left).ThenBy(item => item.column.Left).First().index;
     }
 
+    private static bool IsCustomNewRowPrompt(string text)
+        => string.Equals(text.Normalize(NormalizationForm.FormC).Trim(), "Bấm vào đây để thêm mới",
+            StringComparison.OrdinalIgnoreCase);
+
+    // dataRowsOnly drops the -1 add-new row; onscreenOnly drops rows clipped by the
+    // viewport, whose cells have no stable geometry to map.
     private CustomGridLayout ReadCustomGridLayout(AutomationElement grid, CancellationToken token,
         IReadOnlyList<string>? requestedColumns = null, NativeCell? rowTarget = null,
-        bool waitForCode = false, bool requireEmptyCode = false)
+        bool waitForCode = false, bool requireEmptyCode = false,
+        bool dataRowsOnly = false, bool onscreenOnly = false, bool allowEmpty = false)
     {
         var headers = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.HeaderItem),
                 identity!.ProcessId, enabled: false, onscreen: false))
@@ -956,9 +964,10 @@ public sealed partial class NativeInputService
 
         var rows = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
                 identity!.ProcessId, onscreen: false))
-            .Where(element => element.HasArea && IsLogicalCustomRow(element))
+            .Where(element => element.HasArea && IsLogicalCustomRow(element)
+                && (!dataRowsOnly || element.AutomationId != "-1") && (!onscreenOnly || !element.Offscreen))
             .OrderBy(element => element.Bounds.Y).Select(element => element.Element).ToArray();
-        if (rows.Length == 0)
+        if (rows.Length == 0 && !allowEmpty)
             throw new AutomationException("GRID_ROWS_INVALID", "Không có dòng native của bảng.");
         if (rowTarget is not null)
             rows = [SelectCustomRow(rows, headers, rowTarget, waitForCode, requireEmptyCode, token)];
@@ -1191,14 +1200,24 @@ public sealed partial class NativeInputService
             // Slow provider reads may take a minute; input requires a recent frame.
             || DateTimeOffset.UtcNow - frame.ObservedAt > TimeSpan.FromSeconds(forInput ? 10 : 60))
             throw new AutomationException("STALE_NATIVE_FRAME", "Frame/bounds/DPI đã thay đổi; cần quan sát mới.");
-        if (!root!.Properties.IsEnabled.ValueOrDefault || root.Properties.IsOffscreen.ValueOrDefault
-            || root.Properties.ProcessId.ValueOrDefault != identity!.ProcessId
-            || root.Name != frame.TabIdentity)
-            throw new AutomationException("SCOPE_IDENTITY_CHANGED", "Scope đã đổi, bị ẩn hoặc bị khóa; không gửi input.");
+        if (!ScopeReady(frame))
+        {
+            // R20 briefly disables a scope while it processes a commit (combo lookups,
+            // the new-item dialog opening/closing). Settle before deciding it changed.
+            var deadline = Environment.TickCount64 + 1500;
+            while (!ScopeReady(frame) && Environment.TickCount64 < deadline) Thread.Sleep(50);
+            if (!ScopeReady(frame))
+            {
+                // A MISA message box is the usual reason; report it instead of a generic scope change.
+                ThrowIfBlockingDialog();
+                throw new AutomationException("SCOPE_IDENTITY_CHANGED",
+                    "Cửa sổ MISA đang nhập đã đổi, bị ẩn hoặc bị khóa; không gửi input. Đóng hộp thoại MISA đang mở (nếu có) rồi bấm Tiếp tục.");
+            }
+        }
         // Cheap Win32 proof first; the full host scan below walks every grid cell.
         if (!MayHaveModalDialog()) return;
         var ancestors = new List<AutomationElement>();
-        for (var parent = root.Parent; parent is not null && parent.Properties.ProcessId.ValueOrDefault == identity.ProcessId; parent = parent.Parent)
+        for (var parent = root!.Parent; parent is not null && parent.Properties.ProcessId.ValueOrDefault == identity!.ProcessId; parent = parent.Parent)
             ancestors.Add(parent);
         var dialogs = HostWindows(null).Select(element => element.Element)
             .Where(element => element.Patterns.Window.IsSupported
@@ -1219,6 +1238,11 @@ public sealed partial class NativeInputService
                 "MISA modal dialog requires attention. Dialog: " + string.Join("; ", details));
         }
     }
+
+    private bool ScopeReady(NativeFrame frame)
+        => root!.Properties.IsEnabled.ValueOrDefault && !root.Properties.IsOffscreen.ValueOrDefault
+            && root.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
+            && root.Name == frame.TabIdentity;
 
     private static (string Value, string Source) ReadNativeText(AutomationElement element)
     {

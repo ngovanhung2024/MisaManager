@@ -44,6 +44,7 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
         if (loop is not null) await loop;
     }
 
+    // The listener must outlive client drops and transient pipe faults; only Stop ends it.
     private async Task AcceptLoopAsync(NamedPipeServerStream pipe, CancellationToken token)
     {
         var clients = new List<Task>();
@@ -51,11 +52,19 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
         {
             while (!token.IsCancellationRequested)
             {
-                await pipe.WaitForConnectionAsync(token);
+                try { await pipe.WaitForConnectionAsync(token); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
+                catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException)
+                {
+                    Trace.TraceWarning("Control accept recovered: {0}", error.Message);
+                    await pipe.DisposeAsync();
+                    pipe = await CreatePipeWithRetryAsync(token);
+                    continue;
+                }
                 var connected = pipe;
-                pipe = CreatePipe();
                 clients.RemoveAll(task => task.IsCompleted);
                 clients.Add(ServeClientAsync(connected, token));
+                pipe = await CreatePipeWithRetryAsync(token);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -69,6 +78,21 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
             await pipe.DisposeAsync();
             stopping.Cancel();
             await Task.WhenAll(clients);
+        }
+    }
+
+    private async Task<NamedPipeServerStream> CreatePipeWithRetryAsync(CancellationToken token)
+    {
+        var delay = TimeSpan.FromMilliseconds(100);
+        while (true)
+        {
+            try { return CreatePipe(); }
+            catch (Exception error) when (error is IOException or Win32Exception or UnauthorizedAccessException)
+            {
+                Trace.TraceWarning("Control listener recreate failed; retrying: {0}", error.Message);
+                await Task.Delay(delay, token);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
+            }
         }
     }
 
@@ -146,7 +170,8 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
 
     private async Task ServeClientAsync(NamedPipeServerStream pipe, CancellationToken token)
     {
-        await using (pipe) await ServeAsync(pipe, token);
+        try { await using (pipe) await ServeAsync(pipe, token); }
+        catch (Exception error) { Trace.TraceWarning("Control client cleanup failed: {0}", error.Message); }
     }
 
     private async Task ServeAsync(NamedPipeServerStream pipe, CancellationToken serverToken)

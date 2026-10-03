@@ -10,6 +10,8 @@ if (-not $section.Success -or $section.Groups['body'].Value -notmatch '(?m)^enab
 $stable = Join-Path $env:LOCALAPPDATA 'Programs\MisaManager\bridge\MisaManager.McpBridge.exe'
 if ($section.Groups['body'].Value -notmatch [regex]::Escape("command = '$stable'")) { throw 'Native connector does not use the stable installed bridge.' }
 if (-not (Test-Path -LiteralPath $stable -PathType Leaf)) { throw 'Installed bridge is missing.' }
+. (Join-Path $PSScriptRoot 'bridge-runtime.ps1')
+Assert-BridgeLaunch $stable
 $processes = @(Get-CimInstance Win32_Process)
 $legacy = @($processes | Where-Object { $_.Name -match '^python(w)?\.exe$' -and $_.CommandLine -match '(incident_mcp|[\\/]misa[\\/](app|launcher))\.py' })
 if ($legacy.Count) { throw 'A retired legacy control process is still running.' }

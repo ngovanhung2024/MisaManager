@@ -51,3 +51,11 @@ not implied by build or health checks.
 
 The Pending Task Board is no longer published. A major MSI upgrade removes the
 old package's board files. Historical rollback packages remain unchanged.
+
+## Runtime check
+
+`release.ps1` fails when the app or bridge payload is framework-dependent (missing
+`hostfxr.dll`/`coreclr.dll`/`System.Private.CoreLib.dll`), because the build host's
+own .NET would hide that. `install.ps1`, rollback health checks, `owner-interlock.ps1`
+and `start-manager.ps1` also launch the bridge with `--health-check` and report a
+Vietnamese message when the .NET runtime is missing (`scripts/bridge-runtime.ps1`).

@@ -22,6 +22,7 @@
   "itemNewStock": { "automationId": "cboDefaultStock", "controlType": "ComboBox" },
   "itemNewTaxRate": { "automationId": "cboTaxRate", "controlType": "ComboBox" },
   "itemNewSave": { "name": "Cất", "controlType": "Button" },
+  "itemNewStockCode": "KHH",
   "fields": {
     "customer": { "automationId": "cboAccountObjectID" },
     "customer_name": { "automationId": "txtAccountObjectName" },

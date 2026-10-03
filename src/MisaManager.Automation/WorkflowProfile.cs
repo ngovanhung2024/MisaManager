@@ -11,8 +11,11 @@ public sealed record WorkflowProfile(
     NativeSelector ItemNewCode, NativeSelector ItemNewName, NativeSelector ItemNewUnit,
     NativeSelector ItemNewStock, NativeSelector ItemNewTaxRate, NativeSelector ItemNewSave,
     IReadOnlyDictionary<string, NativeSelector> Fields, IReadOnlyDictionary<string, string> Columns,
-    IReadOnlyDictionary<string, string> SalesColumns)
+    IReadOnlyDictionary<string, string> SalesColumns, string? ItemNewStockCode = null)
 {
+    /// <summary>Default warehouse for items created by the tool ("Kho ngầm định").</summary>
+    public string DefaultItemStock => string.IsNullOrWhiteSpace(ItemNewStockCode) ? "KHH" : ItemNewStockCode.Trim();
+
     public static WorkflowProfile Load()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json");

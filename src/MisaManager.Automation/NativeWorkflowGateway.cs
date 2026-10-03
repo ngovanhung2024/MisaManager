@@ -389,28 +389,34 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             || profile.ItemNewStock is null || profile.ItemNewTaxRate is null || profile.ItemNewSave is null)
             throw new AutomationException("ITEM_MAPPING_REQUIRED", "Profile chưa khai báo native create-item capability.");
         var catalog = RequireCatalog();
-        var code = catalog.NextCode();
+        // MISA's unit list uses its own spelling ("kg", "Chai 90 ml"); reuse it when the catalog knows it.
+        var unit = catalog.CanonicalUnit(line.Unit)
+            ?? (string.Equals(line.Unit.Trim(), "Kg", StringComparison.OrdinalIgnoreCase) ? "kg" : line.Unit.Trim());
+        var taxKey = NativeComparison.TaxRateKey(line.TaxRate, CultureInfo.InvariantCulture)
+            ?? throw new AutomationException("ITEM_TAX_NOT_SET", $"Dòng {row + 1}: thiếu thuế suất để tạo mã hàng '{line.Name}'.");
+        // "5", "5%" and "5,0000" all select MISA's "5%" option; KCT/KKKNT stay textual.
+        var tax = taxKey.All(character => char.IsDigit(character) || character == '.') ? taxKey + "%" : line.TaxRate.Trim();
+        var stock = profile.DefaultItemStock;
         Entering("line:" + line.LineId + ":new_item");
         await input.OpenNewItemAsync(await input.CaptureAsync(token), codeCell, token);
-        var newItem = await input.BindNewItemAsync(token);
-        await input.WriteFieldAsync(newItem, profile.ItemNewCode, code, code, NativeValueKind.Exact,
-            profile.Culture, "Tab", token, verifyAfterWrite: false);
+        var newItem = await input.BindNewItemAsync(profile.ItemNewCode, profile.ItemNewName, profile.ItemNewSave, token);
+        // MISA pre-fills its next code from the live database, which also covers codes
+        // created by other users or sessions since the local catalog was exported.
+        var proposed = (await input.ReadFieldAsync(newItem, profile.ItemNewCode, token)).Value?.Trim();
+        var code = catalog.NextCode(proposed: proposed);
+        // Unit, warehouse and tax are ComboBoxes: focus must be verified before any key is sent,
+        // otherwise a Tab could commit text into another field of the dialog.
+        if (!string.Equals(proposed, code, StringComparison.Ordinal))
+            await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewCode, code, code, NativeValueKind.Exact,
+                profile.Culture, "Tab", token, verifyAfterWrite: false);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewName,
-            line.Name, line.Name, NativeValueKind.Text, profile.Culture, "Tab", token,
-            verifyAfterWrite: false);
-        // MISA's unit catalog stores the kilogram option as lowercase "kg".
-        // Normalize this alias before writing so the ComboBox actually selects it.
-        var itemUnitValue = string.Equals(line.Unit.Trim(), "Kg", StringComparison.OrdinalIgnoreCase)
-            ? "kg" : line.Unit;
+            line.Name.Trim(), line.Name, NativeValueKind.Text, profile.Culture, "Tab", token, verifyAfterWrite: false);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewUnit,
-            itemUnitValue, line.Unit, NativeValueKind.Text, profile.Culture, "Tab", token,
-            allowUnverifiedFocus: true, verifyAfterWrite: false);
+            unit, line.Unit, NativeValueKind.Text, profile.Culture, "Tab", token, verifyAfterWrite: false);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewStock,
-            "KHH", "KHH", NativeValueKind.Exact, profile.Culture, "Tab", token,
-            allowUnverifiedFocus: true, verifyAfterWrite: false);
+            stock, stock, NativeValueKind.Exact, profile.Culture, "Tab", token, verifyAfterWrite: false);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.ItemNewTaxRate,
-            line.TaxRate, line.TaxRate, NativeValueKind.TaxRate, profile.Culture, "Tab", token,
-            allowUnverifiedFocus: true, verifyAfterWrite: false);
+            tax, tax, NativeValueKind.TaxRate, profile.Culture, "Tab", token, verifyAfterWrite: false);
         var required = new Dictionary<string, NativeSelector>(StringComparer.Ordinal)
         {
             ["code"] = profile.ItemNewCode,
@@ -419,22 +425,84 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             ["stock"] = profile.ItemNewStock,
             ["tax"] = profile.ItemNewTaxRate
         };
-        await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token), required, token,
+        string[] Mismatches(NativeFields values)
+        {
+            var failed = new List<string>();
+            if (!Match(code, values.Values["code"].Value, NativeValueKind.Exact)) failed.Add("code");
+            if (!CatalogNameMatch(line.Name, values.Values["name"].Value)) failed.Add("name");
+            if (!Match(line.Unit, values.Values["unit"].Value, NativeValueKind.Text)) failed.Add("unit");
+            if (!Match(stock, values.Values["stock"].Value, NativeValueKind.Exact)
+                && !Match(stock, values.Values["stock"].Value, NativeValueKind.Text)) failed.Add("stock");
+            if (!Match(tax, values.Values["tax"].Value, NativeValueKind.TaxRate)) failed.Add("tax");
+            return [.. failed];
+        }
+        var readback = await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token), required, token,
                 preferDisplayText: true),
-            values => Match(code, values.Values["code"].Value, NativeValueKind.Exact)
-                && CatalogNameMatch(line.Name, values.Values["name"].Value)
-                && Match(line.Unit, values.Values["unit"].Value, NativeValueKind.Text)
-                && Match("KHH", values.Values["stock"].Value, NativeValueKind.Exact)
-                && Match(line.TaxRate, values.Values["tax"].Value, NativeValueKind.TaxRate),
-            "ITEM_CREATE_READBACK_FAILED", $"Dòng {row + 1}: thông tin mã hàng mới chưa khớp trước khi Cất.", token);
-        await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.ItemNewSave, token,
-            leavesScope: true);
+            values => Mismatches(values).Length == 0,
+            "ITEM_CREATE_READBACK_FAILED", $"Dòng {row + 1}: thông tin mã hàng mới chưa khớp trước khi Cất.", token,
+            returnLastMismatch: true);
+        if (Mismatches(readback) is { Length: > 0 } wrong)
+            throw NewItemFieldError(row, wrong[0], code, line, unit, stock, tax, readback.Values[wrong[0]].Value);
+        // Durable before the click: if the outcome is lost, a rerun looks this code up instead of creating another.
+        catalog.BeginPending(new PendingItemCreation(code, line.Name.Trim(), line.Unit.Trim(), DateTimeOffset.UtcNow,
+            context.Snapshot.RunId));
+        var dialog = await input.SaveNewItemAsync(await input.CaptureAsync(token), profile.ItemNewSave, token);
+        await WaitNewItemSavedAsync(catalog, dialog, code, line, row, token);
+        catalog.ConfirmPending(code);
         await WaitEditor(context, visible: true, token);
-        // Record the code as soon as MISA closed the dialog so a rerun never creates it twice.
-        catalog.Add(new ItemCatalogEntry(code, line.Name, line.Unit));
         await Tab(profile.ItemTab, token);
         return code;
     }
+
+    private async Task WaitNewItemSavedAsync(ItemCatalogStore catalog, nint dialog, string code, InvoiceLine line, int row,
+        CancellationToken token)
+    {
+        var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 15;
+        while (true)
+        {
+            var state = await input.NewItemSaveStateAsync(dialog, token);
+            if (state.Message is { } message)
+            {
+                if (message.Contains("đã tồn tại", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("da ton tai", StringComparison.OrdinalIgnoreCase))
+                {
+                    // MISA refused the save, so nothing was created under this code.
+                    catalog.CancelPending(code);
+                    throw new AutomationException("ITEM_CODE_TAKEN",
+                        $"Dòng {row + 1}: MISA báo mã '{code}' đã tồn tại (có thể vừa được người/phiên khác tạo). "
+                        + "Đóng thông báo, bấm Hủy bỏ trên hộp Thêm vật tư rồi chạy lại; tool sẽ cấp mã kế tiếp. Chi tiết: " + message, true);
+                }
+                throw new AutomationException("ITEM_SAVE_BLOCKED",
+                    $"Dòng {row + 1}: MISA hiện cảnh báo khi Cất mã '{code}' ('{line.Name}'): {message}. "
+                    + "Xử lý cảnh báo trong MISA. Mã này được ghi nhận là 'đang tạo'; lần chạy sau tool sẽ tìm lại mã này trước, không tạo trùng.", true);
+            }
+            if (!state.DialogOpen) return;
+            if (Stopwatch.GetTimestamp() > deadline)
+                throw new AutomationException("ITEM_CREATE_UNCERTAIN",
+                    $"Dòng {row + 1}: đã bấm Cất mã '{code}' nhưng hộp Thêm vật tư chưa đóng sau 15 giây. "
+                    + "Kiểm tra MISA; lần chạy sau tool sẽ tìm lại mã này trước, không tạo trùng.", true);
+            await Task.Delay(100, token);
+        }
+    }
+
+    private static AutomationException NewItemFieldError(int row, string field, string code, InvoiceLine line,
+        string unit, string stock, string tax, string? actual)
+        => field switch
+        {
+            "unit" => new("ITEM_UNIT_NOT_REGISTERED",
+                $"Dòng {row + 1}: ĐVT '{unit}' chưa có trong danh mục Đơn vị tính của MISA (ô ĐVT đang là '{actual}'). "
+                + "Thêm ĐVT này trong MISA (nút + cạnh ĐVT chính) hoặc sửa ĐVT trong file Excel, rồi bấm Hủy bỏ trên hộp Thêm vật tư và chạy lại.", true),
+            "stock" => new("ITEM_STOCK_NOT_FOUND",
+                $"Dòng {row + 1}: kho ngầm định '{stock}' không có hoặc đã đổi tên trong MISA (ô Kho đang là '{actual}'). "
+                + "Kiểm tra danh mục Kho, cập nhật itemNewStockCode trong profile nếu cần, rồi bấm Hủy bỏ trên hộp Thêm vật tư và chạy lại.", true),
+            "tax" => new("ITEM_TAX_NOT_SET",
+                $"Dòng {row + 1}: không chọn được thuế suất GTGT '{tax}' (ô đang là '{actual}'). "
+                + "Kiểm tra thuế suất trong file Excel, bấm Hủy bỏ trên hộp Thêm vật tư rồi chạy lại.", true),
+            "name" => new("ITEM_CREATE_READBACK_FAILED",
+                $"Dòng {row + 1}: tên hàng trong hộp Thêm vật tư là '{actual}', khác '{line.Name}'. Bấm Hủy bỏ rồi chạy lại.", true),
+            _ => new("ITEM_CREATE_READBACK_FAILED",
+                $"Dòng {row + 1}: mã hàng trong hộp Thêm vật tư là '{actual}', khác mã cấp '{code}'. Bấm Hủy bỏ rồi chạy lại.", true)
+        };
 
     /// <summary>
     /// Types the exact code into the empty "Mã hàng" cell and presses Enter, which picks the first
@@ -454,6 +522,12 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         await input.WriteCellAsync(await input.CaptureAsync(token), cell, code, code, NativeValueKind.Exact,
             profile.Culture, token, commitKey: "Enter");
     }
+
+    private static AutomationException PendingUnresolved(int row, PendingItemCreation pending, Exception error)
+        => new("ITEM_CREATE_UNCERTAIN",
+            $"Dòng {row + 1}: lần chạy trước đã bấm Cất mã '{pending.Code}' cho '{pending.Name}' lúc {pending.StartedAt.ToLocalTime():dd/MM HH:mm} "
+            + "nhưng MISA chưa xác nhận mã này. Kiểm tra danh mục Vật tư trong MISA rồi xuất và nạp lại file mã hàng; "
+            + "tool không tự cấp mã mới để tránh tạo trùng. Chi tiết: " + error.Message, true, error);
 
     private (string Unit, decimal Quantity, decimal Price) ExpectedLine(WorkflowContext context, InvoiceLine line)
     {
@@ -483,8 +557,15 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             var existingCode = (await NativeWait.UntilAsync(async () => await input.ReadCellAsync(
                 await input.CaptureAsync(token), codeCell, token, waitForCode: false),
                 read => read.Value is not null, "GRID_ROW_NOT_READY", $"Row {row + 1} is not ready.", token)).Value!.Trim();
+            PendingItemCreation? pending = null;
             if (code.Length == 0)
-                code = RequireCatalog().Find(line.Name, line.Unit)?.Code ?? "";
+            {
+                var catalog = RequireCatalog();
+                code = catalog.Find(line.Name, line.Unit, context.AllowKgToTon)?.Code ?? "";
+                // A previous run may have clicked "Cất" without learning the result: reuse that code, never create another.
+                if (code.Length == 0 && catalog.FindPending(line.Name, line.Unit) is { } found)
+                    (pending, code) = (found, found.Code);
+            }
             if (existingCode.Length > 0)
             {
                 if (!Match(code, existingCode, NativeValueKind.Exact))
@@ -497,14 +578,27 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 if (created)
                     code = await CreateMissingItemAsync(context, line, row, codeCell, token);
                 Entering("line:" + line.LineId + ":code");
-                await SelectItemCodeAsync(row, code, created, token);
+                try { await SelectItemCodeAsync(row, code, created, token); }
+                catch (Exception error) when (pending is not null && error is not OperationCanceledException)
+                {
+                    throw PendingUnresolved(row, pending, error);
+                }
             }
             var boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
-            var metadata = await NativeWait.UntilAsync(async () => await input.ReadRowAsync(
-                await input.CaptureAsync(token), boundRow,
-                [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token),
-                actual => CatalogNameMatch(line.Name, actual.Values[profile.Columns["name"]].Value),
-                "READBACK_MISMATCH", $"Row {row + 1}: native item name differs from source.", token);
+            NativeFields metadata;
+            try
+            {
+                metadata = await NativeWait.UntilAsync(async () => await input.ReadRowAsync(
+                    await input.CaptureAsync(token), boundRow,
+                    [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token),
+                    actual => CatalogNameMatch(line.Name, actual.Values[profile.Columns["name"]].Value),
+                    "READBACK_MISMATCH", $"Dòng {row + 1}: tên hàng MISA khác tên trong file.", token);
+            }
+            catch (Exception error) when (pending is not null && error is not OperationCanceledException)
+            {
+                throw PendingUnresolved(row, pending, error);
+            }
+            if (pending is not null) RequireCatalog().ConfirmPending(pending.Code);
             var expectedAccount = metadata.Values[profile.Columns["debit_account"]].Value;
             if (string.IsNullOrWhiteSpace(expectedAccount) || !expectedAccount.All(char.IsDigit))
                 throw new AutomationException("ACCOUNT_READBACK_INVALID", $"Row {row + 1}: native account is invalid.");
@@ -556,7 +650,9 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         for (var row = 0; row < context.Invoice.Lines.Length; row++)
         {
             var line = context.Invoice.Lines[row];
-            var tax = line.TaxRate.TrimEnd('%').Trim();
+            var taxKey = NativeComparison.TaxRateKey(line.TaxRate, CultureInfo.InvariantCulture);
+            var tax = taxKey is not null && decimal.TryParse(taxKey, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var rate)
+                ? rate.ToString(Culture) : line.TaxRate.TrimEnd('%').Trim();
             var nativeRate = row < taxGrid.Rows.Count ? taxGrid.Rows[row].GetValueOrDefault(profile.Columns["tax_rate"]) : null;
             if (row < taxGrid.Rows.Count && Match(codes[row], taxGrid.Rows[row].GetValueOrDefault(profile.Columns["code"]), NativeValueKind.Exact)
                 && Match(tax, nativeRate, NativeValueKind.TaxRate))
@@ -886,11 +982,13 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             throw new AutomationException("WINDOW_IDENTITY_INVALID", "Thiếu HWND/PID/process birth.");
         // Restore and foreground MISA before binding UIA scopes; minimized windows expose no workflow surface.
         // Read-only observations do not need to change the foreground window.
-        var window = activate ? windows.Focus((nint)handle, pid) : windows.Bind((nint)handle, pid);
+        // Verify the bound session before activating it, so a login/"Mở dữ liệu" window is never brought forward.
+        var window = windows.Bind((nint)handle, pid);
         if (window.ProcessStartUtc != start.UtcDateTime || !string.Equals(window.ExecutablePath, parts.GetValueOrDefault("exe"), StringComparison.OrdinalIgnoreCase)
             || !window.Title.StartsWith(profile.VersionTitle + " - ", StringComparison.Ordinal))
-            throw new AutomationException("WINDOW_IDENTITY_CHANGED", "Phiên hoặc phiên bản MISA thay đổi; cần rebind.");
-        return window;
+            throw new AutomationException("WINDOW_IDENTITY_CHANGED",
+                "Phiên MISA đã thay đổi (MISA mở lại, đổi dữ liệu hoặc đang ở màn hình đăng nhập). Đăng nhập/mở đúng dữ liệu rồi bấm Kết nối lại.");
+        return activate ? windows.Focus((nint)handle, pid) : window;
     }
     private Task<Readback> Field(string key, NativeFrame frame, CancellationToken token) => input.ReadFieldAsync(frame, profile.Fields[key], token);
     private async Task<NativeFrame> Tab(string tab, CancellationToken token)
