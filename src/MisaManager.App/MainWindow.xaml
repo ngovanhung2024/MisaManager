@@ -10,7 +10,7 @@
     <Style TargetType="ListViewItem">
       <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListViewItem">
-        <Border x:Name="Selection" Background="Transparent" BorderThickness="3,0,0,1" BorderBrush="#EEF1F5" Padding="6,3">
+        <Border x:Name="Selection" Background="Transparent" BorderThickness="3,0,0,1" BorderBrush="#EEF1F5" Padding="5,2">
           <ContentPresenter/>
         </Border>
         <ControlTemplate.Triggers>
@@ -20,7 +20,7 @@
       </ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style x:Key="InvoiceItem" TargetType="ListBoxItem">
-      <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,2"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,1"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
         <Border x:Name="Frame" CornerRadius="6" BorderThickness="1.5" BorderBrush="Transparent" Background="Transparent">
           <ContentPresenter/>
@@ -84,26 +84,16 @@
     </Style>
   </Window.Resources>
 
-  <Grid Margin="6,4,6,4">
+  <Grid Margin="4,3,4,2">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <!-- Header + live status -->
-    <DockPanel Margin="1,0,1,4" app:Motion.Entrance="True">
-      <Border x:Name="RunBadge" HorizontalAlignment="Left" CornerRadius="9" Padding="7,2" VerticalAlignment="Center" Background="{StaticResource PrimarySoft}" ToolTip="Trạng thái hiện tại của tool">
-        <StackPanel Orientation="Horizontal">
-          <Ellipse x:Name="RunDot" Width="7" Height="7" Fill="{StaticResource Primary}" VerticalAlignment="Center" Margin="0,0,5,0"/>
-          <TextBlock x:Name="RunBadgeText" Text="Đang kết nối…" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Primary}"/>
-        </StackPanel>
-      </Border>
-    </DockPanel>
-
-    <!-- Sources -->
+    <!-- Sources (row 0 is empty: the live status badge sits in the footer) -->
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" app:Motion.Entrance="True">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="1"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <DockPanel Margin="6,3">
+        <DockPanel Margin="5,2">
           <Button DockPanel.Dock="Right" Style="{StaticResource RailButton}" Content="Mở Excel" IsEnabled="{Binding CanEditSource}" Click="ChooseWorkbook_Click" ToolTip="Chọn file hóa đơn (hodon.xlsx)"/>
           <Border DockPanel.Dock="Left" Width="20" Height="20" CornerRadius="5" Background="{StaticResource PrimarySoft}" Margin="0,0,6,0">
             <TextBlock Text="HĐ" FontSize="8.5" FontWeight="Bold" Foreground="{StaticResource Primary}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -111,7 +101,7 @@
           <TextBlock x:Name="WorkbookLabel" Text="Chưa chọn file Excel hóa đơn" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,6,0"/>
         </DockPanel>
         <Border Grid.Row="1" Background="#EEF1F5"/>
-        <DockPanel Grid.Row="2" Margin="6,3">
+        <DockPanel Grid.Row="2" Margin="5,2">
           <Button DockPanel.Dock="Right" Style="{StaticResource RailButton}" Content="Mã hàng" IsEnabled="{Binding CanEditSource}" Click="ChooseCatalog_Click" ToolTip="Nạp file danh mục vật tư, hàng hóa (mã ↔ tên hàng) xuất từ MISA" VerticalAlignment="Top"/>
           <Border DockPanel.Dock="Left" Width="20" Height="20" CornerRadius="5" Background="#F3EEFF" Margin="0,0,6,0" VerticalAlignment="Top">
             <TextBlock Text="MH" FontSize="8.5" FontWeight="Bold" Foreground="#7C3AED" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -125,7 +115,7 @@
     </Border>
 
     <!-- Actions -->
-    <Grid Grid.Row="2" Margin="0,4,0,0">
+    <Grid Grid.Row="2" Margin="0,3,0,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Button x:Name="AddButton" Style="{StaticResource PrimaryButton}" Content="Thêm vào MISA" Command="{Binding AddCommand}" IsEnabled="{Binding CanStart}" Click="Add_Click"
               ToolTip="Chạy lần lượt các hóa đơn đã tick (theo thứ tự danh sách); chưa tick hóa đơn nào thì chạy từ hóa đơn đang chọn. Khớp thì Cất, lệch thì Bỏ, số đã tồn tại thì bỏ qua rồi sang hóa đơn tiếp theo."/>
@@ -168,23 +158,23 @@
     </Grid>
 
     <!-- Remediation hint: only when something needs the user's attention -->
-    <Border x:Name="HintPanel" Grid.Row="3" Visibility="Collapsed" CornerRadius="6" BorderThickness="1" Padding="7,3" Margin="0,4,0,0">
+    <Border x:Name="HintPanel" Grid.Row="3" Visibility="Collapsed" CornerRadius="6" BorderThickness="1" Padding="6,2" Margin="0,3,0,0">
       <StackPanel>
         <TextBlock x:Name="HintTitle" FontWeight="SemiBold" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
         <TextBlock x:Name="HintText" FontSize="10.5" TextWrapping="Wrap" MaxHeight="42" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
       </StackPanel>
     </Border>
 
-    <TabControl Grid.Row="4" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,4,0,0" Margin="0,2,0,0">
+    <TabControl Grid.Row="4" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,2,0,0" Margin="0,1,0,0">
       <TabItem Header="Nhập liệu" IsSelected="True">
         <Grid app:Motion.Entrance="True">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          <Expander x:Name="InvoiceExpander" IsExpanded="True" Margin="0,0,0,2">
+          <Expander x:Name="InvoiceExpander" IsExpanded="True" Margin="0,0,0,1">
             <Expander.Header><TextBlock x:Name="InvoiceHeader" Text="Hóa đơn" Foreground="{StaticResource Muted}" FontSize="10.5"/></Expander.Header>
             <StackPanel>
-            <DockPanel Margin="0,3,0,0" IsEnabled="{Binding CanEditSource}">
+            <DockPanel Margin="0,2,0,0" IsEnabled="{Binding CanEditSource}">
               <TextBlock x:Name="CheckedCounter" DockPanel.Dock="Right" Text="Đã chọn 0/0" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Primary}" VerticalAlignment="Center" Margin="4,0,2,0"
                          ToolTip="Số hóa đơn đã tick / tổng số hóa đơn trong file"/>
               <WrapPanel>
@@ -193,7 +183,7 @@
                 <Button Style="{StaticResource MiniButton}" Content="Chọn chưa nhập" Click="CheckPending_Click" ToolTip="Tick các hóa đơn chưa Cất và chưa có trong MISA"/>
               </WrapPanel>
             </DockPanel>
-            <ListBox x:Name="InvoiceList" MaxHeight="134" Margin="0,3,0,0" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"
+            <ListBox x:Name="InvoiceList" MaxHeight="134" Margin="0,2,0,0" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"
                      Background="Transparent" BorderThickness="0" Padding="0" ItemContainerStyle="{StaticResource InvoiceItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True">
               <ListBox.ItemTemplate><DataTemplate>
@@ -204,7 +194,7 @@
                     <Border x:Name="Badge" DockPanel.Dock="Right" CornerRadius="8" Padding="6,1" Margin="4,0,6,0" VerticalAlignment="Center" Background="#F3F4F6">
                       <TextBlock x:Name="BadgeText" Text="{Binding DisplayStatus}" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
                     </Border>
-                    <StackPanel Margin="7,3,0,3">
+                    <StackPanel Margin="6,2,0,2">
                       <TextBlock Text="{Binding DisplayIdentity}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                       <TextBlock Text="{Binding DisplaySummary}" FontSize="10" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
@@ -255,7 +245,7 @@
             </StackPanel>
           </Expander>
 
-          <Border Grid.Row="1" x:Name="IssuePanel" Visibility="Collapsed" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" Padding="7,4" CornerRadius="6" Margin="0,0,0,3">
+          <Border Grid.Row="1" x:Name="IssuePanel" Visibility="Collapsed" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" Padding="6,3" CornerRadius="6" Margin="0,0,0,2">
             <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition x:Name="IssueRow" Height="Auto"/></Grid.RowDefinitions>
               <TextBlock x:Name="SelectedTitle" FontWeight="SemiBold" TextWrapping="Wrap" FontSize="11"/>
               <ListView Grid.Row="1" x:Name="IssueGrid" MaxHeight="72" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListView.ItemTemplate><DataTemplate>
@@ -264,13 +254,13 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="2" x:Name="EntryHeading" Margin="1,2,1,3" Visibility="Collapsed">
+          <StackPanel Grid.Row="2" x:Name="EntryHeading" Margin="1,1,1,2" Visibility="Collapsed">
             <TextBlock x:Name="EntryTitle" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-            <TextBlock x:Name="ActivityLabel" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="0,1,0,3" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+            <TextBlock x:Name="ActivityLabel" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="0,0,0,2" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             <ProgressBar x:Name="EntryProgress" Height="3" Foreground="{StaticResource Primary}" Background="#E5E9F0" BorderThickness="0" Maximum="100"/>
           </StackPanel>
 
-          <Grid Grid.Row="3" x:Name="EntryColumns" Margin="9,2,9,1" Visibility="Collapsed">
+          <Grid Grid.Row="3" x:Name="EntryColumns" Margin="8,1,8,0" Visibility="Collapsed">
             <Grid.ColumnDefinitions><ColumnDefinition Width="84"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/></Grid.ColumnDefinitions>
             <TextBlock Text="TRƯỜNG" Style="{StaticResource Caption}"/>
             <TextBlock Grid.Column="1" Text="HÓA ĐƠN (Excel)" Style="{StaticResource Caption}"/>
@@ -278,7 +268,7 @@
 
           <Border Grid.Row="4" Style="{StaticResource Card}" Padding="0">
             <Grid>
-              <StackPanel x:Name="EntryEmpty" Margin="12,14,12,10" VerticalAlignment="Top">
+              <StackPanel x:Name="EntryEmpty" Margin="10,8,10,6" VerticalAlignment="Top">
                 <TextBlock Text="Bắt đầu trong 3 bước" FontWeight="SemiBold" FontSize="13"/>
                 <TextBlock Text="1. Mở Excel hóa đơn." Foreground="{StaticResource Muted}" Margin="0,6,0,0"/>
                 <TextBlock Text="2. Nạp file mã hàng (danh mục vật tư, hàng hóa)." Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap"/>
@@ -287,7 +277,7 @@
               </StackPanel>
               <ListView x:Name="EntryList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Margin="2" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                 <ListView.ItemTemplate><DataTemplate>
-                  <Border x:Name="FieldRow" Padding="6,2" BorderThickness="3,0,0,1" BorderBrush="#F0F2F6">
+                  <Border x:Name="FieldRow" Padding="5,1" BorderThickness="3,0,0,1" BorderBrush="#F0F2F6">
                     <Border.Background><SolidColorBrush x:Name="RowFill" Color="#FFFFFF"/></Border.Background>
                     <Grid>
                       <Grid x:Name="SimpleFieldGrid">
@@ -433,11 +423,11 @@
                 <TextBlock Text="{Binding Subtitle}" FontSize="10" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
               </StackPanel></DataTemplate></ListView.ItemTemplate>
             </ListView>
-            <StackPanel Grid.Row="2" x:Name="ProfileDetail" Visibility="Collapsed" Margin="0,5,0,2">
+            <StackPanel Grid.Row="2" x:Name="ProfileDetail" Visibility="Collapsed" Margin="0,3,0,1">
               <TextBlock x:Name="ProfileOutcome" FontWeight="SemiBold" TextWrapping="Wrap"/>
               <TextBlock x:Name="ProfileEvidence" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,1,0,4"/>
               <ComboBox x:Name="ProfileHistory" DisplayMemberPath="DisplaySummary" SelectionChanged="ProfileHistory_SelectionChanged" ToolTip="Lịch sử đối chiếu"/>
-              <Grid x:Name="ProfileColumns" Margin="9,6,9,1">
+              <Grid x:Name="ProfileColumns" Margin="8,3,8,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="76"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="22"/></Grid.ColumnDefinitions>
                 <TextBlock Text="TRƯỜNG" Style="{StaticResource Caption}"/>
                 <TextBlock Grid.Column="1" Text="EXCEL (nguồn)" Style="{StaticResource Caption}"/>
@@ -492,13 +482,21 @@
       </TabItem>
     </TabControl>
 
-    <!-- One-line footer: last message from the workflow -->
-    <Border Grid.Row="5" Padding="2,3,0,0" Margin="0,3,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0">
+    <!-- Footer: live status badge + last message from the workflow -->
+    <Border Grid.Row="5" Padding="0,2,0,0" Margin="0,2,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0">
+      <DockPanel>
+      <Border x:Name="RunBadge" DockPanel.Dock="Left" CornerRadius="9" Padding="6,1" Margin="0,0,5,0" VerticalAlignment="Top" Background="{StaticResource PrimarySoft}" ToolTip="Trạng thái hiện tại của tool">
+        <StackPanel Orientation="Horizontal">
+          <Ellipse x:Name="RunDot" Width="7" Height="7" Fill="{StaticResource Primary}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+          <TextBlock x:Name="RunBadgeText" Text="Đang kết nối…" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Primary}"/>
+        </StackPanel>
+      </Border>
       <TextBlock x:Name="StatusLabel" Text="Đang kết nối…" TextWrapping="Wrap" FontSize="10.5" Foreground="{StaticResource Muted}" MaxHeight="28" TextTrimming="CharacterEllipsis"
-                 ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                 ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center"/>
+      </DockPanel>
     </Border>
 
-    <Border x:Name="ErrorPopup" Grid.RowSpan="6" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="8" Padding="10,8" VerticalAlignment="Top" Margin="0,40,0,0">
+    <Border x:Name="ErrorPopup" Grid.RowSpan="6" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="8" Padding="10,8" VerticalAlignment="Top" Margin="0,24,0,0">
       <Border.Effect><DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.18" Color="#7F1D1D"/></Border.Effect>
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
