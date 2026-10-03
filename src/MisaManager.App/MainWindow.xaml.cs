@@ -67,9 +67,15 @@ public partial class MainWindow : Window
     private bool updatingSheet;
     private readonly WorkflowViewModel workflow;
     private ComparisonWindow? comparisonWindow;
-    private bool comparisonProbeBusy;
-    private DateTimeOffset comparisonProbeDue = DateTimeOffset.MinValue;
-    private string? comparisonClearedIdentity;
+    private WindowPairing? pairing;
+    private bool closingPopup;
+    private bool probeBusy;
+    private bool? editorOpen;
+    private string? popupIdentity;
+    private string? popupDismissedIdentity;
+    private DateTimeOffset editorProbeDue = DateTimeOffset.MinValue;
+    private DateTimeOffset connectionProbeDue = DateTimeOffset.MinValue;
+    private ToolState? shownState;
     private WorkflowErrorEventArgs? lastWorkflowError;
 
     public MainWindow()
@@ -99,14 +105,14 @@ public partial class MainWindow : Window
         workflow.WorkflowChanged += (_, _) => { RefreshWorkflowPanel(); RefreshRunSummary(); };
         ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
+        workflow.CheckedChanged += (_, _) => RefreshChecked();
         uiTimer.Tick += UiTimer_Tick;
         uiTimer.Start();
         PreviewKeyDown += Window_PreviewKeyDown;
         Closed += (_, _) =>
         {
             uiTimer.Stop();
-            comparisonWindow?.Close();
-            comparisonWindow = null;
+            CloseComparisonWindow();
             CancelImport();
         };
     }
@@ -121,15 +127,14 @@ public partial class MainWindow : Window
 
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (IsLoaded && !positioningRail)
-        {
-            PositionRail(SystemParameters.WorkArea);
-            PositionComparisonWindow(null);
-        }
+        if (IsLoaded && !positioningRail) WindowPairing.KeepOnScreen(this);
     }
 
-    private void Window_LocationChanged(object? sender, EventArgs e)
-        => PositionComparisonWindow(null);
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        Dispatcher.BeginInvoke(() => { WindowPairing.KeepOnScreen(this); pairing?.Place(); });
+    }
 
     private void PositionRail(System.Windows.Rect workArea)
     {
@@ -222,21 +227,52 @@ public partial class MainWindow : Window
         CatalogDetail.Visibility = Visibility.Visible;
     }
 
-    private bool? shownRunning;
+    private void RefreshChecked()
+    {
+        foreach (var row in invoices) row.RefreshChecked();
+        CheckedCounter.Text = $"Đã chọn {workflow.CheckedCount:N0}/{invoices.Count:N0}";
+    }
+
+    private void CheckAll_Click(object sender, RoutedEventArgs e)
+        => workflow.SetCheckedMany(invoices.Where(row => !row.Invoice.IsBlocked).Select(row => row.Invoice.Fingerprint));
+
+    private void UncheckAll_Click(object sender, RoutedEventArgs e) => workflow.SetCheckedMany([]);
+
+    private void CheckPending_Click(object sender, RoutedEventArgs e)
+        => workflow.SetCheckedMany(workflow.PendingInvoices.Select(invoice => invoice.Fingerprint));
 
     private void RefreshRunSummary()
     {
         var kinds = invoices.Select(row => row.StatusKind).ToArray();
         SavedCount.Text = kinds.Count(kind => kind == "saved").ToString("N0");
         DiscardedCount.Text = kinds.Count(kind => kind == "discarded").ToString("N0");
-        PendingCount.Text = kinds.Count(kind => kind is not ("saved" or "discarded")).ToString("N0");
-        if (shownRunning == workflow.IsRunning) return;
-        shownRunning = workflow.IsRunning;
-        var brush = (System.Windows.Media.Brush)FindResource(workflow.IsRunning ? "Primary" : "Success");
-        RunBadge.Background = (System.Windows.Media.Brush)FindResource(workflow.IsRunning ? "PrimarySoft" : "SuccessSoft");
-        RunDot.Fill = brush;
-        RunBadgeText.Foreground = brush;
-        RunBadgeText.Text = workflow.IsRunning ? "Đang chạy · Esc để dừng" : "Sẵn sàng";
+        ExistingCount.Text = kinds.Count(kind => kind == "existing").ToString("N0");
+        AttentionCount.Text = kinds.Count(kind => kind is "uncertain" or "attention" or "failed" or "paused").ToString("N0");
+        PendingCount.Text = kinds.Count(kind => kind is "ready" or "running").ToString("N0");
+        InvoiceHeader.Text = invoices.Count == 0 ? "Hóa đơn" : $"Hóa đơn ({invoices.Count:N0})";
+        RefreshStateBadge();
+    }
+
+    private void RefreshStateBadge()
+    {
+        var state = workflow.State;
+        if (state == shownState) return;
+        var wasHint = shownState?.Hint.Length > 0;
+        shownState = state;
+        var (fg, bg) = StatePalette.Of(state.Kind);
+        RunBadge.Background = bg;
+        RunDot.Fill = fg;
+        RunBadgeText.Foreground = fg;
+        RunBadgeText.Text = state.Label;
+        Motion.Pulse(RunDot, state.IsBusy);
+        if (state.Hint.Length == 0) { HintPanel.Visibility = Visibility.Collapsed; return; }
+        HintPanel.Background = bg;
+        HintPanel.BorderBrush = fg;
+        HintTitle.Foreground = fg;
+        HintTitle.Text = state.Detail.Length == 0 ? state.Label : $"{state.Label} · {state.Detail}";
+        HintText.Text = state.Hint;
+        HintPanel.Visibility = Visibility.Visible;
+        if (!wasHint) Motion.FadeIn(HintPanel, fromY: -4);
     }
 
     private void InvoiceList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -351,8 +387,10 @@ public partial class MainWindow : Window
                 .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
                 .ToArray();
             invoices.Clear();
-            foreach (var invoice in ordered) invoices.Add(new(invoice));
+            foreach (var invoice in ordered) invoices.Add(new(invoice, workflow));
             workflow.InvoiceQueue = ordered;
+            workflow.KeepCheckedIn(ordered.Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal));
+            RefreshChecked();
             if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
             RefreshCatalogLabel();
             RefreshRunSummary();
@@ -395,6 +433,7 @@ public partial class MainWindow : Window
     private void ShowImportError(Exception error)
     {
         ClearImportResult();
+        workflow.SetCheckedMany([]);
         SetVisibleIssues(new[] { new ImportIssue(
             error is WorkbookImportException fault ? fault.Code : "IMPORT_ERROR", IssueSeverity.Blocking,
             error.Message, Resolution: "Kiểm tra file Excel và các cột đã chọn.") });
@@ -411,7 +450,7 @@ public partial class MainWindow : Window
 
     private void CancelImport() => importModel.Cancel();
 
-    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape && importModel.IsBusy)
         {
@@ -422,7 +461,7 @@ public partial class MainWindow : Window
         else if (e.Key == Key.Escape && workflow.IsRunning)
         {
             e.Handled = true;
-            await workflow.PauseAsync();
+            workflow.RequestPause();
         }
     }
 
@@ -475,11 +514,12 @@ public partial class MainWindow : Window
         {
             try
             {
+                editorOpen = null;
                 var response = await workflow.ReconcileAsync();
                 StatusLabel.Text = response.Message;
                 RefreshWorkflowPanel();
                 WorkspaceTabs.SelectedIndex = 0;
-                await RefreshComparisonWindowAsync();
+                UpdateComparisonPopup();
             }
             catch (Exception error) { StatusLabel.Text = error.Message; }
             return;
@@ -495,10 +535,11 @@ public partial class MainWindow : Window
         if (workflow.IsRunning) return;
         try
         {
+            editorOpen = null;
             var response = await workflow.ReconcileAsync();
             StatusLabel.Text = response.Message;
             RefreshWorkflowPanel();
-            await RefreshComparisonWindowAsync();
+            UpdateComparisonPopup();
         }
         catch (Exception error) { StatusLabel.Text = error.Message; }
     }
@@ -512,25 +553,58 @@ public partial class MainWindow : Window
     {
         workflow.RefreshPerformance();
         RefreshWorkflowPanel();
-        // The probe shares the single UIA thread with data entry; it only slows a running batch.
-        if (workflow.IsRunning) { CloseComparisonWindow(); return; }
-        if (DateTimeOffset.UtcNow < comparisonProbeDue) return;
-        comparisonProbeDue = DateTimeOffset.UtcNow.AddMilliseconds(500);
-        await RefreshComparisonWindowAsync();
+        RefreshStateBadge();
+        if (workflow.IsRunning) editorOpen = null;
+        UpdateComparisonPopup();
+        // Probes share the single UIA thread with data entry, so they only run while idle and never overlap.
+        if (workflow.IsRunning || probeBusy || importModel.IsBusy) return;
+        var now = DateTimeOffset.UtcNow;
+        probeBusy = true;
+        try
+        {
+            if (now >= editorProbeDue && workflow.Connection == MisaConnection.Connected && IsComparisonBound())
+            {
+                editorProbeDue = now.AddMilliseconds(1000);
+                var editor = await workflow.ObserveVoucherEditorAsync();
+                if (workflow.IsRunning) return;
+                editorOpen = editor.IsOpen;
+                if (!editor.IsOpen && popupIdentity is not null) popupDismissedIdentity = popupIdentity;
+                UpdateComparisonPopup();
+            }
+            else if (now >= connectionProbeDue)
+            {
+                await workflow.ProbeConnectionAsync();
+                connectionProbeDue = DateTimeOffset.UtcNow.AddMilliseconds(workflow.Connection == MisaConnection.Connected ? 4000 : 1500);
+                RefreshStateBadge();
+            }
+        }
+        finally { probeBusy = false; }
     }
 
     private void Workflow_ErrorRaised(object? sender, WorkflowErrorEventArgs error)
     {
         lastWorkflowError = error;
-        ErrorPopupTitle.Text = "Lỗi khi thêm vào MISA";
+        var code = ErrorHints.FindCode(error.Message, error.Details);
+        var hint = ErrorHints.For(code);
+        ErrorPopupTitle.Text = code is null ? "Lỗi khi thêm vào MISA" : "Lỗi khi thêm vào MISA · " + code;
         ErrorPopupMessage.Text = error.Message;
+        ErrorPopupHint.Text = hint ?? "";
+        ErrorPopupHintBox.Visibility = hint is null ? Visibility.Collapsed : Visibility.Visible;
         ErrorPopupDetails.Text = error.Details;
         ErrorPopup.Visibility = Visibility.Visible;
-        WorkspaceTabs.SelectedIndex = WorkspaceTabs.Items.Count - 1;
+        Motion.FadeIn(ErrorPopup, fromY: -6);
     }
 
-    private void Add_Click(object sender, RoutedEventArgs e)
-        => WorkspaceTabs.SelectedIndex = WorkspaceTabs.Items.Count - 1;
+    private void Add_Click(object sender, RoutedEventArgs e) => WorkspaceTabs.SelectedIndex = 0;
+
+    private async void StopNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (!workflow.IsRunning) { StatusLabel.Text = "Không có bước nào đang chạy."; return; }
+        if (MessageBox.Show(this, "Dừng ngay sẽ hủy bước đang chạy và có thể để chứng từ dở dang trong MISA. Dùng Tạm dừng nếu muốn dừng an toàn. Vẫn dừng ngay?",
+            "Dừng ngay", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        await workflow.StopNowAsync();
+        StatusLabel.Text = workflow.Status;
+    }
 
     private void CloseErrorPopup_Click(object sender, RoutedEventArgs e)
         => ErrorPopup.Visibility = Visibility.Collapsed;
@@ -548,74 +622,95 @@ public partial class MainWindow : Window
         StatusLabel.Text = "Đã copy báo cáo hiệu năng vào clipboard để gửi ChatGPT.";
     }
 
-    private async Task RefreshComparisonWindowAsync()
+    private bool IsComparisonBound()
     {
-        if (comparisonProbeBusy) return;
         var current = workflow.CurrentContext;
         var invoice = workflow.SelectedInvoice ?? current?.Invoice;
-        if (current is null || invoice is null || current.Invoice.Fingerprint != invoice.Fingerprint)
-        {
-            CloseComparisonWindow();
-            return;
-        }
-        var identity = current.Snapshot.RunId + ":" + current.Reconciliations?.Count;
-        if (string.Equals(comparisonClearedIdentity, identity, StringComparison.Ordinal))
-        {
-            CloseComparisonWindow();
-            return;
-        }
-        comparisonProbeBusy = true;
-        try
-        {
-            var editor = await workflow.ObserveVoucherEditorAsync();
-            if (!editor.IsOpen)
-            {
-                CloseComparisonWindow();
-                return;
-            }
-            var latest = current.Reconciliations?.LastOrDefault();
-            var rows = latest?.Result?.Values
-                .Select(value => new ComparisonRow(value, ComparisonLabel(value.Field, invoice)))
-                .ToArray() ?? [];
-            var summary = latest is null ? "Chua co ket qua doi chieu."
-                : latest.Result is null ? "Khong doc du thong tin: " + latest.Error
-                : $"{(latest.Result.Matched ? "Tat ca thong tin khop" : "Co thong tin chua khop")}"
-                    + $" - {latest.Result.Values.Count(value => value.Matched)}/{latest.Result.Values.Count} truong";
-            if (comparisonWindow is null)
-            {
-                comparisonWindow = new ComparisonWindow { Owner = this };
-                comparisonWindow.ReconcileRequested += ComparisonWindow_ReconcileRequested;
-            }
-            comparisonWindow.UpdateComparison($"Hóa đơn {invoice.Identity.Number}", summary, rows);
-            comparisonWindow.SetReconcileEnabled(!workflow.IsRunning);
-            PositionComparisonWindow(editor.Window);
-            if (!comparisonWindow.IsVisible) comparisonWindow.Show();
-        }
-        finally { comparisonProbeBusy = false; }
+        return current is not null && invoice is not null && current.Invoice.Fingerprint == invoice.Fingerprint;
     }
 
-    private void PositionComparisonWindow(WindowIdentity? _)
+    /// <summary>
+    /// Mirrors the tool's data into the comparison window: shown while a run is active or the MISA voucher tab is open,
+    /// closed as soon as the tab closes, refreshed whenever a new reconciliation arrives.
+    /// </summary>
+    private void UpdateComparisonPopup()
     {
-        if (comparisonWindow is null) return;
-        var workArea = SystemParameters.WorkArea;
-        var width = Math.Clamp(ActualWidth > 0 ? ActualWidth : Width,
-            comparisonWindow.MinWidth, comparisonWindow.MaxWidth);
-        var height = Math.Clamp(ActualHeight > 0 ? ActualHeight : Height,
-            comparisonWindow.MinHeight, workArea.Height);
-        comparisonWindow.Width = width;
-        comparisonWindow.Height = height;
-        var left = Left + width / 2 >= workArea.Left + workArea.Width / 2
-            ? workArea.Left : workArea.Right - width;
-        var top = Top;
-        comparisonWindow.Left = Math.Max(workArea.Left, Math.Min(left, workArea.Right - comparisonWindow.Width));
-        comparisonWindow.Top = Math.Max(workArea.Top, Math.Min(top, workArea.Bottom - comparisonWindow.Height));
+        var current = workflow.CurrentContext;
+        var state = workflow.State;
+        var bound = IsComparisonBound() && current is not null;
+        var wanted = bound && IsVisible && state.Kind != ToolStateKind.Disconnected
+            && (workflow.IsRunning || editorOpen == true || (editorOpen is null && comparisonWindow is not null));
+        if (!wanted || current is null)
+        {
+            CloseComparisonWindow();
+            return;
+        }
+        var identity = $"{current.Snapshot.RunId}:{current.Snapshot.Status}:{current.Reconciliations?.Count}:{state.Kind}:{state.Label}";
+        if (identity == popupDismissedIdentity)
+        {
+            CloseComparisonWindow();
+            return;
+        }
+        if (comparisonWindow is null)
+        {
+            var window = new ComparisonWindow { Owner = this };
+            window.ReconcileRequested += ComparisonWindow_ReconcileRequested;
+            window.Closed += (_, _) =>
+            {
+                if (!ReferenceEquals(comparisonWindow, window)) return;
+                if (!closingPopup) popupDismissedIdentity = popupIdentity;
+                pairing?.Dispose();
+                pairing = null;
+                comparisonWindow = null;
+                popupIdentity = null;
+            };
+            pairing = new WindowPairing(this, window);
+            comparisonWindow = window;
+            pairing.Place();
+            window.SlideFrom = pairing.PopupOnRight ? -14 : 14;
+            window.ContentRendered += (_, _) => pairing?.Place();
+            if (pairing.CanShowPopup) window.Show();
+            popupIdentity = null;
+        }
+        else if (pairing is { CanShowPopup: true } && !comparisonWindow.IsVisible) comparisonWindow.Show();
+        if (identity != popupIdentity)
+        {
+            popupIdentity = identity;
+            comparisonWindow.UpdateComparison(BuildComparisonModel(current, state));
+        }
+        comparisonWindow.SetReconcileEnabled(!workflow.IsRunning);
+    }
+
+    private ComparisonModel BuildComparisonModel(WorkflowContext current, ToolState state)
+    {
+        var invoice = current.Invoice;
+        var latest = current.Reconciliations?.LastOrDefault();
+        var rows = BuildComparisonRows(invoice, latest?.Result);
+        var mismatched = rows.Count(row => row.Kind == "mismatch");
+        var kind = state.Kind;
+        var label = state.Label;
+        if (kind == ToolStateKind.Ready && latest?.Result is not null)
+        {
+            kind = mismatched == 0 ? ToolStateKind.Saved : ToolStateKind.Error;
+            label = mismatched == 0 ? "Đã đối chiếu: khớp" : $"Có {mismatched} dòng lệch";
+        }
+        var summary = RunOutcome.IsExisting(current.Snapshot) ? "Số hóa đơn đã tồn tại trong MISA: tool đã chọn Không, đóng tab và không nhập lại."
+            : latest is null ? "Chưa đối chiếu. Dữ liệu bên MISA sẽ hiện sau khi nhập hoặc bấm Đọc lại."
+            : latest.Result is null ? "Không đọc đủ thông tin từ MISA: " + latest.Error
+                + (ErrorHints.For(ErrorHints.FindCode(latest.Error)) is { } hint ? " " + hint : "")
+            : mismatched == 0 ? "Tất cả thông tin khớp với nguồn Excel."
+            : $"{mismatched} trường lệch giữa Excel và MISA. Dòng đỏ là chỗ cần kiểm tra.";
+        var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("vi-VN")) ?? "?"} {invoice.Currency}";
+        var observed = latest?.Result is { } result ? "đọc lúc " + result.ObservedAt.ToLocalTime().ToString("HH:mm:ss") : "";
+        return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, rows, !workflow.IsRunning);
     }
 
     private void CloseComparisonWindow()
     {
-        if (comparisonWindow is null) return;
-        comparisonWindow.Close();
-        comparisonWindow = null;
+        if (comparisonWindow is not { } window) return;
+        closingPopup = true;
+        try { window.Close(); }
+        finally { closingPopup = false; }
     }
 
     private async void ClearComparison_Click(object sender, RoutedEventArgs e)
@@ -623,11 +718,7 @@ public partial class MainWindow : Window
         try
         {
             var deleted = await workflow.DeleteAllProfileHistoryAsync();
-            comparisonClearedIdentity = null;
-            LiveComparisonList.ItemsSource = null;
-            ComparisonSummary.Text = "Chưa có kết quả đối chiếu.";
-            ComparisonExpander.IsExpanded = false;
-            ComparisonExpander.Visibility = Visibility.Collapsed;
+            popupDismissedIdentity = null;
             CloseComparisonWindow();
             workflow.ClearPerformance();
             StatusLabel.Text = deleted == 0
@@ -821,8 +912,11 @@ public partial class MainWindow : Window
             {
                 importModel.ApplyCorrection(corrected.Invoice);
                 var index = invoices.IndexOf(selected);
-                invoices[index] = new InvoiceRow(corrected.Invoice);
+                var wasChecked = workflow.IsChecked(selected.Invoice.Fingerprint);
+                workflow.SetChecked(selected.Invoice.Fingerprint, false);
+                invoices[index] = new InvoiceRow(corrected.Invoice, workflow);
                 workflow.InvoiceQueue = invoices.Select(row => row.Invoice).ToArray();
+                workflow.SetChecked(corrected.Invoice.Fingerprint, wasChecked);
                 InvoiceList.SelectedIndex = index;
             }
             StatusLabel.Text = response.Message;
@@ -846,6 +940,13 @@ public partial class MainWindow : Window
     private sealed class InvoiceRow : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
+        private readonly WorkflowViewModel selection;
+        public bool IsChecked
+        {
+            get => selection.IsChecked(Invoice.Fingerprint);
+            set => selection.SetChecked(Invoice.Fingerprint, value);
+        }
+        public void RefreshChecked() => PropertyChanged?.Invoke(this, new(nameof(IsChecked)));
         public void Refresh()
         {
             PropertyChanged?.Invoke(this, new(nameof(DisplayStatus)));
@@ -853,7 +954,11 @@ public partial class MainWindow : Window
             PropertyChanged?.Invoke(this, new(nameof(DisplaySummary)));
         }
         public InvoiceDocument Invoice { get; }
-        public InvoiceRow(InvoiceDocument invoice) => Invoice = invoice;
+        public InvoiceRow(InvoiceDocument invoice, WorkflowViewModel selection)
+        {
+            Invoice = invoice;
+            this.selection = selection;
+        }
         public string DisplayIdentity => (Invoice.Identity.Series.Length == 0 ? "HĐ " : Invoice.Identity.Series + " ")
             + $"{Invoice.Identity.Number} · {Invoice.Buyer.Name}";
         public string DisplayDate => Invoice.Issued?.ToString("dd/MM/yyyy") ?? "Thiếu";
@@ -864,24 +969,28 @@ public partial class MainWindow : Window
         {
             get
             {
-                if (Invoice.IsBlocked) return "Bị chặn";
-                if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot.Status);
+                if (Invoice.IsBlocked) return "Thiếu dữ liệu";
+                if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot);
                 return "Sẵn sàng nhập";
             }
         }
-        /// <summary>Drives the list color: saved = green, discarded/failed = red.</summary>
+        /// <summary>Drives the list color: saved green, discarded rose, failed red, uncertain violet, blocked amber.</summary>
         public string StatusKind
         {
             get
             {
                 if (Invoice.IsBlocked) return "attention";
-                return LatestRun()?.Snapshot.Status switch
+                var snapshot = LatestRun()?.Snapshot;
+                if (snapshot is not null && RunOutcome.IsExisting(snapshot)) return "existing";
+                return snapshot?.Status switch
                 {
                     null or WorkflowStatus.Ready or WorkflowStatus.Cancelled => "ready",
                     WorkflowStatus.Saved => "saved",
-                    WorkflowStatus.Discarded or WorkflowStatus.Failed => "discarded",
-                    WorkflowStatus.Paused or WorkflowStatus.Blocked or WorkflowStatus.InputUncertain
-                        or WorkflowStatus.SaveUncertain => "attention",
+                    WorkflowStatus.Discarded => "discarded",
+                    WorkflowStatus.Failed => "failed",
+                    WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain => "uncertain",
+                    WorkflowStatus.Paused => "paused",
+                    WorkflowStatus.Blocked => "attention",
                     _ => "running"
                 };
             }

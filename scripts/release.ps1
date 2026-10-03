@@ -11,6 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+. (Join-Path $PSScriptRoot 'bridge-runtime.ps1')
 if ([string]::IsNullOrWhiteSpace($DotnetPath)) {
     $dotnet = Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe'
     if (-not (Test-Path -LiteralPath $dotnet)) { $dotnet = (Get-Command dotnet -ErrorAction Stop).Source }
@@ -210,6 +211,8 @@ try {
         $folder = switch ($component) { 'App' { 'app' } 'McpBridge' { 'bridge' } }
         & $dotnet publish "src\MisaManager.$component\MisaManager.$component.csproj" -c Release -r win-x64 --self-contained true --no-restore -p:Version=$Version -o (Join-Path $publish $folder) --nologo
         if ($LASTEXITCODE -ne 0) { throw ('Publish failed: ' + $component) }
+        # The build host has .NET installed, so health checks alone cannot catch a framework-dependent payload.
+        Assert-SelfContainedPayload (Join-Path $publish $folder) $component
     }
     $metadata = Join-Path $releaseRoot 'metadata'
     New-Item -ItemType Directory -Path $metadata | Out-Null

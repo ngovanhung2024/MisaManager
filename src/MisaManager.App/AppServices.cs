@@ -88,7 +88,13 @@ public sealed partial class AppServices : IAsyncDisposable
         {
             try { await Initialization.WaitAsync(token); }
             catch (OperationCanceledException) { throw; }
-            catch (Exception error) { return new(request.RequestId, "blocked", "Không khôi phục được state: " + error.Message); }
+            catch (Exception)
+            {
+                // A faulted startup task is cached forever; Workflow.InitializeAsync is re-entrant, so retry it per call.
+                try { await Workflow.InitializeAsync(token); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception error) { return new(request.RequestId, "blocked", "Không khôi phục được state: " + error.Message); }
+            }
         }
         if (request.Action is "advance" or "resume" or "save" or "discard" or "reconcile" or "recover")
         {
@@ -187,7 +193,11 @@ public sealed partial class AppServices : IAsyncDisposable
                     return new(request.RequestId, "blocked", "Cần windowHandle từ diagnostics hiện tại.");
                 try
                 {
-                    var focused = Windows.Focus((nint)focusHandle);
+                    // Never raise the login/"Mở dữ liệu" window over an open session: validate before activating.
+                    var focusTarget = Windows.Bind((nint)focusHandle);
+                    if (!focusTarget.Title.StartsWith(WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal))
+                        return new(request.RequestId, "blocked", "Cửa sổ này không phải phiên MISA đã đăng nhập (có thể là màn hình đăng nhập/mở dữ liệu); không kích hoạt để tránh che phiên đang mở.");
+                    var focused = Windows.Focus((nint)focusHandle, focusTarget.ProcessId);
                     return new(request.RequestId, "completed", "Đã đưa đúng cửa sổ MISA lên trước; chưa gửi nghiệp vụ.", false, focused);
                 }
                 catch (Exception error) { return new(request.RequestId, "blocked", error.Message); }
@@ -300,7 +310,7 @@ public sealed partial class AppServices : IAsyncDisposable
                         liveValidation: true, profileRevision: WorkflowProfile.Revision,
                         allowKgToTon: reboundCurrent.AllowKgToTon, requestId: request.RequestId,
                         operationId: ReadOperationId(request), executionMode: reboundCurrent.ExecutionMode);
-                    return new(request.RequestId, rerun.Outcome is "saved" or "discarded" or "tested" ? "completed" : "blocked",
+                    return new(request.RequestId, rerun.Outcome is "saved" or "discarded" or "tested" or "existing" ? "completed" : "blocked",
                         "Đã chạy lại cùng hóa đơn từ Ready; không tiếp tục checkpoint cũ.",
                         rerun.Context.Snapshot.InputMayHaveBeenSent, Data: new
                         {
@@ -799,10 +809,11 @@ public sealed partial class AppServices : IAsyncDisposable
             var result = await Workflow.RunLiveAsync(invoice, company, window, token, liveValidation,
                 WorkflowProfile.Revision, allowKgToTon, request.RequestId, ReadOperationId(request), executionMode);
             RecordLiveRun(result);
-            var status = result.Outcome is "saved" or "discarded" or "tested" ? "completed" : "blocked";
+            var status = result.Outcome is "saved" or "discarded" or "tested" or "existing" ? "completed" : "blocked";
             return new(request.RequestId, status,
                 result.Outcome == "saved" ? "Live production hoàn tất: đối chiếu khớp và đã Cất hóa đơn."
                 : result.Outcome == "discarded" ? "Live run hoàn tất: đối chiếu không khớp, đã Bỏ hóa đơn."
+                : result.Outcome == "existing" ? "Hóa đơn đã tồn tại trong MISA: đã bấm No, đóng chứng từ và chuyển sang hóa đơn tiếp theo."
                 : result.Outcome == "tested" ? "Live test hoàn tất: đã đối chiếu và Bỏ chứng từ thử nghiệm, không ghi sổ."
                 : "Live run lỗi; không được tiếp tục checkpoint. Hãy sửa/build version mới rồi chạy lại cùng hóa đơn từ đầu.",
                 result.Context.Snapshot.InputMayHaveBeenSent,

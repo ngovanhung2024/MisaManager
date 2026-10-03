@@ -7,18 +7,22 @@ namespace MisaManager.Core;
 
 public sealed record ItemCatalogEntry(string Code, string Name, string Unit, string ConversionUnit = "");
 
+/// <summary>An item whose MISA "Cất" was (or may have been) clicked but whose creation is not yet proven.</summary>
+public sealed record PendingItemCreation(string Code, string Name, string Unit, DateTimeOffset StartedAt, string? RunId = null);
+
 public sealed record ItemCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? SourceFile,
-    IReadOnlyList<ItemCatalogEntry> Items);
+    IReadOnlyList<ItemCatalogEntry> Items, IReadOnlyList<PendingItemCreation>? Pending = null);
 
 /// <summary>
 /// Local item-code database: MISA catalog export plus codes created by the tool.
-/// Lookups compare names ignoring case and whitespace only.
+/// Name lookups ignore case, whitespace, invisible characters and dash variants.
 /// </summary>
 public sealed partial class ItemCatalogStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly object gate = new();
     private List<ItemCatalogEntry> items = [];
+    private List<PendingItemCreation> pending = [];
     private Dictionary<string, ItemCatalogEntry[]> byName = new(StringComparer.Ordinal);
 
     public ItemCatalogStore(string path)
@@ -29,6 +33,7 @@ public sealed partial class ItemCatalogStore
             ?? throw new InvalidDataException("Database mã hàng bị hỏng: " + FilePath);
         SourceFile = file.SourceFile;
         UpdatedAt = file.UpdatedAt;
+        pending = (file.Pending ?? []).Where(item => !string.IsNullOrWhiteSpace(item.Code)).ToList();
         Replace(file.Items);
     }
 
@@ -36,34 +41,140 @@ public sealed partial class ItemCatalogStore
     public string? SourceFile { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
     public int Count { get { lock (gate) return items.Count; } }
+    public int PendingCount { get { lock (gate) return pending.Count; } }
     public event EventHandler? Changed;
 
     public static string NameKey(string? value)
-        => WhitespacePattern().Replace((value ?? "").Normalize(NormalizationForm.FormC), "").ToUpperInvariant();
+    {
+        var text = (value ?? "").Normalize(NormalizationForm.FormC);
+        var result = new StringBuilder(text.Length);
+        foreach (var character in text)
+        {
+            if (char.IsWhiteSpace(character) || char.IsControl(character)
+                || CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.Format) continue;
+            // Excel/MISA exports mix ASCII and typographic dashes for the same product name.
+            result.Append(CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.DashPunctuation
+                ? '-' : char.ToUpperInvariant(character));
+        }
+        return result.ToString();
+    }
 
     public IReadOnlyList<ItemCatalogEntry> Snapshot() { lock (gate) return items.ToArray(); }
+    public IReadOnlyList<PendingItemCreation> PendingSnapshot() { lock (gate) return pending.ToArray(); }
 
-    /// <summary>Returns null when the name is unknown; throws when the name and unit stay ambiguous.</summary>
-    public ItemCatalogEntry? Find(string name, string unit)
+    /// <summary>
+    /// Returns null when the name is unknown. Throws when the name exists only with
+    /// other units or stays ambiguous: the tool must not create a duplicate then.
+    /// </summary>
+    public ItemCatalogEntry? Find(string name, string unit, bool allowKgToTon = false)
     {
         ItemCatalogEntry[] candidates;
         lock (gate) candidates = byName.GetValueOrDefault(NameKey(name)) ?? [];
-        if (candidates.Length <= 1) return candidates.FirstOrDefault();
+        if (candidates.Length == 0) return null;
         var unitKey = NameKey(unit);
-        var sameUnit = candidates.Where(item => NameKey(item.Unit) == unitKey || NameKey(item.ConversionUnit) == unitKey).ToArray();
+        bool HasUnit(ItemCatalogEntry item, string key) => NameKey(item.Unit) == key || NameKey(item.ConversionUnit) == key;
+        var sameUnit = candidates.Where(item => HasUnit(item, unitKey)).ToArray();
         if (sameUnit.Length == 1) return sameUnit[0];
-        throw new AutomationException("ITEM_AMBIGUOUS",
-            $"Danh mục mã hàng có {candidates.Length} mã cùng tên '{name}' ({string.Join(", ", candidates.Select(item => item.Code))}); "
-            + "hãy giữ lại một mã trong file mã hàng rồi nạp lại.");
+        if (sameUnit.Length > 1)
+            throw new AutomationException("ITEM_AMBIGUOUS",
+                $"Danh mục có {sameUnit.Length} mã cùng tên '{name}' và ĐVT '{unit}' ({string.Join(", ", sameUnit.Select(item => item.Code))}). "
+                + "Hãy ghi đúng mã vào cột Mã hàng của file Excel hoặc giữ lại một mã trong danh mục rồi nạp lại.");
+        // The workflow converts Kg to the item's Tấn unit only when the user authorised it.
+        if (allowKgToTon && unitKey == "KG")
+        {
+            var tons = candidates.Where(item => HasUnit(item, NameKey("Tấn"))).ToArray();
+            if (tons.Length == 1) return tons[0];
+        }
+        // Old exports may omit the unit column; a single unit-less match is still the same item.
+        if (candidates.Length == 1 && candidates[0].Unit.Length == 0 && candidates[0].ConversionUnit.Length == 0)
+            return candidates[0];
+        throw new AutomationException("ITEM_UNIT_CONFLICT",
+            $"Tên hàng '{name}' đã có mã {string.Join(", ", candidates.Select(item => $"{item.Code} (ĐVT {Describe(item)})"))} "
+            + $"nhưng khác ĐVT '{unit}'. Tool không tự tạo mã mới để tránh trùng: hãy ghi đúng mã vào cột Mã hàng của file Excel, "
+            + "hoặc thêm ĐVT chuyển đổi cho mã đó trong MISA rồi xuất và nạp lại danh mục.");
     }
 
-    /// <summary>File rows override the same code; codes created earlier by the tool are kept.</summary>
-    public int Merge(IEnumerable<ItemCatalogEntry> imported, string sourceFile)
+    /// <summary>The spelling MISA uses for a unit that differs only in case/spacing (e.g. "kg", "Chai 90 ml").</summary>
+    public string? CanonicalUnit(string unit)
+    {
+        var key = NameKey(unit);
+        if (key.Length == 0) return null;
+        lock (gate)
+            return items.SelectMany(item => new[] { item.Unit, item.ConversionUnit })
+                .Where(value => value.Length > 0 && NameKey(value) == key)
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .OrderByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => group.Key).FirstOrDefault();
+    }
+
+    public PendingItemCreation? FindPending(string name, string unit)
+    {
+        var nameKey = NameKey(name);
+        var unitKey = NameKey(unit);
+        lock (gate)
+        {
+            var matches = pending.Where(item => NameKey(item.Name) == nameKey && NameKey(item.Unit) == unitKey).ToArray();
+            if (matches.Length > 1)
+                throw new AutomationException("ITEM_CREATE_UNCERTAIN",
+                    $"Có {matches.Length} lần tạo mã chưa xác nhận cho '{name}' ({string.Join(", ", matches.Select(item => item.Code))}). "
+                    + "Kiểm tra danh mục Vật tư trong MISA, xuất lại danh mục và nạp lại trước khi chạy tiếp.");
+            return matches.FirstOrDefault();
+        }
+    }
+
+    /// <summary>Durably records the code before MISA's "Cất" is clicked so a rerun looks it up instead of creating it again.</summary>
+    public void BeginPending(PendingItemCreation entry)
     {
         lock (gate)
         {
+            if (items.Any(item => string.Equals(item.Code, entry.Code, StringComparison.OrdinalIgnoreCase))
+                || pending.Any(item => string.Equals(item.Code, entry.Code, StringComparison.OrdinalIgnoreCase)))
+                throw new AutomationException("ITEM_CODE_EXISTS", $"Mã hàng '{entry.Code}' đã có trong database.");
+            pending.Add(entry);
+            SaveLocked();
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Promotes a pending code after MISA proved the item exists.</summary>
+    public void ConfirmPending(string code)
+    {
+        lock (gate)
+        {
+            var entry = pending.FirstOrDefault(item => string.Equals(item.Code, code, StringComparison.Ordinal))
+                ?? throw new AutomationException("ITEM_PENDING_MISSING", $"Không có mã đang tạo '{code}'.");
+            pending.Remove(entry);
+            if (!items.Any(item => string.Equals(item.Code, code, StringComparison.Ordinal)))
+                Replace([.. items, new ItemCatalogEntry(entry.Code, entry.Name, entry.Unit)]);
+            SaveLocked();
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Drops a pending code only when MISA explicitly rejected the save.</summary>
+    public void CancelPending(string code)
+    {
+        lock (gate)
+        {
+            if (pending.RemoveAll(item => string.Equals(item.Code, code, StringComparison.Ordinal)) == 0) return;
+            SaveLocked();
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// File rows override the same code; codes created earlier by the tool are kept.
+    /// A fresh MISA export also settles pending creations: present codes are known,
+    /// absent ones started before the export was written were never created.
+    /// </summary>
+    public int Merge(IEnumerable<ItemCatalogEntry> imported, string sourceFile)
+    {
+        DateTimeOffset? exportedAt = File.Exists(sourceFile) ? new DateTimeOffset(File.GetLastWriteTimeUtc(sourceFile), TimeSpan.Zero) : null;
+        lock (gate)
+        {
             var incoming = imported.GroupBy(item => item.Code, StringComparer.Ordinal).Select(group => group.First()).ToList();
-            var codes = incoming.Select(item => item.Code).ToHashSet(StringComparer.Ordinal);
+            var codes = incoming.Select(item => item.Code.Trim()).ToHashSet(StringComparer.Ordinal);
+            pending.RemoveAll(item => codes.Contains(item.Code) || exportedAt is { } at && at > item.StartedAt);
             Replace([.. incoming, .. items.Where(item => !codes.Contains(item.Code))]);
             SourceFile = sourceFile;
             SaveLocked();
@@ -84,21 +195,33 @@ public sealed partial class ItemCatalogStore
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Next free code in the catalog's HH_n series.</summary>
-    public string NextCode(string prefix = "HH_")
+    /// <summary>
+    /// Next free code in the HH_n series, above every known and pending code. <paramref name="proposed"/>
+    /// is MISA's own suggestion, which also reflects codes created by other users or sessions.
+    /// </summary>
+    public string NextCode(string prefix = "HH_", string? proposed = null)
     {
         lock (gate)
         {
-            var pattern = new Regex("^" + Regex.Escape(prefix) + "([0-9]+)$", RegexOptions.CultureInvariant);
-            var used = items.Select(item => item.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var next = items.Select(item => pattern.Match(item.Code))
-                .Where(match => match.Success && match.Groups[1].Value.Length <= 9)
-                .Select(match => int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture))
-                .DefaultIfEmpty(0).Max() + 1;
+            var used = items.Select(item => item.Code).Concat(pending.Select(item => item.Code))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var next = used.Select(code => CodeNumber(prefix, code)).Where(number => number is not null)
+                .Select(number => number!.Value).DefaultIfEmpty(0).Max() + 1;
+            if (CodeNumber(prefix, proposed) is { } misa && misa > next) next = misa;
             while (used.Contains(prefix + next.ToString("00", CultureInfo.InvariantCulture))) next++;
             return prefix + next.ToString("00", CultureInfo.InvariantCulture);
         }
     }
+
+    private static long? CodeNumber(string prefix, string? code)
+    {
+        if (code is null) return null;
+        var match = Regex.Match(code.Trim(), "^" + Regex.Escape(prefix) + "([0-9]{1,9})$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        return match.Success ? long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : null;
+    }
+
+    private static string Describe(ItemCatalogEntry item)
+        => item.ConversionUnit.Length == 0 ? (item.Unit.Length == 0 ? "?" : item.Unit) : item.Unit + "/" + item.ConversionUnit;
 
     private void Replace(IEnumerable<ItemCatalogEntry> entries)
     {
@@ -117,12 +240,9 @@ public sealed partial class ItemCatalogStore
         var temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
-            JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items), Json);
+            JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending), Json);
             stream.Flush(flushToDisk: true);
         }
         File.Move(temporary, FilePath, overwrite: true);
     }
-
-    [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
-    private static partial Regex WhitespacePattern();
 }

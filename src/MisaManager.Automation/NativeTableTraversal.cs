@@ -1,4 +1,8 @@
+using System.Drawing;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Conditions;
 using FlaUI.Core.Definitions;
 using MisaManager.Core;
@@ -51,81 +55,177 @@ public sealed partial class NativeInputService
             }, "GRID_NOT_STABLE", "Native register rows did not settle.", token);
         }
 
-        var terminal = await dispatcher.RunAsync(() =>
+        var scroll = await dispatcher.RunAsync(() =>
         {
             GuardWorkflow(frame);
-            var grid = ResolveGrid(gridId);
-            return !grid.Patterns.Scroll.IsSupported && HasVisibleTerminalRows(grid, token);
+            return CustomScrollState(ResolveGrid(gridId));
         }, token);
-        if (terminal)
-        {
-            string? previous = null;
-            return await NativeWait.UntilAsync(() => dispatcher.RunAsync(() =>
-            {
-                GuardWorkflow(frame);
-                var grid = ResolveGrid(gridId);
-                if (!HasVisibleTerminalRows(grid, token))
-                    throw new AutomationException("GRID_INCOMPLETE", "Native terminal row proof changed during reconciliation.");
-                var table = ReadCustomTable(grid, columns, token);
-                return table with { Sources = table.Sources.Select(row => (IReadOnlyDictionary<string, string>)
-                    row.ToDictionary(value => value.Key, value => value.Value + "+VisibleOrdinalTerminal")).ToArray() };
-            }, token), table =>
-            {
-                var fingerprint = JsonSerializer.Serialize(table.Rows);
-                var stable = previous == fingerprint;
-                previous = fingerprint;
-                return stable;
-            }, "GRID_NOT_STABLE", "Native terminal rows did not settle.", token);
-        }
+        return scroll.Scrollable
+            ? await ReadCustomScrollingAsync(frame, gridId, columns, scroll.Percent, token)
+            : await ReadCustomViewportAsync(frame, gridId, columns, scroll.HasPattern, token);
+    }
 
-        frame = await ScrollTableAsync(frame, gridId, top: true, token);
+    // Everything fits (or no scroll provider): the viewport is the table only if row
+    // count, ordinals and the footer / add-new row prove nothing lies outside it.
+    private async Task<NativeTable> ReadCustomViewportAsync(NativeFrame frame, string gridId,
+        IReadOnlyList<string> columns, bool scrollPatternProvesFit, CancellationToken token)
+    {
+        string? previous = null;
+        var read = await NativeWait.UntilAsync(async () =>
+        {
+            var page = await ReadCustomPageAsync(frame, gridId, columns, scrollable: false, token);
+            frame = page.Table.Frame;
+            return page;
+        }, page =>
+        {
+            var fingerprint = JsonSerializer.Serialize(new { page.Indices, page.Table.Rows, page.Footer, page.Hidden });
+            var stable = previous == fingerprint;
+            previous = fingerprint;
+            return stable;
+        }, "GRID_NOT_STABLE", "Bảng chưa ổn định; chờ MISA tải xong dữ liệu rồi đối chiếu lại.", token);
+
+        var count = read.Table.Rows.Count;
+        if (read.VisibleDataRows != count)
+            throw new AutomationException("GRID_INCOMPLETE",
+                $"Bảng có {read.VisibleDataRows} dòng dữ liệu hiển thị nhưng chỉ đọc được {count} dòng (có dòng bị vô hiệu hóa hoặc đang chỉnh sửa). Hoàn tất thao tác trên lưới rồi đối chiếu lại.");
+        RequireAscendingOrdinals(read.Indices);
+        var hiddenOnly = read.Hidden.Except(read.Indices).Count();
+        if (read.Footer is { } footer)
+        {
+            if (footer != count && footer != count + hiddenOnly)
+                throw FooterMismatch(footer, count, hiddenOnly);
+        }
+        else
+        {
+            var missing = MissingOrdinals(read.Indices, read.Hidden);
+            if (missing.Length > 0)
+                throw new AutomationException("GRID_INCOMPLETE",
+                    $"Số thứ tự dòng native bị thiếu ({FormatOrdinals(missing)}) trong {count} dòng đọc được; chưa chứng minh được bảng đầy đủ.");
+            if (!scrollPatternProvesFit && !(read.InsertionVisible && read.AllInBounds))
+                throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE",
+                    $"Không có dòng 'Số dòng = N' hoặc dòng thêm mới để chứng minh {count} dòng đọc được là toàn bộ bảng và bảng không cuộn được. Mở rộng bảng hoặc kiểm tra lại cột/footer rồi đối chiếu lại.");
+        }
+        return read.Table with { Sources = read.Table.Sources.Select(row => (IReadOnlyDictionary<string, string>)
+            row.ToDictionary(value => value.Key, value => value.Value + "+CompleteViewport")).ToArray() };
+    }
+
+    private async Task<NativeTable> ReadCustomScrollingAsync(NativeFrame frame, string gridId,
+        IReadOnlyList<string> columns, double originalPercent, CancellationToken token)
+    {
         var rows = new SortedDictionary<int, IReadOnlyDictionary<string, string>>();
         var sources = new SortedDictionary<int, IReadOnlyDictionary<string, string>>();
-        var previousPosition = -1d;
-        for (var page = 0; page < 128; page++)
+        var hidden = new HashSet<int>();
+        int? footer = null;
+        NativeTable? result = null;
+        try
         {
-            token.ThrowIfCancellationRequested();
-            string? previousRead = null;
-            var stable = await NativeWait.UntilAsync(async () =>
+            frame = await ScrollTableAsync(frame, gridId, top: true, token);
+            var previousPosition = -1d;
+            var endProven = false;
+            var finished = false;
+            for (var page = 0; page < 256 && !finished; page++)
             {
-                var read = await ReadTablePageAsync(frame, gridId, columns, token);
-                frame = read.Table.Frame;
-                return read;
-            }, read =>
-            {
-                var fingerprint = JsonSerializer.Serialize(new { read.Position, read.Indices, read.Table.Rows });
-                var same = previousRead == fingerprint;
-                previousRead = fingerprint;
-                return same && (page == 0 ? read.Position is 0 or -1 : read.Position > previousPosition);
-            }, "GRID_NOT_STABLE", "Native grid did not expose a stable page after scrolling.", token);
+                token.ThrowIfCancellationRequested();
+                string? previousRead = null;
+                var first = page == 0;
+                var floor = previousPosition;
+                var read = await NativeWait.UntilAsync(async () =>
+                {
+                    var current = await ReadCustomPageAsync(frame, gridId, columns, scrollable: true, token);
+                    frame = current.Table.Frame;
+                    return current;
+                }, current =>
+                {
+                    var fingerprint = JsonSerializer.Serialize(new { current.Position, current.Indices, current.Table.Rows, current.Footer });
+                    var same = previousRead == fingerprint;
+                    previousRead = fingerprint;
+                    return same && (first ? current.Position <= 0.01 : current.Position > floor + 1e-6);
+                }, "GRID_NOT_STABLE", "Bảng không hiển thị trang ổn định sau khi cuộn; đối chiếu lại.", token,
+                    timeoutMilliseconds: first ? 5000 : 3000, returnLastMismatch: !first);
 
-            if (stable.Position == -1)
-            {
-                if (page != 0) throw new AutomationException("GRID_CHANGED", "Native scroll range changed during traversal.");
-                return stable.Table;
+                for (var index = 0; index < read.Indices.Count; index++)
+                {
+                    var ordinal = read.Indices[index];
+                    var row = read.Table.Rows[index];
+                    if (rows.TryGetValue(ordinal, out var seen) && columns.Any(column => seen[column] != row[column]))
+                        throw new AutomationException("GRID_CHANGED", $"Dòng native #{ordinal} đổi giá trị trong khi cuộn đọc bảng; đối chiếu lại.");
+                    rows[ordinal] = row;
+                    sources[ordinal] = read.Table.Sources[index];
+                }
+                hidden.UnionWith(read.Hidden);
+                if (read.Footer is { } seenFooter)
+                {
+                    if (footer is { } known && known != seenFooter)
+                        throw new AutomationException("GRID_CHANGED", $"'Số dòng' đổi từ {known} thành {seenFooter} trong khi đọc bảng; đối chiếu lại.");
+                    footer = seenFooter;
+                }
+                if (rows.Count > 5000) throw new AutomationException("GRID_LIMIT", "Bảng vượt 5000 dòng; cần lọc đúng phạm vi.");
+
+                var moved = first || read.Position > previousPosition + 1e-6;
+                previousPosition = read.Position;
+                if (read.Position >= 99.99 || read.InsertionVisible) { endProven = true; finished = true; }
+                else if (!moved) finished = true;
+                else frame = await ScrollTableAsync(frame, gridId, top: false, token);
             }
-            for (var index = 0; index < stable.Indices.Count; index++)
+            if (!finished) throw new AutomationException("GRID_LIMIT", "Duyệt bảng vượt 256 trang.");
+
+            var hiddenOnly = hidden.Except(rows.Keys).Count();
+            if (footer is { } total)
             {
-                var ordinal = stable.Indices[index];
-                var row = stable.Table.Rows[index];
-                if (rows.TryGetValue(ordinal, out var seen)
-                    && columns.Any(column => seen[column] != row[column]))
-                    throw new AutomationException("GRID_CHANGED", "A native row changed during table traversal.");
-                rows[ordinal] = row;
-                sources[ordinal] = stable.Table.Sources[index];
+                if (total != rows.Count && total != rows.Count + hiddenOnly)
+                    throw FooterMismatch(total, rows.Count, hiddenOnly);
             }
-            if (rows.Count > 5000) throw new AutomationException("GRID_LIMIT", "Native table exceeds 5000 rows.");
-            if (stable.Position >= 100)
+            else
             {
-                if (rows.Count == 0 || !rows.Keys.SequenceEqual(Enumerable.Range(0, rows.Count)))
-                    throw new AutomationException("GRID_INCOMPLETE", "Native row ordinals contain gaps; reconciliation is incomplete.");
-                return new NativeTable(rows.Values.ToArray(), frame, sources.Values.ToArray());
+                var missing = MissingOrdinals(rows.Keys, hidden);
+                if (missing.Length > 0)
+                    throw new AutomationException("GRID_INCOMPLETE",
+                        $"Số thứ tự dòng native bị thiếu ({FormatOrdinals(missing)}) trong {rows.Count} dòng đọc được; chưa chứng minh được bảng đầy đủ.");
+                if (!endProven)
+                    throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE",
+                        $"Cuộn bảng dừng trước cuối danh sách (đã đọc {rows.Count} dòng) và không có 'Số dòng = N' để xác nhận. Đối chiếu lại.");
             }
-            previousPosition = stable.Position;
-            frame = await ScrollTableAsync(frame, gridId, top: false, token);
+            result = new NativeTable(rows.Values.ToArray(), frame, sources.Values.ToArray());
         }
-        throw new AutomationException("GRID_LIMIT", "Native table traversal exceeded 128 pages.");
+        finally
+        {
+            try { frame = await RestoreCustomScrollAsync(frame, gridId, originalPercent); }
+            catch (Exception error) when (error is AutomationException or InvalidOperationException
+                or System.Runtime.InteropServices.COMException) { }
+        }
+        return result with { Frame = frame };
     }
+
+    private static AutomationException FooterMismatch(int footer, int read, int hidden)
+        => new("GRID_INCOMPLETE", $"Footer báo 'Số dòng = {footer}' nhưng chỉ đọc được {read} dòng"
+            + (hidden > 0 ? $" (+{hidden} dòng ẩn)" : "") + ". Chờ bảng tải xong hoặc đối chiếu lại.");
+
+    private static int[] MissingOrdinals(IEnumerable<int> present, IEnumerable<int> hidden)
+    {
+        var all = present.Concat(hidden).ToHashSet();
+        return all.Count == 0 ? [] : Enumerable.Range(0, all.Max() + 1).Where(ordinal => !all.Contains(ordinal)).ToArray();
+    }
+
+    private static string FormatOrdinals(int[] ordinals)
+        => string.Join(", ", ordinals.Take(8)) + (ordinals.Length > 8 ? ", …" : "");
+
+    private static void RequireAscendingOrdinals(IReadOnlyList<int> ordinals)
+    {
+        for (var index = 1; index < ordinals.Count; index++)
+            if (ordinals[index] <= ordinals[index - 1])
+                throw new AutomationException("GRID_INCOMPLETE", "Thứ tự dòng hiển thị không khớp số thứ tự native; không thể xác nhận thứ tự dòng.");
+    }
+
+    private static (bool HasPattern, bool Scrollable, double Percent) CustomScrollState(AutomationElement grid)
+    {
+        if (!grid.Patterns.Scroll.IsSupported) return (false, false, -1);
+        var scroll = grid.Patterns.Scroll.Pattern;
+        if (!scroll.VerticallyScrollable.Value) return (true, false, -1);
+        var percent = scroll.VerticalScrollPercent.Value;
+        // A scrollable provider reporting NoScroll (-1) is not trustworthy; fall back to footer/add-new proof.
+        return double.IsFinite(percent) && percent is >= 0 and <= 100 ? (true, true, percent) : (false, false, -1);
+    }
+
 
     private int? TryCustomDataRowCount(FlaUI.Core.AutomationElements.AutomationElement grid,
         CancellationToken token)
@@ -215,9 +315,13 @@ public sealed partial class NativeInputService
             || !rows.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)))
             throw new AutomationException("GRID_INCOMPLETE", "Native row ordinals do not cover the complete register.");
 
-        var values = new List<IReadOnlyDictionary<string, string>>(rows.Length);
-        var sources = new List<IReadOnlyDictionary<string, string>>(rows.Length);
-        foreach (var row in rows)
+        // Hidden (zero-area) rows keep their ordinal for the proof but have no cells to read.
+        var shownRows = rows.Where(row => row.Element.BoundingRectangle is { Width: > 0, Height: > 0 }).ToArray();
+        if (TryReadCustomFooterCount(grid) is { } footer && footer != shownRows.Length && footer != rows.Length)
+            throw FooterMismatch(footer, shownRows.Length, rows.Length - shownRows.Length);
+        var values = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
+        var sources = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
+        foreach (var row in shownRows)
         {
             token.ThrowIfCancellationRequested();
             var cells = Snapshots(row.Element, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
@@ -253,6 +357,30 @@ public sealed partial class NativeInputService
     private sealed record CustomCompleteColumn(string Name, double Left, double Right,
         FlaUI.Core.AutomationElements.AutomationElement Header);
 
+    private static readonly Regex FooterRowCountPattern = new(@"^\s*Số\s+dòng\s*=\s*(\d[\d.,\u00A0\s]*)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    // Footer label "Số dòng = N" counts data rows only (not the add-new row).
+    private int? TryReadCustomFooterCount(AutomationElement grid)
+    {
+        var condition = Live(automation.ConditionFactory.ByName("Số dòng", PropertyConditionFlags.MatchSubstring),
+            identity!.ProcessId, enabled: false, onscreen: false);
+        var found = Snapshots(grid, condition).Where(item => item.HasArea).ToArray();
+        if (found.Length == 0 && grid.Parent is { } parent)
+        {
+            var bounds = grid.BoundingRectangle;
+            found = Snapshots(parent, condition).Where(item => item.HasArea
+                && bounds.Contains(item.Bounds.X + item.Bounds.Width / 2, item.Bounds.Y + item.Bounds.Height / 2)).ToArray();
+        }
+        var counts = found.Select(item => FooterRowCountPattern.Match(item.Name.Normalize(NormalizationForm.FormC)))
+            .Where(match => match.Success)
+            .Select(match => int.TryParse(new string(match.Groups[1].Value.Where(char.IsDigit).ToArray()),
+                System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count)
+                ? (int?)count : null)
+            .Where(count => count is not null).Select(count => count!.Value).Distinct().ToArray();
+        return counts.Length == 1 ? counts[0] : null;
+    }
+
     private Task<NativeFrame> ScrollTableAsync(NativeFrame frame, string gridId, bool top, CancellationToken token)
         => dispatcher.RunAsync(() =>
         {
@@ -261,7 +389,7 @@ public sealed partial class NativeInputService
             var grid = ResolveGrid(gridId);
             if (!grid.Patterns.Scroll.IsSupported)
                 throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE",
-                    "Custom grid exposes neither indexed rows nor ScrollPattern completeness; cannot verify the entire voucher.");
+                    "Bảng không cung cấp ScrollPattern nên không thể cuộn để xác nhận toàn bộ dòng.");
             var scroll = grid.Patterns.Scroll.Pattern;
             if (scroll.VerticallyScrollable.Value)
             {
@@ -272,68 +400,62 @@ public sealed partial class NativeInputService
             return Capture();
         }, token);
 
-    private sealed record NativeTablePage(NativeTable Table, IReadOnlyList<int> Indices, double Position);
-
-    private bool HasVisibleTerminalRows(FlaUI.Core.AutomationElements.AutomationElement grid, CancellationToken token)
-    {
-        var rows = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem), identity!.ProcessId, onscreen: false))
-            .OrderBy(row => row.Bounds.Y).Select(row => row.Element).ToArray();
-        if (rows.Length is < 2 or > 5001) return false;
-        var bounds = grid.BoundingRectangle;
-        for (var index = 0; index < rows.Length; index++)
+    // Best-effort: put the user's viewport back after the observational scroll.
+    private Task<NativeFrame> RestoreCustomScrollAsync(NativeFrame frame, string gridId, double percent)
+        => dispatcher.RunAsync(() =>
         {
-            token.ThrowIfCancellationRequested();
-            var row = rows[index];
-            var rowBounds = row.BoundingRectangle;
-            // Infragistics supplies zero-based committed row ordinals and an
-            // enabled -1 insertion sentinel after the last row. Require both
-            // ends and every row fully visible vertically; long grids still
-            // require indexed/scroll traversal.
-            var expectedId = index == rows.Length - 1 ? "-1" : index.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (row.Properties.AutomationId.ValueOrDefault != expectedId
-                || row.Properties.IsOffscreen.ValueOrDefault || rowBounds.Height <= 0
-                || rowBounds.Y < bounds.Y || rowBounds.Bottom > bounds.Bottom
-                || !(row.Properties.ItemStatus.ValueOrDefault ?? "").Contains("RowUiaProviderStub", StringComparison.Ordinal)
-                || !row.Parent.Equals(rows[0].Parent)) return false;
-        }
-        return string.IsNullOrWhiteSpace(rows[^1].Properties.Name.ValueOrDefault);
-    }
+            GuardWorkflow(frame);
+            var grid = ResolveGrid(gridId);
+            if (percent >= 0 && grid.Patterns.Scroll.IsSupported && grid.Patterns.Scroll.Pattern.VerticallyScrollable.Value)
+            {
+                grid.Patterns.Scroll.Pattern.SetScrollPercent(-1, percent);
+                epoch++;
+            }
+            return Capture();
+        }, CancellationToken.None);
 
-    private Task<NativeTablePage> ReadTablePageAsync(NativeFrame frame, string gridId,
-        IReadOnlyList<string> columns, CancellationToken token)
+    private sealed record NativeTablePage(NativeTable Table, IReadOnlyList<int> Indices, double Position,
+        IReadOnlyList<int> Hidden, int? Footer, bool InsertionVisible, int VisibleDataRows, bool AllInBounds);
+
+    private Task<NativeTablePage> ReadCustomPageAsync(NativeFrame frame, string gridId,
+        IReadOnlyList<string> columns, bool scrollable, CancellationToken token)
         => dispatcher.RunAsync(() =>
         {
             RecordQuery();
             GuardWorkflow(frame);
             var grid = ResolveGrid(gridId);
-            if (!grid.Patterns.Scroll.IsSupported)
-                throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE", "Native scroll capability disappeared.");
-            var scroll = grid.Patterns.Scroll.Pattern;
-            var scrollable = scroll.VerticallyScrollable.Value;
-            var position = scrollable ? scroll.VerticalScrollPercent.Value : -1;
-            if (scrollable && (!double.IsFinite(position) || position < 0 || position > 100))
-                throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE", "Native scroll position is invalid.");
-            var layout = ReadCustomGridLayout(grid, token, columns);
-            if (layout.Rows.Count > 5000) throw new AutomationException("GRID_LIMIT", "Native page exceeds 5000 rows.");
+            var state = CustomScrollState(grid);
+            if (state.Scrollable != scrollable)
+                throw new AutomationException("GRID_CHANGED", "Khả năng cuộn của bảng đổi trong khi đọc; đối chiếu lại.");
+            var position = state.Percent;
+
+            // Zero-area rows are hidden: not shown, so not read, but their ordinals fill gaps.
+            var items = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
+                    identity!.ProcessId, enabled: false, onscreen: false))
+                .Where(item => item.AutomationId != "-1").ToArray();
+            var shown = items.Where(item => item.HasArea).ToArray();
+            var hidden = items.Where(item => !item.HasArea && int.TryParse(item.AutomationId, out var id) && id >= 0)
+                .Select(item => int.Parse(item.AutomationId, System.Globalization.CultureInfo.InvariantCulture))
+                .Distinct().OrderBy(id => id).ToArray();
+            var bounds = grid.BoundingRectangle;
+            var allInBounds = shown.All(item => !item.Offscreen && item.Bounds.Y >= bounds.Y && item.Bounds.Bottom <= bounds.Bottom);
+            var lastBottom = shown.Length == 0 ? int.MinValue : shown.Max(item => item.Bounds.Bottom);
+            var insertion = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
+                    identity!.ProcessId, onscreen: true))
+                .Any(item => item.AutomationId == "-1" && item.HasArea && item.Bounds.Y >= lastBottom - 1);
+
+            var layout = ReadCustomGridLayout(grid, token, columns, dataRowsOnly: true,
+                onscreenOnly: scrollable, allowEmpty: true);
+            if (layout.Rows.Count > 5000) throw new AutomationException("GRID_LIMIT", "Bảng vượt 5000 dòng; cần lọc đúng phạm vi.");
             var rows = new List<IReadOnlyDictionary<string, string>>();
             var sources = new List<IReadOnlyDictionary<string, string>>();
             var indices = new List<int>();
             foreach (var row in layout.Rows)
             {
                 token.ThrowIfCancellationRequested();
-                if (position >= 0 && row.Element.Properties.IsOffscreen.ValueOrDefault) continue;
-                var ordinal = rows.Count;
-                if (position >= 0)
-                {
-                    var cellIndices = row.Cells.Where(cell => cell.Patterns.GridItem.IsSupported)
-                        .Select(cell => cell.Patterns.GridItem.Pattern.Row.Value).Distinct().ToArray();
-                    if (cellIndices.Length != 1 || cellIndices[0] < 0 || cellIndices[0] >= 5000)
-                        throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE",
-                            "Scrollable custom rows lack a unique native row ordinal; cannot merge pages without guessing.");
-                    ordinal = cellIndices[0];
-                }
+                var ordinal = CustomRowOrdinal(row, scrollable ? null : rows.Count);
                 if (indices.Contains(ordinal))
-                    throw new AutomationException("GRID_ROW_AMBIGUOUS", "Duplicate row ordinal in native page.");
+                    throw new AutomationException("GRID_ROW_AMBIGUOUS", $"Số thứ tự dòng native #{ordinal} bị trùng trong cùng một trang.");
                 var values = new Dictionary<string, string>();
                 var rowSources = new Dictionary<string, string>();
                 foreach (var column in columns)
@@ -346,10 +468,24 @@ public sealed partial class NativeInputService
                 sources.Add(rowSources);
                 indices.Add(ordinal);
             }
-            var after = scroll.VerticallyScrollable.Value ? scroll.VerticalScrollPercent.Value : -1;
-            if (after != position) throw new AutomationException("GRID_CHANGED", "Native scroll position changed during readback.");
+            var after = CustomScrollState(grid);
+            if (after.Scrollable != scrollable || scrollable && after.Percent != position)
+                throw new AutomationException("GRID_CHANGED", "Vị trí cuộn của bảng đổi trong khi đọc; đối chiếu lại.");
+            var footer = TryReadCustomFooterCount(grid);
             GuardWorkflow(frame);
-            return new NativeTablePage(new NativeTable(rows, Capture(), sources), indices, position);
+            return new NativeTablePage(new NativeTable(rows, Capture(), sources), indices, position, hidden, footer,
+                insertion, shown.Length, allInBounds);
         }, token);
 
+    // Merging pages needs a stable ordinal: the row's numeric AutomationId, else its cells' GridItem row.
+    private static int CustomRowOrdinal(CustomRow row, int? positional)
+    {
+        if (int.TryParse(row.Element.Properties.AutomationId.ValueOrDefault, out var id) && id is >= 0 and < 5000) return id;
+        var cellRows = row.Cells.Where(cell => cell.Patterns.GridItem.IsSupported)
+            .Select(cell => cell.Patterns.GridItem.Pattern.Row.Value).Distinct().ToArray();
+        if (cellRows.Length == 1 && cellRows[0] is >= 0 and < 5000) return cellRows[0];
+        if (positional is { } index) return index;
+        throw new AutomationException("GRID_COMPLETENESS_UNAVAILABLE",
+            "Một dòng trong bảng cuộn không có số thứ tự native duy nhất nên không thể ghép các trang mà không đoán; đối chiếu lại.");
+    }
 }

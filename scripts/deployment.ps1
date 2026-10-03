@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $script:DeploymentRoot = Join-Path $env:LOCALAPPDATA 'MisaManager\deployment'
 $script:StateRoot = Join-Path $env:LOCALAPPDATA 'MisaManager'
 $script:InstallRoot = Join-Path $env:LOCALAPPDATA 'Programs\MisaManager'
+. (Join-Path $PSScriptRoot 'bridge-runtime.ps1')
 
 function Write-DeploymentJson([string]$Path, $Value) {
     $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
@@ -114,6 +115,10 @@ function Invoke-InstalledHealth([string]$Version, [string]$Folder, $Manifest) {
         if ($signatureEntry -and $signatureEntry.Value -eq 'Valid' -and
             (Get-AuthenticodeSignature -LiteralPath $executable).Status -ne 'Valid') {
             throw ('Installed signature validation failed: ' + $component)
+        }
+        if ($component -eq 'bridge') {
+            Assert-SelfContainedPayload (Split-Path -Parent $executable) 'Bridge da cai'
+            Assert-BridgeLaunch $executable
         }
         $output = Join-Path $Folder ($component + '-installed-health.json')
         $arguments = @('--health-check')

@@ -1,0 +1,130 @@
+using System.Text.RegularExpressions;
+using System.Windows.Media;
+using MisaManager.Core;
+
+namespace MisaManager.App;
+
+public enum ToolStateKind
+{
+    Connecting, Ready, Disconnected, Entering, Reconciling, Saving, PauseRequested, Paused,
+    Saved, Discarded, Existing, Uncertain, NeedsAction, Error
+}
+
+/// <summary>What the user should see about the run: short label, one-line detail and a remediation hint.</summary>
+public sealed record ToolState(ToolStateKind Kind, string Label, string Detail = "", string Hint = "")
+{
+    public bool IsBusy => Kind is ToolStateKind.Connecting or ToolStateKind.Entering or ToolStateKind.Reconciling
+        or ToolStateKind.Saving or ToolStateKind.PauseRequested;
+    public string KindName => Kind.ToString().ToLowerInvariant();
+
+    public static string LabelOf(ToolStateKind kind) => kind switch
+    {
+        ToolStateKind.Connecting => "Đang kết nối…",
+        ToolStateKind.Ready => "Sẵn sàng",
+        ToolStateKind.Disconnected => "Mất kết nối MISA",
+        ToolStateKind.Entering => "Đang nhập",
+        ToolStateKind.Reconciling => "Đang đối chiếu",
+        ToolStateKind.Saving => "Đang lưu",
+        ToolStateKind.PauseRequested => "Đang tạm dừng…",
+        ToolStateKind.Paused => "Đã tạm dừng",
+        ToolStateKind.Saved => "Đã lưu",
+        ToolStateKind.Discarded => "Đã bỏ",
+        ToolStateKind.Existing => RunOutcome.ExistingLabel,
+        ToolStateKind.Uncertain => "Chưa rõ",
+        ToolStateKind.NeedsAction => "Cần xử lý",
+        _ => "Lỗi"
+    };
+}
+
+public static class StatePalette
+{
+    private static Brush Make(string hex)
+    {
+        var brush = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
+        brush.Freeze();
+        return brush;
+    }
+
+    private static readonly Dictionary<ToolStateKind, (Brush Fg, Brush Bg)> Colors = new()
+    {
+        [ToolStateKind.Connecting] = (Make("#2563EB"), Make("#EFF4FF")),
+        [ToolStateKind.Entering] = (Make("#2563EB"), Make("#EFF4FF")),
+        [ToolStateKind.Reconciling] = (Make("#0E7490"), Make("#ECFEFF")),
+        [ToolStateKind.Saving] = (Make("#2563EB"), Make("#EFF4FF")),
+        [ToolStateKind.PauseRequested] = (Make("#B45309"), Make("#FEF3C7")),
+        [ToolStateKind.Paused] = (Make("#475569"), Make("#F1F5F9")),
+        [ToolStateKind.Ready] = (Make("#15803D"), Make("#ECFDF3")),
+        [ToolStateKind.Saved] = (Make("#15803D"), Make("#D1FADF")),
+        [ToolStateKind.Discarded] = (Make("#BE123C"), Make("#FFE4E6")),
+        [ToolStateKind.Existing] = (Make(RunOutcome.ExistingColor), Make("#E3ECF6")),
+        [ToolStateKind.Uncertain] = (Make("#6D28D9"), Make("#EDE9FE")),
+        [ToolStateKind.NeedsAction] = (Make("#B45309"), Make("#FEF3C7")),
+        [ToolStateKind.Disconnected] = (Make("#B91C1C"), Make("#FEE2E2")),
+        [ToolStateKind.Error] = (Make("#B91C1C"), Make("#FEE2E2"))
+    };
+
+    public static (Brush Fg, Brush Bg) Of(ToolStateKind kind) => Colors[kind];
+}
+
+public static partial class ErrorHints
+{
+    private static readonly Dictionary<string, string> Hints = new(StringComparer.Ordinal)
+    {
+        ["DIALOG_REQUIRES_ATTENTION"] = "MISA đang hiện hộp thoại cảnh báo. Đọc và đóng hộp thoại đó trong MISA, kiểm tra chứng từ rồi mới chạy lại.",
+        ["SCOPE_IDENTITY_CHANGED"] = "Tab hoặc dialog của MISA đã đổi giữa chừng (ví dụ dialog Thêm vật tư mở chậm). Giữ nguyên tab Bán hàng, đóng dialog đang mở rồi chạy lại.",
+        ["STALE_NATIVE_FRAME"] = "Màn hình MISA vừa thay đổi nên dữ liệu đọc đã cũ. Chờ MISA ổn định, không thao tác thêm, rồi bấm Đọc lại.",
+        ["EDITOR_NOT_FOUND"] = "Không thấy form chứng từ bán hàng. Mở lại chứng từ 'Bán hàng hóa, dịch vụ trong nước' trong MISA rồi chạy lại.",
+        ["SALES_SURFACE_MISSING"] = "MISA chưa ở màn hình Bán hàng. Vào Bán hàng > Chứng từ bán hàng rồi chạy lại.",
+        ["WINDOW_IDENTITY_CHANGED"] = "Cửa sổ MISA đã được đóng/mở lại. Bấm ••• > Chọn phiên MISA để chọn đúng phiên đang đăng nhập.",
+        ["ITEM_CATALOG_MISSING"] = "Chưa nạp danh mục mã hàng. Bấm nút Mã hàng và chọn file danh mục vật tư xuất từ MISA.",
+        ["ITEM_AMBIGUOUS"] = "Tên hàng trùng nhiều mã trong danh mục. Bổ sung cột Mã hàng cho dòng này (••• > Bổ sung dữ liệu nguồn) để chọn đúng mã.",
+        ["ITEM_UNIT_CONFLICT"] = "Tên hàng đã có nhưng khác đơn vị tính. Chọn đúng mã hàng theo đơn vị rồi điền vào nguồn; tool không tự tạo mã mới.",
+        ["ITEM_CREATE_UNCERTAIN"] = "Chưa rõ mã hàng mới đã được tạo hay chưa. Mở Danh mục vật tư trong MISA để tìm mã vừa tạo, nạp lại danh mục rồi chạy lại; không tạo tay để tránh trùng mã.",
+        ["ITEM_UNIT_NOT_REGISTERED"] = "Đơn vị tính chưa có trong MISA. Thêm đơn vị trong Danh mục hoặc sửa đơn vị trong Excel.",
+        ["ITEM_STOCK_NOT_FOUND"] = "Không tìm thấy kho mặc định (ví dụ KHH). Kiểm tra mã kho trong MISA có bị đổi tên hoặc xóa không.",
+        ["ITEM_TAX_NOT_SET"] = "Thuế suất của vật tư chưa đặt hoặc không hợp lệ. Sửa thuế suất trong Excel (5, 5% hoặc 5,0000 đều được).",
+        ["GRID_COMPLETENESS_UNAVAILABLE"] = "Chưa đọc đủ các dòng của bảng hàng tiền (đang cuộn hoặc có dòng ẩn). Đưa bảng về đầu rồi bấm Đọc lại.",
+        ["SAVE_UNCERTAIN"] = "Chưa rõ chứng từ đã được Cất hay chưa. KHÔNG nhập lại; kiểm tra danh sách chứng từ bán hàng trong MISA rồi dùng ••• > Khôi phục checkpoint.",
+        ["INPUT_UNCERTAIN"] = "Chưa rõ thao tác nhập đã vào MISA hay chưa. Xem chứng từ đang mở, bấm Đọc lại để đối chiếu; không chạy lại ngay.",
+        ["RECONCILIATION_FAILED"] = "Không đọc/đối chiếu được dữ liệu MISA. Giữ chứng từ đang mở, bấm Đọc lại; nếu vẫn lỗi hãy kiểm tra tay trên MISA.",
+        ["NOT_CONNECTED"] = "Chưa kết nối được MISA. Mở MISA SME 2023 R20, đăng nhập rồi chọn phiên MISA ở menu •••.",
+        ["DISCARD_UNCERTAIN"] = "Chưa rõ chứng từ đã được Bỏ hay chưa. Kiểm tra chứng từ trong MISA trước khi làm tiếp.",
+        ["TEST_DISCARD_UNCERTAIN"] = "Chưa rõ chứng từ thử nghiệm đã được Bỏ hay chưa. Kiểm tra chứng từ trong MISA trước khi làm tiếp.",
+        ["LIVE_RUN_CANCELLED"] = "Lượt chạy bị dừng giữa chừng. Kiểm tra chứng từ đang mở trong MISA rồi chạy lại.",
+        ["LIVE_RUN_FAILED"] = "Lượt chạy lỗi. Xem chi tiết lỗi, kiểm tra chứng từ đang mở trong MISA rồi chạy lại từ đầu."
+    };
+
+    [GeneratedRegex("[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")]
+    private static partial Regex CodePattern();
+
+    public static string? For(string? code)
+        => code is not null && Hints.TryGetValue(code, out var hint) ? hint : null;
+
+    private static readonly HashSet<string> Generic = new(StringComparer.Ordinal) { "LIVE_RUN_FAILED", "LIVE_RUN_CANCELLED" };
+
+    /// <summary>Finds the most specific known error code mentioned in the texts (generic run failures last).</summary>
+    public static string? FindCode(params string?[] texts)
+    {
+        string? generic = null;
+        foreach (var text in texts)
+        {
+            if (string.IsNullOrEmpty(text)) continue;
+            foreach (Match match in CodePattern().Matches(text))
+            {
+                if (!Hints.ContainsKey(match.Value)) continue;
+                if (!Generic.Contains(match.Value)) return match.Value;
+                generic ??= match.Value;
+            }
+        }
+        return generic;
+    }
+
+    public static string ForStatus(WorkflowStatus status) => status switch
+    {
+        WorkflowStatus.SaveUncertain => Hints["SAVE_UNCERTAIN"],
+        WorkflowStatus.InputUncertain => Hints["INPUT_UNCERTAIN"],
+        WorkflowStatus.Blocked => "Workflow bị chặn để bảo vệ dữ liệu. Đọc thông báo bên dưới, xử lý trên MISA rồi chạy lại hoặc dùng ••• > Khôi phục checkpoint.",
+        WorkflowStatus.Failed => "Lượt chạy lỗi. Xem chi tiết lỗi, kiểm tra chứng từ đang mở trong MISA rồi chạy lại từ đầu.",
+        _ => ""
+    };
+}

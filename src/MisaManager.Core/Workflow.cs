@@ -228,6 +228,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         finally { transitionGate.Release(); }
     }
 
+    /// <summary>LastErrorCode of a Discarded run whose invoice number already exists in MISA.</summary>
+    public const string ExistingInvoiceCode = "INVOICE_ALREADY_EXISTS";
+
     public static bool IsTerminal(WorkflowStatus status) => status is WorkflowStatus.Saved or WorkflowStatus.Discarded
         or WorkflowStatus.Cancelled or WorkflowStatus.Failed;
 
@@ -451,6 +454,21 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 current = await FinishAsync(save: true, token: token);
                 if (current.Snapshot.Status == WorkflowStatus.Saved)
                     return await CompleteLiveRecordAsync(current, startedAt, "saved", true, true, comparison, null, token);
+                if (current.Snapshot.Status == WorkflowStatus.Blocked && current.Snapshot.LastErrorCode == ExistingInvoiceCode)
+                {
+                    // MISA refused the save because the invoice number exists and "No" was answered:
+                    // close the unsaved voucher and let the caller move on to the next invoice.
+                    var existing = (current.Snapshot.LastMessage ?? "Hóa đơn đã tồn tại trong MISA.")
+                        + " Đã đóng chứng từ, chuyển sang hóa đơn tiếp theo.";
+                    current = await FinishAsync(save: false, token: token);
+                    if (current.Snapshot.Status == WorkflowStatus.Discarded)
+                    {
+                        current = current with { Snapshot = current.Snapshot with { LastErrorCode = ExistingInvoiceCode, LastMessage = existing } };
+                        lock (gate) context = current;
+                        await PersistAsync(current, token);
+                        return await CompleteLiveRecordAsync(current, startedAt, "existing", true, true, comparison, existing, token);
+                    }
+                }
 
                 var message = current.Snapshot.LastMessage ?? "Cất hóa đơn chưa được xác nhận.";
                 current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? "SAVE_UNCERTAIN", token);
