@@ -1092,9 +1092,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
     private static bool CatalogNameMatch(string expected, string? actual)
     {
         if (actual is null) return false;
-        static string Key(string value) => new string(value.Normalize(NormalizationForm.FormC)
-            .Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
-        return Key(expected) == Key(actual);
+        return TextKey.LettersAndDigits(expected) == TextKey.LettersAndDigits(actual);
     }
     private static string Decimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? throw new InvalidDataException("Thiếu số nguồn.");
     private static string Saved(WorkflowContext context, string key) => context.NativeValues?.GetValueOrDefault(key)
