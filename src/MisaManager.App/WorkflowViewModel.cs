@@ -322,16 +322,32 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để hủy bước đang chạy."
                     + (explicitRun ? "" : " Chưa tick hóa đơn nào nên chạy từ hóa đơn đang chọn trở đi.");
                 PerformanceCurrent = "live_run · đang chạy";
-                var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
-                var response = await services.ExecuteAsync("live_run", new
+                OperationResult response;
+                for (var rerun = 0; ; rerun++)
                 {
-                    invoice,
-                    windowIdentity = identity,
-                    executionMode = "live_production",
-                    liveValidation = true,
-                    allowKgToTon = true
-                });
-                FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
+                    var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}"
+                        + (rerun == 0 ? "" : $" · chạy lại lần {rerun}"));
+                    response = await services.ExecuteAsync("live_run", new
+                    {
+                        invoice,
+                        windowIdentity = identity,
+                        executionMode = "live_production",
+                        liveValidation = true,
+                        allowKgToTon = true
+                    });
+                    FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
+                    // Interference (stray click, tab switch/drag) with the half-entered voucher already discarded:
+                    // enter the same invoice again from scratch instead of stopping with an error.
+                    if (response.Status == "completed" || stopRequested || rerun >= InterferenceRetry.InvoiceReruns
+                        || services.Workflow.LastLiveRun is not { AutoRerunSafe: true } last
+                        || last.Context.Invoice.Fingerprint != fingerprint)
+                        break;
+                    Status = $"{position} · MISA bị gián đoạn ({last.Error ?? response.Message}). Đã Bỏ chứng từ dở, "
+                        + $"tự nhập lại từ đầu (lần {rerun + 1}/{InterferenceRetry.InvoiceReruns})… Tránh bấm vào MISA trong lúc tool chạy.";
+                    NotifyWorkflowChanged();
+                    await Task.Delay(TimeSpan.FromSeconds(1.5));
+                    if (stopRequested) break;
+                }
                 Status = response.Message;
                 NotifyWorkflowChanged();
                 if (response.Status != "completed")

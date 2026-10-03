@@ -46,7 +46,9 @@ public sealed record WorkflowObservation(
     InputDisposition InputDisposition = InputDisposition.NotSent,
     bool InputMayHaveBeenSent = false,
     string? ErrorCode = null, string? ErrorChain = null,
-    ReconciliationResult? Comparison = null);
+    ReconciliationResult? Comparison = null,
+    // Null means unknown: fall back to InputMayHaveBeenSent. Tab selection alone is not value input.
+    bool? ValueInputMayHaveBeenSent = null);
 
 public sealed record WorkflowBatchResult(WorkflowContext Context, int AttemptedSteps, int CompletedSteps,
     string StopReason, bool InputMayHaveBeenSent, InputDisposition InputDisposition,
@@ -88,6 +90,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     private readonly SemaphoreSlim transitionGate = new(1, 1);
     private CancellationTokenSource? cancellation;
     private CancellationTokenSource? activeOperation;
+    /// <summary>Most recent live run result; the UI reads <see cref="LiveRunResult.AutoRerunSafe"/> from it.</summary>
+    public LiveRunResult? LastLiveRun { get; private set; }
     private bool pauseRequested;
     private bool cancelRequested;
     private bool initialized;
@@ -427,13 +431,17 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             {
                 var message = batch.Error ?? current.Snapshot.LastMessage
                     ?? $"Live run stopped at {current.Snapshot.Status}: {batch.StopReason}.";
+                var failureCode = current.Snapshot.LastErrorCode;
+                var nothingOpened = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current);
                 if (batch.StopReason is not "interrupted")
                     current = await TryDiscardFailedVoucherAsync(current);
-                current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? "LIVE_RUN_FAILED", token);
-                return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token);
+                var rerunSafe = batch.StopReason == "checkpoint_failed" && InterferenceRetry.IsTransient(failureCode)
+                    && (current.Snapshot.Status == WorkflowStatus.Discarded || nothingOpened);
+                current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED", token);
+                return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, rerunSafe);
             }
 
-            comparison = await ReconcileAsync(token);
+            comparison = await ReconcileWithRetryAsync(token);
             if (comparison.Matched && executionMode == WorkflowExecutionMode.LiveTest)
             {
                 // Live tests may exercise the complete editor and reconciliation
@@ -501,11 +509,35 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             if (current is null) throw;
             current = await TryDiscardFailedVoucherAsync(current);
+            var rerunSafe = error is AutomationException { Code: var code } && InterferenceRetry.IsTransient(code)
+                && current.Snapshot.Status == WorkflowStatus.Discarded;
             current = await MarkLiveFailureAsync(current, error.Message,
-                current.Snapshot.LastErrorCode ?? "LIVE_RUN_ERROR", CancellationToken.None, error.ToString());
+                current.Snapshot.LastErrorCode ?? (error as AutomationException)?.Code ?? "LIVE_RUN_ERROR", CancellationToken.None, error.ToString());
             return await CompleteLiveRecordAsync(current, startedAt, "failed", comparison is not null,
-                comparison?.Matched == true, comparison, error.Message, CancellationToken.None);
+                comparison?.Matched == true, comparison, error.Message, CancellationToken.None, rerunSafe);
         }
+    }
+
+    /// <summary>Reconciliation only reads (and switches view tabs), so a disturbed read is simply repeated.</summary>
+    private async Task<ReconciliationResult> ReconcileWithRetryAsync(CancellationToken token)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return await ReconcileAsync(token); }
+            catch (AutomationException error) when (attempt <= InterferenceRetry.ReconcileRetries
+                && InterferenceRetry.IsTransient(error.Code) && !token.IsCancellationRequested)
+            {
+                await Task.Delay(InterferenceRetry.Delay(attempt), token);
+            }
+        }
+    }
+
+    private static bool VoucherWasOpened(WorkflowContext value)
+    {
+        var status = value.Snapshot.Status;
+        return status >= WorkflowStatus.VoucherCreated && status <= WorkflowStatus.AwaitingSave
+            || value.Snapshot.PausedFromStatus is { } paused && paused >= WorkflowStatus.VoucherCreated
+                && paused <= WorkflowStatus.AwaitingSave;
     }
 
     public async Task<IReadOnlyList<LiveVerificationRecord>> ReadLiveVerificationHistoryAsync(CancellationToken token = default)
@@ -548,10 +580,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     private async Task<WorkflowContext> TryDiscardFailedVoucherAsync(WorkflowContext value)
     {
         var status = value.Snapshot.Status;
-        var voucherWasOpened = status >= WorkflowStatus.VoucherCreated && status <= WorkflowStatus.AwaitingSave
-            || value.Snapshot.PausedFromStatus is { } paused && paused >= WorkflowStatus.VoucherCreated
-                && paused <= WorkflowStatus.AwaitingSave;
-        if (!voucherWasOpened || status is WorkflowStatus.SaveUncertain or WorkflowStatus.Saved
+        if (!VoucherWasOpened(value) || status is WorkflowStatus.SaveUncertain or WorkflowStatus.Saved
             or WorkflowStatus.Discarded)
             return value;
         try
@@ -573,7 +602,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
 
     private async Task<LiveRunResult> CompleteLiveRecordAsync(WorkflowContext value, DateTimeOffset startedAt,
         string outcome, bool reconciled, bool matched, ReconciliationResult? comparison, string? error,
-        CancellationToken token)
+        CancellationToken token, bool autoRerunSafe = false)
     {
         var verification = new LiveVerificationRecord(value.Snapshot.RunId, value.Invoice.InvoiceId,
             value.Invoice.Revision, value.Invoice.Fingerprint, value.Invoice.Source.Sha256, startedAt,
@@ -583,7 +612,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             value.Snapshot.RuntimeIdentity);
         await stateStore.WriteAsync("live-verification", Path.Combine("verification", "runs",
             value.Snapshot.RunId + ".json"), verification, token);
-        return new(value, verification, outcome, verification.RetryFromStart, error);
+        var result = new LiveRunResult(value, verification, outcome, verification.RetryFromStart, error, autoRerunSafe);
+        LastLiveRun = result;
+        return result;
     }
 
     private async Task<WorkflowContext> AdvanceCoreAsync(CancellationToken cancellationToken)
@@ -623,28 +654,45 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     if (durable) await PersistAsync(current, CancellationToken.None);
                 }
                 WorkflowObservation observation;
-                try
+                for (var attempt = 1; ; attempt++)
                 {
-                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    deadline.CancelAfter(transition.Timeout);
-                    observation = await native.ExecuteAsync(current, transition, (progress, _) =>
+                    try
                     {
-                        current = ApplyProgress(current, progress);
-                        lock (gate) context = current;
-                        return Task.CompletedTask;
-                    }, deadline.Token);
-                }
-                catch (AutomationException error)
-                {
-                    observation = new(false, error.InputMayHaveBeenSent ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
-                        current.Snapshot.NativeFrame ?? "", error.Message, error.InputMayHaveBeenSent ? InputDisposition.Uncertain : InputDisposition.NotSent,
-                        error.InputMayHaveBeenSent, error.Code, error.ToString());
-                }
-                catch (Exception error)
-                {
-                    observation = new(false, mayInput ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
-                        current.Snapshot.NativeFrame ?? "", error.Message, mayInput ? InputDisposition.Uncertain : InputDisposition.NotSent, mayInput,
-                        error is OperationCanceledException ? "CANCELLED" : "WORKFLOW_ERROR", error.ToString());
+                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        deadline.CancelAfter(transition.Timeout);
+                        observation = await native.ExecuteAsync(current, transition, (progress, _) =>
+                        {
+                            current = ApplyProgress(current, progress);
+                            lock (gate) context = current;
+                            return Task.CompletedTask;
+                        }, deadline.Token);
+                    }
+                    catch (AutomationException error)
+                    {
+                        observation = new(false, error.InputMayHaveBeenSent ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
+                            current.Snapshot.NativeFrame ?? "", error.Message, error.InputMayHaveBeenSent ? InputDisposition.Uncertain : InputDisposition.NotSent,
+                            error.InputMayHaveBeenSent, error.Code, error.ToString());
+                    }
+                    catch (Exception error)
+                    {
+                        observation = new(false, mayInput ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
+                            current.Snapshot.NativeFrame ?? "", error.Message, mayInput ? InputDisposition.Uncertain : InputDisposition.NotSent, mayInput,
+                            error is OperationCanceledException ? "CANCELLED" : "WORKFLOW_ERROR", error.ToString());
+                    }
+                    // Replaying a step is only safe when it changed no voucher value (tab switches are view-only).
+                    if (observation.Confirmed || attempt > InterferenceRetry.StepRetries
+                        || (observation.ValueInputMayHaveBeenSent ?? observation.InputMayHaveBeenSent)
+                        || !InterferenceRetry.IsTransient(observation.ErrorCode) || token.IsCancellationRequested)
+                        break;
+                    lock (gate)
+                    {
+                        if (pauseRequested || cancelRequested) break;
+                        current = current with { Snapshot = current.Snapshot with { LastMessage =
+                            $"MISA bị gián đoạn ({observation.Message}); tự thử lại bước {transition.Checkpoint} lần {attempt}/{InterferenceRetry.StepRetries}…" } };
+                        context = current;
+                    }
+                    try { await Task.Delay(InterferenceRetry.Delay(attempt), token); }
+                    catch (OperationCanceledException) { break; }
                 }
                 if (observation.Comparison is not null || transition.To == WorkflowStatus.TotalsVerified)
                     current = WithComparison(current, transition.Checkpoint, observation.Comparison,

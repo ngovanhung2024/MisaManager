@@ -251,7 +251,9 @@ public sealed record LiveRunResult(
     LiveVerificationRecord Verification,
     string Outcome,
     bool RetryFromStart,
-    string? Error = null);
+    string? Error = null,
+    // The failure looked like user interference and left no partial voucher, so a fresh rerun cannot duplicate data.
+    bool AutoRerunSafe = false);
 
 public static class OperationStatuses
 {

@@ -201,6 +201,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         var checkpointFailed = false;
         SetActivity(new(context.Snapshot.RunId, transition.Action, checkpointStartedAt), "ok");
         var inputSequence = input.WorkflowInputSequence;
+        var valueSequence = input.ValueInputSequence;
         var checkpointStarted = Stopwatch.GetTimestamp();
         try
         {
@@ -382,6 +383,8 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         {
             checkpointFailed = true;
             sent |= input.WorkflowInputSequence != inputSequence || error is AutomationException fault && fault.InputMayHaveBeenSent;
+            var valueSent = saveSent || input.ValueInputSequence != valueSequence
+                || error is AutomationException { InputMayHaveBeenSent: true };
             var automation = error as AutomationException;
             var failedStep = activity?.Field ?? transition.Action;
             SetActivity(null, "failed");
@@ -389,7 +392,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
             return new(false, saveSent ? WorkflowStatus.SaveUncertain : transition.To == WorkflowStatus.Saved ? WorkflowStatus.Blocked
                     : sent ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
                 "", error.Message, sent ? InputDisposition.Uncertain : InputDisposition.NotSent, sent,
-                automation?.Code ?? "WORKFLOW_ERROR", error.ToString(), comparison);
+                automation?.Code ?? "WORKFLOW_ERROR", error.ToString(), comparison, valueSent);
         }
         finally
         {
