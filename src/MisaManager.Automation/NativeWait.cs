@@ -5,9 +5,17 @@ namespace MisaManager.Automation;
 
 internal static class NativeWait
 {
+    // Read failures that only mean "MISA is still redrawing"; polling again is safe because observe() only reads.
+    private static readonly HashSet<string> TransientReadCodes = new(StringComparer.Ordinal)
+    {
+        "TARGET_NOT_FOUND", "TARGET_AMBIGUOUS", "NATIVE_READ_TIMEOUT", "NATIVE_ELEMENT_UNAVAILABLE", "NATIVE_BUSY",
+        "GRID_ROWS_INVALID", "GRID_COLUMNS_INVALID", "GRID_NOT_STABLE", "GRID_CHANGED", "SCOPE_IDENTITY_CHANGED", "STALE_NATIVE_FRAME"
+    };
+
     // Poll readback only. Never replay the action that started an asynchronous UI update.
+    // The default leaves room for a slow MISA (server lookups, cold dialogs); callers pass less where speed matters.
     public static async Task<T> UntilAsync<T>(Func<Task<T>> observe, Func<T, bool> ready,
-        string code, string message, CancellationToken token, int timeoutMilliseconds = 5000,
+        string code, string message, CancellationToken token, int timeoutMilliseconds = 10000,
         bool returnLastMismatch = false)
     {
         var started = Stopwatch.GetTimestamp();
@@ -26,8 +34,12 @@ internal static class NativeWait
                 hasLast = true;
                 pending = null;
             }
-            catch (AutomationException error) when (!error.InputMayHaveBeenSent
-                && error.Code is "TARGET_NOT_FOUND" or "NATIVE_READ_TIMEOUT" or "NATIVE_ELEMENT_UNAVAILABLE")
+            catch (AutomationException error) when (!error.InputMayHaveBeenSent && TransientReadCodes.Contains(error.Code))
+            {
+                pending = error.Message;
+            }
+            catch (Exception error) when (error is System.Runtime.InteropServices.COMException
+                or FlaUI.Core.Exceptions.ElementNotAvailableException or FlaUI.Core.Exceptions.PropertyNotSupportedException)
             {
                 pending = error.Message;
             }

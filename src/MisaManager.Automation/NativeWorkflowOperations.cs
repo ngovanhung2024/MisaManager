@@ -586,7 +586,8 @@ public sealed partial class NativeInputService
             AutomationElement[] registered = [];
             AutomationElement[] options = [];
             var expectedName = NormalizeOptionName(expected);
-            for (var attempt = 0; attempt < 12; attempt++)
+            // A slow MISA can open the list after the first polls; keep waiting while nothing is registered yet.
+            for (var attempt = 0; attempt < 40; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 registered = RegisteredOptions(host, cellBounds);
@@ -601,7 +602,7 @@ public sealed partial class NativeInputService
                     .GroupBy(item => item.Name, StringComparer.Ordinal)
                     .Select(group => group.First().Element)
                     .ToArray();
-                if (options.Length > 0 || registered.Length == 0) break;
+                if (options.Length > 0 || registered.Length > 0 && attempt >= 11) break;
                 Thread.Sleep(50);
             }
             if (options.Length == 0 && allowMissing)

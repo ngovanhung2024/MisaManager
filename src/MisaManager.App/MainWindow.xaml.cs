@@ -119,11 +119,19 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        var workArea = SystemParameters.WorkArea;
-        PositionRail(workArea);
-        RefreshCatalogLabel();
-        await workflow.RestoreAsync();
+        try
+        {
+            var workArea = SystemParameters.WorkArea;
+            PositionRail(workArea);
+            RefreshCatalogLabel();
+            await workflow.RestoreAsync();
+        }
+        catch (Exception error) { StatusLabel.Text = "Không khôi phục được phiên trước: " + error.Message; }
     }
+
+    internal void ReportUnexpectedError(Exception error, string? logPath)
+        => Workflow_ErrorRaised(this, new WorkflowErrorEventArgs("Lỗi không mong muốn trong tool (đã ghi log, tool vẫn chạy): " + error.Message,
+            (logPath is null ? "" : "Log: " + logPath + Environment.NewLine) + error, DateTimeOffset.Now));
 
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -183,8 +191,12 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) when (work.IsCancellationRequested) { return; }
         catch (Exception error) { if (IsCurrent(work)) ShowImportError(error); return; }
         finally { EndImport(work); }
-        if (workbook is not null && SheetChoice.SelectedIndex >= 0 && PrepareMapping())
-            await ImportSelectedSheetAsync();
+        try
+        {
+            if (workbook is not null && SheetChoice.SelectedIndex >= 0 && PrepareMapping())
+                await ImportSelectedSheetAsync();
+        }
+        catch (Exception error) { ShowImportError(error); }
     }
 
     private async void ChooseCatalog_Click(object sender, RoutedEventArgs e)
@@ -294,8 +306,12 @@ public partial class MainWindow : Window
         if (!IsInitialized || updatingSheet) return;
         CancelImport();
         ClearImportResult();
-        if (SheetChoice.SelectedIndex >= 0 && PrepareMapping()) await ImportSelectedSheetAsync();
-        else ResetMapping();
+        try
+        {
+            if (SheetChoice.SelectedIndex >= 0 && PrepareMapping()) await ImportSelectedSheetAsync();
+            else ResetMapping();
+        }
+        catch (Exception error) { ShowImportError(error); }
     }
 
     private bool PrepareMapping()
@@ -443,7 +459,8 @@ public partial class MainWindow : Window
     {
         if (updatingMapping || !IsInitialized) return;
         mappingEdited = true;
-        await ImportSelectedSheetAsync();
+        try { await ImportSelectedSheetAsync(); }
+        catch (Exception error) { ShowImportError(error); }
     }
 
     private void CancelImport() => importModel.Cancel();
@@ -542,7 +559,19 @@ public partial class MainWindow : Window
         catch (Exception error) { StatusLabel.Text = error.Message; }
     }
 
+    // Runs every 220 ms: any failure is reported once in the status line and backs the probes off.
     private async void UiTimer_Tick(object? sender, EventArgs e)
+    {
+        try { await UiTickAsync(); }
+        catch (Exception error)
+        {
+            var now = DateTimeOffset.UtcNow;
+            editorProbeDue = connectionProbeDue = now.AddSeconds(3);
+            StatusLabel.Text = "Lỗi cập nhật trạng thái (sẽ tự thử lại): " + error.Message;
+        }
+    }
+
+    private async Task UiTickAsync()
     {
         workflow.RefreshPerformance();
         RefreshWorkflowPanel();
@@ -605,14 +634,28 @@ public partial class MainWindow : Window
     private void CopyError_Click(object sender, RoutedEventArgs e)
     {
         if (lastWorkflowError is null) return;
-        Clipboard.SetText(workflow.ExportLastError(lastWorkflowError.Message, lastWorkflowError.Details, lastWorkflowError.OccurredAt));
-        StatusLabel.Text = "Đã copy thông tin lỗi và hiệu năng vào clipboard.";
+        var text = workflow.ExportLastError(lastWorkflowError.Message, lastWorkflowError.Details, lastWorkflowError.OccurredAt);
+        StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy thông tin lỗi và hiệu năng vào clipboard.";
     }
 
     private void CopyPerformance_Click(object sender, RoutedEventArgs e)
+        => StatusLabel.Text = TryCopy(workflow.ExportPerformance(), "hieu-nang") ?? "Đã copy báo cáo hiệu năng vào clipboard để gửi ChatGPT.";
+
+    // The clipboard is often held by RDP or clipboard managers (CLIPBRD_E_CANT_OPEN); retry, then fall back to a file.
+    private static string? TryCopy(string text, string name)
     {
-        Clipboard.SetText(workflow.ExportPerformance());
-        StatusLabel.Text = "Đã copy báo cáo hiệu năng vào clipboard để gửi ChatGPT.";
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            try { Clipboard.SetDataObject(text, true); return null; }
+            catch (System.Runtime.InteropServices.COMException) { Thread.Sleep(60 * attempt); }
+        }
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(), $"MisaManager-{name}-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            File.WriteAllText(path, text);
+            return "Clipboard đang bị chương trình khác giữ; đã lưu nội dung vào " + path;
+        }
+        catch (Exception error) { return "Không copy được: " + error.Message; }
     }
 
     private bool IsComparisonBound()

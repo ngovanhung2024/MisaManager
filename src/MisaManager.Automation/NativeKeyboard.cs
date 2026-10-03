@@ -132,6 +132,10 @@ internal static class NativeKeyboard
     {
         Activate(targetHandle == nint.Zero ? windowHandle : targetHandle, windowHandle, processId);
         if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới ô MISA.");
+        // A topmost window (toast, this tool's own rail) over the point would receive the click instead of MISA.
+        var hit = WindowFromPoint(new PointStruct { X = x, Y = y });
+        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out var hitProcess) == 0 || hitProcess != processId)
+            throw new AutomationException("FOCUS_LOST", "Có cửa sổ khác che ô MISA cần click; không click.");
         var inputs = new[]
         {
             Mouse(0x0002),
@@ -179,6 +183,8 @@ internal static class NativeKeyboard
     }
     private static NativeInput Key(ushort code, bool up = false) => new()
     { Type = 1, Data = new() { Keyboard = new() { Key = code, Flags = up ? 2u : 0u } } };
+    [StructLayout(LayoutKind.Sequential)] private struct PointStruct { public int X, Y; }
+    [DllImport("user32.dll")] private static extern nint WindowFromPoint(PointStruct point);
     private static NativeInput Mouse(uint flags) => new()
     { Type = 0, Data = new() { Mouse = new() { Flags = flags } } };
     [StructLayout(LayoutKind.Sequential)] private struct KeyboardInput { public ushort Key, Scan; public uint Flags, Time; public nuint Extra; }

@@ -79,6 +79,12 @@ public sealed partial class AppServices : IAsyncDisposable
             File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
             return new ItemCatalogStore(path);
         }
+        catch (IOException)
+        {
+            // Briefly locked (antivirus/backup): retry once before giving up.
+            Thread.Sleep(500);
+            return new ItemCatalogStore(path);
+        }
     }
 
     private async Task InitializeRuntimeAsync()
@@ -603,12 +609,18 @@ public sealed partial class AppServices : IAsyncDisposable
             });
     }
 
+    // Each step is independent and best-effort so one failure (or a stuck UIA call) cannot skip the rest or hang exit.
     public async ValueTask DisposeAsync()
     {
-        await Control.StopAsync();
-        await Native.DisposeAsync();
-        await Input.DisposeAsync();
-        nativeOwner.Dispose();
+        async Task Step(string name, Func<Task> action)
+        {
+            try { await action().WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (Exception error) { System.Diagnostics.Trace.TraceWarning("Shutdown {0}: {1}", name, error.Message); }
+        }
+        await Step("control", () => Control.StopAsync());
+        await Step("native", () => Native.DisposeAsync().AsTask());
+        await Step("input", () => Input.DisposeAsync().AsTask());
+        await Step("owner", () => Task.Run(nativeOwner.Dispose));
     }
 
     private async Task<OperationResult> StartWorkflowAsync(ControlRequest request, CancellationToken token)

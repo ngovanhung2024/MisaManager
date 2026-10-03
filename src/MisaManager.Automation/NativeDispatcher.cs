@@ -84,7 +84,8 @@ public sealed class NativeDispatcher : IDisposable
                     Finish();
                     completion.TrySetException(error);
                 }
-            })) throw new InvalidOperationException("Native queue is full or stopping.");
+            })) throw queue.IsAddingCompleted ? new InvalidOperationException("Native queue is stopping.")
+                : new AutomationException("NATIVE_BUSY", "Hàng đợi thao tác MISA đang đầy; thử lại sau.");
         }
         catch (InvalidOperationException) when (queue.IsAddingCompleted)
         { throw new AutomationException("NATIVE_OWNER_UNAVAILABLE", "Native owner đang đóng."); }

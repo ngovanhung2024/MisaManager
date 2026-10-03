@@ -69,7 +69,14 @@ public sealed class RunEventStore
             var path = Path.Combine(root, "events-" + snapshot.RunId + ".jsonl");
             StateFiles.RejectReparse(path);
             RotateIfNeeded(path);
-            using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 65536, FileOptions.WriteThrough);
+            using var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, 65536, FileOptions.WriteThrough);
+            // A crash mid-append leaves a torn last line; start on a fresh line so the next record stays parseable.
+            if (stream.Length > 0)
+            {
+                stream.Seek(-1, SeekOrigin.End);
+                if (stream.ReadByte() != '\n') line = Environment.NewLine + line;
+            }
+            stream.Seek(0, SeekOrigin.End);
             stream.Write(Encoding.UTF8.GetBytes(line));
             stream.Flush(true);
         }

@@ -35,13 +35,33 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
         if (loop is not null) return;
         // Surface listener creation failures before the WPF shell opens.
         var pipe = CreatePipe();
-        loop = Task.Run(() => AcceptLoopAsync(pipe, stopping.Token));
+        loop = Task.Run(() => SuperviseAsync(pipe, stopping.Token));
     }
 
+    // Shutdown must not hang on a client whose dispatcher ignores cancellation (e.g. a stuck UIA call).
     public async Task StopAsync()
     {
         stopping.Cancel();
-        if (loop is not null) await loop;
+        if (loop is not null) await Task.WhenAny(loop, Task.Delay(TimeSpan.FromSeconds(10)));
+    }
+
+    private async Task SuperviseAsync(NamedPipeServerStream pipe, CancellationToken token)
+    {
+        while (true)
+        {
+            try
+            {
+                await AcceptLoopAsync(pipe, token);
+                return;
+            }
+            catch (Exception) when (!token.IsCancellationRequested)
+            {
+                // Already traced; restart the listener instead of leaving the control channel dead.
+                try { await Task.Delay(TimeSpan.FromSeconds(1), token); pipe = await CreatePipeWithRetryAsync(token); }
+                catch (OperationCanceledException) { return; }
+            }
+            catch (Exception) { return; }
+        }
     }
 
     // The listener must outlive client drops and transient pipe faults; only Stop ends it.
@@ -76,8 +96,7 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
         finally
         {
             await pipe.DisposeAsync();
-            stopping.Cancel();
-            await Task.WhenAll(clients);
+            if (token.IsCancellationRequested) await Task.WhenAll(clients);
         }
     }
 
@@ -328,6 +347,13 @@ public sealed class ControlServer(IControlDispatcher dispatcher, string? pipeNam
             result = await dispatcher.DispatchAsync(request, deadline.Token);
         }
         catch (AutomationException error) { result = new(request.RequestId, error.InputMayHaveBeenSent ? "uncertain" : "blocked", error.Message, error.InputMayHaveBeenSent); }
+        catch (OperationCanceledException error) when (!dispatched)
+        {
+            // Expired or cancelled before anything ran: do not cache this under the idempotency key.
+            try { journal.Release(request.IdempotencyKey); }
+            catch (Exception releaseError) { Trace.TraceWarning("Control journal release failed: {0}", releaseError.Message); }
+            return new(request.RequestId, "cancelled", error.Message, false);
+        }
         catch (Exception error)
         {
             var uncertain = dispatched && MayMutate(request.Action);

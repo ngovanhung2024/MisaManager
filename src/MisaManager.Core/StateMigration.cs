@@ -161,6 +161,7 @@ public sealed class StateMigrationCoordinator
         {
             var key = Path.GetRelativePath(source, file).Replace('\\', '/');
             if (key is "generation.json" or "migration-journal.json") continue;
+            if (StateFiles.IsAbandonedTemp(file)) { File.Delete(file); continue; }
             if (key.EndsWith(".tmp", StringComparison.Ordinal)) throw new InvalidDataException("Unresolved state temporary file: " + key);
             hashes[key] = await FileDigest.Sha256Async(file, token);
         }

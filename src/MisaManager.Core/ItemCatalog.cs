@@ -130,8 +130,7 @@ public sealed partial class ItemCatalogStore
             if (items.Any(item => string.Equals(item.Code, entry.Code, StringComparison.OrdinalIgnoreCase))
                 || pending.Any(item => string.Equals(item.Code, entry.Code, StringComparison.OrdinalIgnoreCase)))
                 throw new AutomationException("ITEM_CODE_EXISTS", $"Mã hàng '{entry.Code}' đã có trong database.");
-            pending.Add(entry);
-            SaveLocked();
+            Transact(() => pending.Add(entry));
         }
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -143,10 +142,12 @@ public sealed partial class ItemCatalogStore
         {
             var entry = pending.FirstOrDefault(item => string.Equals(item.Code, code, StringComparison.Ordinal))
                 ?? throw new AutomationException("ITEM_PENDING_MISSING", $"Không có mã đang tạo '{code}'.");
-            pending.Remove(entry);
-            if (!items.Any(item => string.Equals(item.Code, code, StringComparison.Ordinal)))
-                Replace([.. items, new ItemCatalogEntry(entry.Code, entry.Name, entry.Unit)]);
-            SaveLocked();
+            Transact(() =>
+            {
+                pending.Remove(entry);
+                if (!items.Any(item => string.Equals(item.Code, code, StringComparison.Ordinal)))
+                    Replace([.. items, new ItemCatalogEntry(entry.Code, entry.Name, entry.Unit)]);
+            });
         }
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -156,8 +157,8 @@ public sealed partial class ItemCatalogStore
     {
         lock (gate)
         {
-            if (pending.RemoveAll(item => string.Equals(item.Code, code, StringComparison.Ordinal)) == 0) return;
-            SaveLocked();
+            if (!pending.Any(item => string.Equals(item.Code, code, StringComparison.Ordinal))) return;
+            Transact(() => pending.RemoveAll(item => string.Equals(item.Code, code, StringComparison.Ordinal)));
         }
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -174,10 +175,12 @@ public sealed partial class ItemCatalogStore
         {
             var incoming = imported.GroupBy(item => item.Code, StringComparer.Ordinal).Select(group => group.First()).ToList();
             var codes = incoming.Select(item => item.Code.Trim()).ToHashSet(StringComparer.Ordinal);
-            pending.RemoveAll(item => codes.Contains(item.Code) || exportedAt is { } at && at > item.StartedAt);
-            Replace([.. incoming, .. items.Where(item => !codes.Contains(item.Code))]);
-            SourceFile = sourceFile;
-            SaveLocked();
+            Transact(() =>
+            {
+                pending.RemoveAll(item => codes.Contains(item.Code) || exportedAt is { } at && at > item.StartedAt);
+                Replace([.. incoming, .. items.Where(item => !codes.Contains(item.Code))]);
+                SourceFile = sourceFile;
+            });
         }
         Changed?.Invoke(this, EventArgs.Empty);
         return Count;
@@ -189,8 +192,7 @@ public sealed partial class ItemCatalogStore
         {
             if (items.Any(item => string.Equals(item.Code, entry.Code, StringComparison.Ordinal)))
                 throw new AutomationException("ITEM_CODE_EXISTS", $"Mã hàng '{entry.Code}' đã có trong database.");
-            Replace([.. items, entry]);
-            SaveLocked();
+            Transact(() => Replace([.. items, entry]));
         }
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -233,16 +235,37 @@ public sealed partial class ItemCatalogStore
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
     }
 
+    // Memory only changes when the file write succeeded, so a failed save (disk full, AV lock) cannot
+    // leave a pending code recorded in memory but not on disk.
+    private void Transact(Action change)
+    {
+        var (oldItems, oldByName, oldPending, oldSource, oldUpdated) = (items, byName, pending.ToList(), SourceFile, UpdatedAt);
+        try
+        {
+            change();
+            SaveLocked();
+        }
+        catch
+        {
+            (items, byName, pending, SourceFile, UpdatedAt) = (oldItems, oldByName, oldPending, oldSource, oldUpdated);
+            throw;
+        }
+    }
+
     private void SaveLocked()
     {
         UpdatedAt = DateTimeOffset.UtcNow;
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         var temporary = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        try
         {
-            JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending), Json);
-            stream.Flush(flushToDisk: true);
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending), Json);
+                stream.Flush(flushToDisk: true);
+            }
+            StateFiles.Commit(temporary, FilePath);
         }
-        File.Move(temporary, FilePath, overwrite: true);
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 }
