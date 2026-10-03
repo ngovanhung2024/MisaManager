@@ -458,6 +458,11 @@ public partial class MainWindow : Window
             StatusLabel.Text = "Đã dừng đọc Excel.";
             e.Handled = true;
         }
+        else if (e.Key == Key.Escape && ErrorPopup.Visibility == Visibility.Visible)
+        {
+            ErrorPopup.Visibility = Visibility.Collapsed;
+            e.Handled = true;
+        }
     }
 
     private static string FieldLabel(string key) => key switch
@@ -590,7 +595,7 @@ public partial class MainWindow : Window
     private async void StopNow_Click(object sender, RoutedEventArgs e)
     {
         if (!workflow.IsRunning) { StatusLabel.Text = "Không có bước nào đang chạy."; return; }
-        if (MessageBox.Show(this, "Dừng ngay sẽ hủy bước đang chạy và có thể để chứng từ dở dang trong MISA. Dùng Tạm dừng nếu muốn dừng an toàn. Vẫn dừng ngay?",
+        if (MessageBox.Show(this, "Dừng ngay sẽ hủy bước đang chạy và có thể để chứng từ dở dang trong MISA. Sau đó có thể bấm Tiếp tục để chạy lại bước hiện tại. Vẫn dừng ngay?",
             "Dừng ngay", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
         await workflow.StopNowAsync();
         StatusLabel.Text = workflow.Status;

@@ -24,7 +24,18 @@
   <Style x:Key="Caption" TargetType="TextBlock">
     <Setter Property="FontSize" Value="9.5"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
-    <Setter Property="Foreground" Value="{StaticResource Faint}"/>
+    <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+  </Style>
+
+  <!-- Keyboard-only focus ring (WPF shows FocusVisualStyle only for keyboard focus). -->
+  <Style x:Key="FocusRing">
+    <Setter Property="Control.Template">
+      <Setter.Value>
+        <ControlTemplate>
+          <Border Margin="-2" BorderBrush="{StaticResource Primary}" BorderThickness="2" CornerRadius="7" SnapsToDevicePixels="True"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <!-- Compact button: hover darkens through an overlay, press shrinks slightly. -->
@@ -39,7 +50,7 @@
     <Setter Property="BorderBrush" Value="#D6DBE4"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
@@ -64,7 +75,7 @@
               <Trigger.EnterActions><BeginStoryboard><Storyboard>
                 <DoubleAnimation Storyboard.TargetName="Overlay" Storyboard.TargetProperty="Opacity" To="0.16" Duration="0:0:0.05"/>
                 <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.97" Duration="0:0:0.06"/>
-                <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.06"/>
+                <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.97" Duration="0:0:0.06"/>
               </Storyboard></BeginStoryboard></Trigger.EnterActions>
               <Trigger.ExitActions><BeginStoryboard><Storyboard>
                 <DoubleAnimation Storyboard.TargetName="Overlay" Storyboard.TargetProperty="Opacity" To="0.07" Duration="0:0:0.1"/>
@@ -109,7 +120,7 @@
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Foreground" Value="#4B5563"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ToggleButton">

@@ -15,6 +15,15 @@ public sealed record EntryFieldRow(string Key, string Label, string Expected, st
     public int MismatchCount => Children is null ? (IsMismatch ? 1 : 0) : Children.Count(child => child.IsMismatch);
     public string MismatchBadge => MismatchCount == 0 ? "" : $"{MismatchCount} lệch";
     public bool AllComplete => Children is { Count: > 0 } && Children.All(child => child.IsComplete);
+
+    // Compare Children by content so unchanged rows are not replaced (which regenerates the container and replays its animations).
+    public bool Equals(EntryFieldRow? other) => other is not null
+        && Key == other.Key && Label == other.Label && Expected == other.Expected && Actual == other.Actual
+        && IsSection == other.IsSection && IsActive == other.IsActive && IsComplete == other.IsComplete && IsMismatch == other.IsMismatch
+        && (ReferenceEquals(Children, other.Children)
+            || (Children is not null && other.Children is not null && Children.SequenceEqual(other.Children)));
+
+    public override int GetHashCode() => HashCode.Combine(Key, Label, Expected, Actual, IsActive, IsComplete, IsMismatch, Children?.Count ?? -1);
 }
 
 /// <summary>Run outcome that is neither a save nor a data mismatch: MISA already had this invoice number.</summary>
@@ -95,6 +104,7 @@ public partial class MainWindow
     private WorkflowContext? shownContext;
     private InvoiceDocument? shownInvoice;
     private string? shownActivity;
+    private string? scrolledActiveKey;
     private bool updatingProfiles;
     private bool presentationInitialized;
     private bool showOnlyMismatch;
@@ -203,7 +213,9 @@ public partial class MainWindow
         }
         while (entryFields.Count > fields.Count) entryFields.RemoveAt(entryFields.Count - 1);
         var active = activeRow is null ? null : entryFields.FirstOrDefault(field => field.Key == activeRow.Key);
-        if (active is not null) EntryList.ScrollIntoView(active);
+        // Only follow the active field when it moves, so the user can scroll freely in between.
+        if (active is not null && active.Key != scrolledActiveKey) EntryList.ScrollIntoView(active);
+        scrolledActiveKey = active?.Key;
         OnlyMismatchToggle.Content = comparisons is null ? "Chỉ dòng lệch" : mismatches == 0 ? "Chỉ dòng lệch · 0" : $"Chỉ dòng lệch · {mismatches}";
         OnlyMismatchToggle.IsEnabled = comparisons is not null;
         var activeLabel = activeRow?.Children?.FirstOrDefault(child => child.IsActive) ?? activeRow;

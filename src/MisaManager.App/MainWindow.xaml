@@ -141,7 +141,7 @@
               ToolTip="Hủy bước đang chạy ngay lập tức; sau đó có thể Tiếp tục bước hiện tại."/>
       <Button x:Name="ResumeButton" Grid.Column="2" Style="{StaticResource SuccessButton}" Content="Tiếp tục" Margin="4,0,0,0" Command="{Binding ResumeCommand}" Visibility="Collapsed"
               ToolTip="Tiếp tục bước hiện tại từ checkpoint đã dừng"/>
-      <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
+      <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
         </ContextMenu></Button.ContextMenu>
@@ -305,11 +305,11 @@
                 <TextBlock Text="1. Mở Excel hóa đơn." Foreground="{StaticResource Muted}" Margin="0,6,0,0"/>
                 <TextBlock Text="2. Nạp file mã hàng (danh mục vật tư, hàng hóa)." Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                 <TextBlock Text="3. Tick các hóa đơn cần chạy (hoặc chọn hóa đơn đầu tiên) rồi bấm Thêm vào MISA." Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap"/>
-                <TextBlock Text="Đã lưu tô xanh · đã bỏ tô hồng · đã có trong MISA tô xanh xám · chưa rõ tô tím · cần xử lý tô vàng." TextWrapping="Wrap" Foreground="{StaticResource Faint}" FontSize="10.5" Margin="0,8,0,0"/>
+                <TextBlock Text="Đã lưu tô xanh · đã bỏ tô hồng · đã có trong MISA tô xanh xám · chưa rõ tô tím · lỗi tô đỏ · cần xử lý viền vàng · tạm dừng viền xám." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="10.5" Margin="0,8,0,0"/>
               </StackPanel>
               <ListView x:Name="EntryList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Margin="2" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                 <ListView.ItemTemplate><DataTemplate>
-                  <Border x:Name="FieldRow" app:Motion.Entrance="True" Padding="6,2" BorderThickness="3,0,0,1" BorderBrush="#F0F2F6">
+                  <Border x:Name="FieldRow" Padding="6,2" BorderThickness="3,0,0,1" BorderBrush="#F0F2F6">
                     <Border.Background><SolidColorBrush x:Name="RowFill" Color="#FFFFFF"/></Border.Background>
                     <Grid>
                       <Grid x:Name="SimpleFieldGrid">
@@ -525,7 +525,7 @@
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel>
-          <Button DockPanel.Dock="Right" Content="×" Click="CloseErrorPopup_Click" Width="24" Height="22" Padding="0" FontSize="14" Style="{StaticResource RailButton}" ToolTip="Đóng thông báo lỗi"/>
+          <Button DockPanel.Dock="Right" Content="×" AutomationProperties.Name="Đóng thông báo lỗi" Click="CloseErrorPopup_Click" Width="24" Height="22" Padding="0" FontSize="14" Style="{StaticResource RailButton}" ToolTip="Đóng thông báo lỗi"/>
           <TextBlock x:Name="ErrorPopupTitle" Text="Lỗi khi thêm vào MISA" FontWeight="SemiBold" FontSize="12" Foreground="#991B1B" VerticalAlignment="Center"/>
         </DockPanel>
         <TextBlock Grid.Row="1" x:Name="ErrorPopupMessage" TextWrapping="Wrap" Foreground="#450A0A" Margin="0,6,0,4"/>

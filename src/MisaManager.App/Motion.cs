@@ -35,8 +35,14 @@ public static class Motion
         target.Opacity = 1;
         target.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, duration)
         { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
-        var slide = new TranslateTransform(fromX, fromY);
-        target.RenderTransform = slide;
+        if (fromX == 0 && fromY == 0) return;
+        // Never replace a transform the element already uses for something else.
+        if (target.RenderTransform is not TranslateTransform slide)
+        {
+            if (target.RenderTransform is not null && target.RenderTransform != Transform.Identity) return;
+            slide = new TranslateTransform();
+            target.RenderTransform = slide;
+        }
         if (fromX != 0) slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(fromX, 0, duration)
         { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
         if (fromY != 0) slide.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(fromY, 0, duration)
