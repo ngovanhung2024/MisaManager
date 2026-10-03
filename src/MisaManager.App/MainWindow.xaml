@@ -135,19 +135,15 @@
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Button x:Name="AddButton" Style="{StaticResource PrimaryButton}" Content="Thêm vào MISA" Command="{Binding AddCommand}" IsEnabled="{Binding CanStart}" Click="Add_Click"
               ToolTip="Chạy lần lượt các hóa đơn đã tick (theo thứ tự danh sách); chưa tick hóa đơn nào thì chạy từ hóa đơn đang chọn. Khớp thì Cất, lệch thì Bỏ, số đã tồn tại thì bỏ qua rồi sang hóa đơn tiếp theo."/>
-      <Button x:Name="PauseButton" Grid.Column="1" Style="{StaticResource WarnButton}" Content="Tạm dừng" Margin="4,0,0,0" Command="{Binding PauseCommand}" IsEnabled="{Binding CanPause}"
-              ToolTip="Dừng an toàn sau bước/hóa đơn đang chạy (Esc). Không hủy giữa chừng."/>
-      <Button x:Name="ResumeButton" Grid.Column="2" Style="{StaticResource SuccessButton}" Content="Tiếp tục" Margin="4,0,0,0" Command="{Binding ResumeCommand}" IsEnabled="{Binding CanResume}"
-              ToolTip="Chạy tiếp các hóa đơn còn lại sau khi tạm dừng"/>
+      <Button x:Name="ReconcileButton" Grid.Column="1" Style="{StaticResource MiniButton}" Content="Đối chiếu hóa đơn" Margin="4,0,0,0" Click="Reconcile_Click"
+              ToolTip="Đối chiếu hóa đơn hiện tại với chứng từ đang mở trong MISA"/>
+      <Button x:Name="StopButton" Grid.Column="2" Style="{StaticResource WarnButton}" Content="Dừng ngay" Margin="4,0,0,0" Click="StopNow_Click" IsEnabled="False"
+              ToolTip="Hủy bước đang chạy ngay lập tức; sau đó có thể Tiếp tục bước hiện tại."/>
+      <Button x:Name="ResumeButton" Grid.Column="2" Style="{StaticResource SuccessButton}" Content="Tiếp tục" Margin="4,0,0,0" Command="{Binding ResumeCommand}" Visibility="Collapsed"
+              ToolTip="Tiếp tục bước hiện tại từ checkpoint đã dừng"/>
       <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
-          <MenuItem Header="Đối chiếu hóa đơn hiện tại" Click="Reconcile_Click"/><MenuItem Header="Chọn phiên MISA" Click="SelectSession_Click"/>
-          <MenuItem Header="Bổ sung dữ liệu nguồn" Click="CorrectDraft_Click"/><Separator/>
-          <MenuItem Header="Cất chứng từ hiện tại" Click="SaveCurrent_Click"/><MenuItem Header="Bỏ chứng từ hiện tại" Click="DiscardCurrent_Click"/>
-          <MenuItem Header="Khôi phục checkpoint" Click="RecoverCurrent_Click"/>
-          <MenuItem Header="Dừng ngay (hủy bước đang chạy)" Click="StopNow_Click"/><Separator/>
-          <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/><Separator/>
-          <MenuItem Header="Developer" Click="Developer_Click"/><MenuItem Header="Reload app (candidate)" Click="Reload_Click"/>
+          <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
         </ContextMenu></Button.ContextMenu>
       </Button>
       <WrapPanel Grid.Row="1" Grid.ColumnSpan="4" Margin="0,4,0,0">

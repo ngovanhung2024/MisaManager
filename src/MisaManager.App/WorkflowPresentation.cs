@@ -114,6 +114,11 @@ public partial class MainWindow
     private void RefreshWorkflowPanel()
     {
         if (workflow is null) return;
+        var canResume = workflow.CanResume;
+        ResumeButton.Visibility = canResume ? Visibility.Visible : Visibility.Collapsed;
+        StopButton.Visibility = canResume ? Visibility.Collapsed : Visibility.Visible;
+        StopButton.IsEnabled = workflow.IsRunning;
+        ReconcileButton.IsEnabled = !workflow.IsRunning;
         var current = workflow.CurrentContext;
         var invoice = workflow.SelectedInvoice
             ?? (current is not null && !WorkflowRunner.IsTerminal(current.Snapshot.Status) ? current.Invoice : null);
