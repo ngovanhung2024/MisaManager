@@ -91,17 +91,12 @@
 
     <!-- Header + live status -->
     <DockPanel Margin="1,0,1,4" app:Motion.Entrance="True">
-      <Border DockPanel.Dock="Left" Width="22" Height="22" CornerRadius="6" Margin="0,0,6,0">
-        <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#3B82F6" Offset="0"/><GradientStop Color="#1D4ED8" Offset="1"/></LinearGradientBrush></Border.Background>
-        <TextBlock Text="M" Foreground="White" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-      </Border>
-      <Border x:Name="RunBadge" DockPanel.Dock="Right" CornerRadius="9" Padding="7,2" VerticalAlignment="Center" Background="{StaticResource PrimarySoft}" ToolTip="Trạng thái hiện tại của tool">
+      <Border x:Name="RunBadge" HorizontalAlignment="Left" CornerRadius="9" Padding="7,2" VerticalAlignment="Center" Background="{StaticResource PrimarySoft}" ToolTip="Trạng thái hiện tại của tool">
         <StackPanel Orientation="Horizontal">
           <Ellipse x:Name="RunDot" Width="7" Height="7" Fill="{StaticResource Primary}" VerticalAlignment="Center" Margin="0,0,5,0"/>
           <TextBlock x:Name="RunBadgeText" Text="Đang kết nối…" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Primary}"/>
         </StackPanel>
       </Border>
-      <TextBlock Text="MISA Excel Manager" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
     </DockPanel>
 
     <!-- Sources -->
@@ -129,9 +124,8 @@
       </Grid>
     </Border>
 
-    <!-- Actions + counters -->
+    <!-- Actions -->
     <Grid Grid.Row="2" Margin="0,4,0,0">
-      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Button x:Name="AddButton" Style="{StaticResource PrimaryButton}" Content="Thêm vào MISA" Command="{Binding AddCommand}" IsEnabled="{Binding CanStart}" Click="Add_Click"
               ToolTip="Chạy lần lượt các hóa đơn đã tick (theo thứ tự danh sách); chưa tick hóa đơn nào thì chạy từ hóa đơn đang chọn. Khớp thì Cất, lệch thì Bỏ, số đã tồn tại thì bỏ qua rồi sang hóa đơn tiếp theo."/>
@@ -141,46 +135,18 @@
               ToolTip="Hủy bước đang chạy ngay lập tức; sau đó có thể Tiếp tục bước hiện tại."/>
       <Button x:Name="ResumeButton" Grid.Column="2" Style="{StaticResource SuccessButton}" Content="Tiếp tục" Margin="4,0,0,0" Command="{Binding ResumeCommand}" Visibility="Collapsed"
               ToolTip="Tiếp tục bước hiện tại từ checkpoint đã dừng"/>
-      <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
+      <Button x:Name="MoreButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
+          <MenuItem Header="Trang tính &amp; cột dữ liệu…" Click="SourceSettings_Click"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
         </ContextMenu></Button.ContextMenu>
       </Button>
-      <WrapPanel Grid.Row="1" Grid.ColumnSpan="4" Margin="0,4,0,0">
-        <Border Style="{StaticResource CounterChip}" Background="{StaticResource SuccessSoft}" ToolTip="Hóa đơn đã Cất và xác minh">
-          <StackPanel Orientation="Horizontal"><TextBlock x:Name="SavedCount" Text="0" FontWeight="Bold" Foreground="{StaticResource Success}"/><TextBlock Text=" đã lưu" FontSize="10" Foreground="{StaticResource Success}" VerticalAlignment="Center"/></StackPanel>
-        </Border>
-        <Border Style="{StaticResource CounterChip}" Background="#FFE4E6" ToolTip="Hóa đơn đã Bỏ an toàn (lệch dữ liệu)">
-          <StackPanel Orientation="Horizontal"><TextBlock x:Name="DiscardedCount" Text="0" FontWeight="Bold" Foreground="#BE123C"/><TextBlock Text=" đã bỏ" FontSize="10" Foreground="#BE123C" VerticalAlignment="Center"/></StackPanel>
-        </Border>
-        <Border Style="{StaticResource CounterChip}" Background="#E3ECF6" ToolTip="Số hóa đơn đã có sẵn trong MISA: tool bấm Không, đóng tab và bỏ qua">
-          <StackPanel Orientation="Horizontal"><TextBlock x:Name="ExistingCount" Text="0" FontWeight="Bold" Foreground="#3F6C9A"/><TextBlock Text=" đã có" FontSize="10" Foreground="#3F6C9A" VerticalAlignment="Center"/></StackPanel>
-        </Border>
-        <Border Style="{StaticResource CounterChip}" Background="#FEF3C7" ToolTip="Chưa rõ kết quả, bị chặn, lỗi hoặc đang tạm dừng: cần xem lại">
-          <StackPanel Orientation="Horizontal"><TextBlock x:Name="AttentionCount" Text="0" FontWeight="Bold" Foreground="#B45309"/><TextBlock Text=" cần xử lý" FontSize="10" Foreground="#B45309" VerticalAlignment="Center"/></StackPanel>
-        </Border>
-        <Border Style="{StaticResource CounterChip}" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" Margin="0">
-          <StackPanel Orientation="Horizontal"><TextBlock x:Name="PendingCount" Text="0" FontWeight="Bold"/><TextBlock Text=" chưa nhập" FontSize="10" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/></StackPanel>
-        </Border>
-      </WrapPanel>
-    </Grid>
-
-    <!-- Remediation hint: only when something needs the user's attention -->
-    <Border x:Name="HintPanel" Grid.Row="3" Visibility="Collapsed" CornerRadius="6" BorderThickness="1" Padding="7,3" Margin="0,4,0,0">
-      <StackPanel>
-        <TextBlock x:Name="HintTitle" FontWeight="SemiBold" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
-        <TextBlock x:Name="HintText" FontSize="10.5" TextWrapping="Wrap" MaxHeight="42" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-      </StackPanel>
-    </Border>
-
-    <TabControl Grid.Row="4" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,4,0,0" Margin="0,2,0,0">
-      <TabItem Header="Nhập liệu" IsSelected="True">
-        <Grid app:Motion.Entrance="True">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <Expander x:Name="SourceExpander" IsExpanded="True" Margin="0,0,0,2">
-            <Expander.Header><TextBlock Text="Trang tính &amp; cột dữ liệu" Foreground="{StaticResource Muted}" FontSize="10.5"/></Expander.Header>
+      <!-- Source settings live behind the ••• menu -->
+      <Popup x:Name="SourcePopup" PlacementTarget="{Binding ElementName=MoreButton}" Placement="Bottom" HorizontalOffset="-250" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+        <Border Width="280" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="6" Padding="8,6" Margin="4">
+          <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.16"/></Border.Effect>
+          <StackPanel>
+            <TextBlock Text="Trang tính &amp; cột dữ liệu" FontWeight="SemiBold" FontSize="11"/>
             <StackPanel Margin="0,3,0,2">
               <ComboBox x:Name="SheetChoice" IsEnabled="{Binding CanEditSource}" SelectionChanged="SheetChoice_SelectionChanged" ToolTip="Trang tính"/>
               <Border x:Name="MappingPanel" Visibility="Collapsed" Background="#FFFBEB" Padding="4,1" CornerRadius="5" Margin="0,3,0,0">
@@ -196,9 +162,26 @@
                 </Expander>
               </Border>
             </StackPanel>
-          </Expander>
+          </StackPanel>
+        </Border>
+      </Popup>
+    </Grid>
 
-          <Expander Grid.Row="1" x:Name="InvoiceExpander" IsExpanded="True" Margin="0,0,0,2">
+    <!-- Remediation hint: only when something needs the user's attention -->
+    <Border x:Name="HintPanel" Grid.Row="3" Visibility="Collapsed" CornerRadius="6" BorderThickness="1" Padding="7,3" Margin="0,4,0,0">
+      <StackPanel>
+        <TextBlock x:Name="HintTitle" FontWeight="SemiBold" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
+        <TextBlock x:Name="HintText" FontSize="10.5" TextWrapping="Wrap" MaxHeight="42" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+      </StackPanel>
+    </Border>
+
+    <TabControl Grid.Row="4" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,4,0,0" Margin="0,2,0,0">
+      <TabItem Header="Nhập liệu" IsSelected="True">
+        <Grid app:Motion.Entrance="True">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <Expander x:Name="InvoiceExpander" IsExpanded="True" Margin="0,0,0,2">
             <Expander.Header><TextBlock x:Name="InvoiceHeader" Text="Hóa đơn" Foreground="{StaticResource Muted}" FontSize="10.5"/></Expander.Header>
             <StackPanel>
             <DockPanel Margin="0,3,0,0" IsEnabled="{Binding CanEditSource}">
@@ -210,7 +193,7 @@
                 <Button Style="{StaticResource MiniButton}" Content="Chọn chưa nhập" Click="CheckPending_Click" ToolTip="Tick các hóa đơn chưa Cất và chưa có trong MISA"/>
               </WrapPanel>
             </DockPanel>
-            <ListBox x:Name="InvoiceList" MaxHeight="112" Margin="0,3,0,0" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"
+            <ListBox x:Name="InvoiceList" MaxHeight="134" Margin="0,3,0,0" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"
                      Background="Transparent" BorderThickness="0" Padding="0" ItemContainerStyle="{StaticResource InvoiceItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True">
               <ListBox.ItemTemplate><DataTemplate>
@@ -272,7 +255,7 @@
             </StackPanel>
           </Expander>
 
-          <Border Grid.Row="2" x:Name="IssuePanel" Visibility="Collapsed" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" Padding="7,4" CornerRadius="6" Margin="0,0,0,3">
+          <Border Grid.Row="1" x:Name="IssuePanel" Visibility="Collapsed" Background="#FFF7ED" BorderBrush="#FED7AA" BorderThickness="1" Padding="7,4" CornerRadius="6" Margin="0,0,0,3">
             <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition x:Name="IssueRow" Height="Auto"/></Grid.RowDefinitions>
               <TextBlock x:Name="SelectedTitle" FontWeight="SemiBold" TextWrapping="Wrap" FontSize="11"/>
               <ListView Grid.Row="1" x:Name="IssueGrid" MaxHeight="72" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ReadOnlyRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListView.ItemTemplate><DataTemplate>
@@ -281,24 +264,19 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="3" x:Name="EntryHeading" Margin="1,2,1,3" Visibility="Collapsed">
-            <DockPanel>
-              <ToggleButton x:Name="OnlyMismatchToggle" DockPanel.Dock="Right" Style="{StaticResource ToggleChip}" Content="Chỉ dòng lệch" IsEnabled="False"
-                            Checked="OnlyMismatch_Changed" Unchecked="OnlyMismatch_Changed" ToolTip="Ẩn các dòng đã khớp để thấy ngay chỗ lệch giữa Excel và MISA"/>
-              <TextBlock x:Name="EntryTitle" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-            </DockPanel>
+          <StackPanel Grid.Row="2" x:Name="EntryHeading" Margin="1,2,1,3" Visibility="Collapsed">
+            <TextBlock x:Name="EntryTitle" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             <TextBlock x:Name="ActivityLabel" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="0,1,0,3" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             <ProgressBar x:Name="EntryProgress" Height="3" Foreground="{StaticResource Primary}" Background="#E5E9F0" BorderThickness="0" Maximum="100"/>
           </StackPanel>
 
-          <Grid Grid.Row="4" x:Name="EntryColumns" Margin="9,2,9,1" Visibility="Collapsed">
+          <Grid Grid.Row="3" x:Name="EntryColumns" Margin="9,2,9,1" Visibility="Collapsed">
             <Grid.ColumnDefinitions><ColumnDefinition Width="84"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/></Grid.ColumnDefinitions>
             <TextBlock Text="TRƯỜNG" Style="{StaticResource Caption}"/>
-            <TextBlock Grid.Column="1" Text="EXCEL (nguồn)" Style="{StaticResource Caption}"/>
-            <TextBlock Grid.Column="2" Text="MISA (đọc được)" Style="{StaticResource Caption}"/>
+            <TextBlock Grid.Column="1" Text="HÓA ĐƠN (Excel)" Style="{StaticResource Caption}"/>
           </Grid>
 
-          <Border Grid.Row="5" Style="{StaticResource Card}" Padding="0">
+          <Border Grid.Row="4" Style="{StaticResource Card}" Padding="0">
             <Grid>
               <StackPanel x:Name="EntryEmpty" Margin="12,14,12,10" VerticalAlignment="Top">
                 <TextBlock Text="Bắt đầu trong 3 bước" FontWeight="SemiBold" FontSize="13"/>

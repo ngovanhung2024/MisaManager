@@ -815,11 +815,17 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
                 }
             }
         }
-        await CompareFields(profile.ReceiptTab,
-            [("voucher_number", Saved(context, "voucher_number"), NativeValueKind.Exact),
+        List<(string Key, string Expected, NativeValueKind Kind)> receiptFields =
+        [
+            ("voucher_number", Saved(context, "voucher_number"), NativeValueKind.Exact),
             .. CustomerFields(context),
             ("voucher_date", context.Invoice.VoucherDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
-            ("posted_date", context.Invoice.PostedDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date)]);
+            ("posted_date", context.Invoice.PostedDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date)
+        ];
+        var taxField = CustomerTaxField(context);
+        var taxOnReceipt = taxField is { } tax && await CustomerTaxTab(token) == profile.ReceiptTab;
+        if (taxOnReceipt) receiptFields.Add(taxField!.Value);
+        await CompareFields(profile.ReceiptTab, [.. receiptFields]);
         var invoiceFields = new List<(string Key, string Expected, NativeValueKind Kind)>
         {
             ("number", context.Invoice.Identity.Number, NativeValueKind.Exact),
@@ -829,6 +835,7 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         // An empty source series keeps MISA's default series; there is nothing to compare.
         if (context.Invoice.Identity.Series.Length > 0)
             invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
+        if (taxField is not null && !taxOnReceipt) invoiceFields.Add(taxField.Value);
         await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
         // BindEditor/ValidateDocument require the exact domestic cash editor.
         // R20 has no currency control on this VND-only surface.
@@ -911,16 +918,35 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         await WaitEditor(context, false, token);
     }
 
-    private (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context)
+    private static (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context) =>
+    [
+        ("customer", context.NativeValues?.GetValueOrDefault("customer_reference") ?? context.Invoice.Buyer.Code, NativeValueKind.Exact),
+        ("customer_name", context.Invoice.Buyer.Name, NativeValueKind.Text)
+    ];
+
+    private static (string Key, string Expected, NativeValueKind Kind)? CustomerTaxField(WorkflowContext context)
+        => string.IsNullOrWhiteSpace(context.Invoice.Buyer.TaxCode) ? null
+            : ("customer_tax", context.Invoice.Buyer.TaxCode, NativeValueKind.Exact);
+
+    private string? customerTaxTab;
+
+    // R20 cash sales show the buyer tax code on the "Hóa đơn" tab; "Phiếu thu" has no MST control.
+    // Probe the receipt tab once (no wait) and remember which tab exposes the field.
+    private async Task<string> CustomerTaxTab(CancellationToken token)
     {
-        var fields = new List<(string Key, string Expected, NativeValueKind Kind)>
+        if (customerTaxTab is not null) return customerTaxTab;
+        await Tab(profile.ReceiptTab, token);
+        try
         {
-            ("customer", context.NativeValues?.GetValueOrDefault("customer_reference") ?? context.Invoice.Buyer.Code, NativeValueKind.Exact),
-            ("customer_name", context.Invoice.Buyer.Name, NativeValueKind.Text)
-        };
-        if (!string.IsNullOrWhiteSpace(context.Invoice.Buyer.TaxCode))
-            fields.Add(("customer_tax", context.Invoice.Buyer.TaxCode, NativeValueKind.Exact));
-        return fields.ToArray();
+            await input.ReadFieldsAsync(await input.CaptureAsync(token),
+                new Dictionary<string, NativeSelector> { ["customer_tax"] = profile.Fields["customer_tax"] }, token);
+            customerTaxTab = profile.ReceiptTab;
+        }
+        catch (AutomationException error) when (error.Code == "TARGET_NOT_FOUND" && !error.InputMayHaveBeenSent)
+        {
+            customerTaxTab = profile.InvoiceTab;
+        }
+        return customerTaxTab;
     }
 
     private async Task<NativeFields> VerifyCustomer(WorkflowContext context, CancellationToken token, bool selecting = false)
@@ -931,11 +957,22 @@ public sealed class NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInp
         // and business identity readback; recovery must match the same reference.
         var expected = CustomerFields(context);
         var fields = expected.ToDictionary(field => field.Key, field => profile.Fields[field.Key]);
-        return await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(
+        var customer = await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(
             await input.CaptureAsync(token), fields, token),
             actual => expected.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)
                 || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)),
-            "READBACK_MISMATCH", "Khách hàng MISA chưa khớp tên/MST sau khi chọn mã nguồn.", token);
+            "READBACK_MISMATCH", "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.", token);
+        if (CustomerTaxField(context) is { } tax)
+        {
+            var tab = await CustomerTaxTab(token);
+            await Tab(tab, token);
+            await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token),
+                    new Dictionary<string, NativeSelector> { [tax.Key] = profile.Fields[tax.Key] }, token),
+                actual => Match(tax.Expected, actual.Values[tax.Key].Value, tax.Kind),
+                "READBACK_MISMATCH", $"Mã số thuế khách hàng MISA (tab {tab}) chưa khớp nguồn {tax.Expected}.", token);
+            if (tab != profile.ReceiptTab) await Tab(profile.ReceiptTab, token);
+        }
+        return customer;
     }
     private async Task VerifyDates(WorkflowContext context, CancellationToken token)
     {
