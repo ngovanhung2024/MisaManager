@@ -712,26 +712,7 @@ public sealed partial class NativeInputService
         catch (Exception error) { throw new AutomationException("INPUT_UNCERTAIN", error.Message, true, error); }
     }
 
-    private static string NormalizeOptionName(string? value)
-    {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        var result = new StringBuilder(value.Length);
-        var pendingSpace = false;
-        foreach (var character in value.Normalize(NormalizationForm.FormKC))
-        {
-            var category = CharUnicodeInfo.GetUnicodeCategory(character);
-            if (category == UnicodeCategory.Format || char.IsControl(character)) continue;
-            if (char.IsWhiteSpace(character))
-            {
-                pendingSpace = result.Length > 0;
-                continue;
-            }
-            if (pendingSpace) result.Append(' ');
-            pendingSpace = false;
-            result.Append(char.ToUpperInvariant(character));
-        }
-        return result.ToString().Trim();
-    }
+    private static string NormalizeOptionName(string? value) => TextKey.Canonical(value);
 
     public Task<int> GridRowCountAsync(NativeFrame frame, string gridId, CancellationToken token)
         => dispatcher.RunAsync(() =>

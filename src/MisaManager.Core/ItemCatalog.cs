@@ -15,7 +15,8 @@ public sealed record ItemCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt
 
 /// <summary>
 /// Local item-code database: MISA catalog export plus codes created by the tool.
-/// Name lookups ignore case, whitespace, invisible characters and dash variants.
+/// Name lookups use <see cref="TextKey.Compact"/>: case, whitespace, invisible characters, look-alike
+/// punctuation, full-width forms and Vietnamese tone placement do not affect a match.
 /// </summary>
 public sealed partial class ItemCatalogStore
 {
@@ -44,20 +45,7 @@ public sealed partial class ItemCatalogStore
     public int PendingCount { get { lock (gate) return pending.Count; } }
     public event EventHandler? Changed;
 
-    public static string NameKey(string? value)
-    {
-        var text = (value ?? "").Normalize(NormalizationForm.FormC);
-        var result = new StringBuilder(text.Length);
-        foreach (var character in text)
-        {
-            if (char.IsWhiteSpace(character) || char.IsControl(character)
-                || CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.Format) continue;
-            // Excel/MISA exports mix ASCII and typographic dashes for the same product name.
-            result.Append(CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.DashPunctuation
-                ? '-' : char.ToUpperInvariant(character));
-        }
-        return result.ToString();
-    }
+    public static string NameKey(string? value) => TextKey.Compact(value);
 
     public IReadOnlyList<ItemCatalogEntry> Snapshot() { lock (gate) return items.ToArray(); }
     public IReadOnlyList<PendingItemCreation> PendingSnapshot() { lock (gate) return pending.ToArray(); }
