@@ -253,7 +253,10 @@ public sealed record LiveRunResult(
     bool RetryFromStart,
     string? Error = null,
     // The failure looked like user interference and left no partial voucher, so a fresh rerun cannot duplicate data.
-    bool AutoRerunSafe = false);
+    bool AutoRerunSafe = false,
+    // Nothing of this run is left in MISA (voucher never opened, or its discard was confirmed) and no save is
+    // uncertain, so a batch may safely move on to the next invoice.
+    bool MisaClean = false);
 
 public static class OperationStatuses
 {

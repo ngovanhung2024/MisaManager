@@ -435,10 +435,11 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 var nothingOpened = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current);
                 if (batch.StopReason is not "interrupted")
                     current = await TryDiscardFailedVoucherAsync(current);
-                var rerunSafe = batch.StopReason == "checkpoint_failed" && InterferenceRetry.IsTransient(failureCode)
+                var clean = batch.StopReason is not "interrupted"
                     && (current.Snapshot.Status == WorkflowStatus.Discarded || nothingOpened);
+                var rerunSafe = batch.StopReason == "checkpoint_failed" && InterferenceRetry.IsTransient(failureCode) && clean;
                 current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED", token);
-                return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, rerunSafe);
+                return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, rerunSafe, clean);
             }
 
             comparison = await ReconcileWithRetryAsync(token);
@@ -510,13 +511,16 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             if (current is null) throw;
             current = Refreshed(current);
+            var nothingOpened = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current)
+                && current.Snapshot.Status is not (WorkflowStatus.SaveUncertain or WorkflowStatus.Saved);
             current = await TryDiscardFailedVoucherAsync(current);
+            var clean = current.Snapshot.Status == WorkflowStatus.Discarded || nothingOpened;
             var rerunSafe = error is AutomationException { Code: var code } && InterferenceRetry.IsTransient(code)
                 && current.Snapshot.Status == WorkflowStatus.Discarded;
             current = await MarkLiveFailureAsync(current, error.Message,
                 current.Snapshot.LastErrorCode ?? (error as AutomationException)?.Code ?? "LIVE_RUN_ERROR", CancellationToken.None, error.ToString());
             return await CompleteLiveRecordAsync(current, startedAt, "failed", comparison is not null,
-                comparison?.Matched == true, comparison, error.Message, CancellationToken.None, rerunSafe);
+                comparison?.Matched == true, comparison, error.Message, CancellationToken.None, rerunSafe, clean);
         }
     }
 
@@ -609,7 +613,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
 
     private async Task<LiveRunResult> CompleteLiveRecordAsync(WorkflowContext value, DateTimeOffset startedAt,
         string outcome, bool reconciled, bool matched, ReconciliationResult? comparison, string? error,
-        CancellationToken token, bool autoRerunSafe = false)
+        CancellationToken token, bool autoRerunSafe = false, bool misaClean = false)
     {
         var verification = new LiveVerificationRecord(value.Snapshot.RunId, value.Invoice.InvoiceId,
             value.Invoice.Revision, value.Invoice.Fingerprint, value.Invoice.Source.Sha256, startedAt,
@@ -619,7 +623,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             value.Snapshot.RuntimeIdentity);
         await stateStore.WriteAsync("live-verification", Path.Combine("verification", "runs",
             value.Snapshot.RunId + ".json"), verification, token);
-        var result = new LiveRunResult(value, verification, outcome, verification.RetryFromStart, error, autoRerunSafe);
+        // A clean failure must never hide a save in doubt.
+        misaClean &= value.Snapshot.Status != WorkflowStatus.SaveUncertain;
+        var result = new LiveRunResult(value, verification, outcome, verification.RetryFromStart, error, autoRerunSafe, misaClean);
         LastLiveRun = result;
         return result;
     }
@@ -940,7 +946,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             lock (gate) context = current;
             await PersistAsync(current, CancellationToken.None);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-            lock (gate) activeOperation = deadline;
+            // Save is not interruptible by Dừng ngay: cancelling mid-click leaves MISA in a "saved or not?" state.
+            // The stop takes effect right after the save is proven; the batch then halts.
+            if (!save) lock (gate) activeOperation = deadline;
             deadline.CancelAfter(transition.Timeout);
             WorkflowObservation observation;
             try
