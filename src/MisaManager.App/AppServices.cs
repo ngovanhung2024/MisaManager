@@ -32,7 +32,18 @@ public sealed partial class AppServices : IAsyncDisposable
     public WorkbookProfileStore Profiles { get; }
     private readonly ConcurrentDictionary<string, OperationStatusSnapshot> operations = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim directGate = new(1, 1);
-    public Task Initialization { get; }
+    private Task initialization;
+    private readonly object initializationGate = new();
+    // A faulted startup is retried on next use (Workflow.InitializeAsync is re-entrant) instead of
+    // leaving the app permanently "disconnected" until it is reopened.
+    public Task Initialization
+    {
+        get
+        {
+            lock (initializationGate)
+                return initialization.IsFaulted ? initialization = Workflow.InitializeAsync() : initialization;
+        }
+    }
     private readonly RunEventStore eventStore;
 
     public AppServices()
@@ -52,7 +63,7 @@ public sealed partial class AppServices : IAsyncDisposable
         Repairs = new(State);
         Drafts = new(State);
         Profiles = new(State);
-        Initialization = InitializeRuntimeAsync();
+        initialization = InitializeRuntimeAsync();
         Control = new ControlServer(new ControlDispatcher(DispatchAsync));
         Control.Start();
     }

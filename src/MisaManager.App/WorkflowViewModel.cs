@@ -478,14 +478,16 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private async Task<string?> ResolveWindowIdentityAsync()
     {
         var windows = await services.Native.FindCandidatesAsync();
-        if (windows.Count == 0) SetConnection(MisaConnection.Lost, "Không thấy cửa sổ MISA SME 2023 R20.");
-        if (windows.Count != 1)
+        var sessions = Sessions(windows);
+        SetConnection(sessions.Count > 0 ? MisaConnection.Connected : MisaConnection.Lost, NoSessionDetail(windows));
+        if (sessions.Count != 1)
         {
-            Status = "Cần đúng một phiên MISA đang mở; hãy đóng bớt phiên thừa rồi thử lại.";
+            Status = sessions.Count == 0 ? NoSessionDetail(windows)
+                : "Đang mở nhiều phiên MISA đã đăng nhập; hãy đóng bớt phiên thừa rồi thử lại.";
             return null;
         }
         if (stopRequested) return null;
-        var window = windows[0];
+        var window = sessions[0];
         return $"pid={window.ProcessId};start={window.ProcessStartUtc:O};hwnd={window.WindowHandle};exe={window.ExecutablePath}";
     }
 
@@ -514,6 +516,17 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new(nameof(State)));
     }
 
+    // Only a logged-in session of the profile's MISA version can be bound by the workflow.
+    private IReadOnlyList<WindowIdentity> Sessions(IReadOnlyList<WindowIdentity> windows)
+        => [.. windows.Where(window => window.Title.StartsWith(services.WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal))];
+
+    private string NoSessionDetail(IReadOnlyList<WindowIdentity> windows)
+        => Sessions(windows).Count > 0 ? ""
+            : windows.Count == 0 ? "Không thấy cửa sổ MISA SME 2023 R20."
+            : windows.Any(window => MisaWindowDiscovery.IsSessionTitle(window.Title))
+                ? $"MISA đang mở không phải bản {services.WorkflowProfile.VersionTitle}."
+                : "MISA đang ở màn hình đăng nhập/mở dữ liệu; đăng nhập vào dữ liệu kế toán để tool kết nối.";
+
     /// <summary>Cheap window-level check; skipped while a run owns the single UIA thread.</summary>
     public async Task ProbeConnectionAsync()
     {
@@ -521,15 +534,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         probing = true;
         try
         {
-            if (!services.Initialization.IsCompleted) { SetConnection(MisaConnection.Unknown, ""); return; }
-            if (services.Initialization.IsFaulted)
+            try { await services.Initialization; }
+            catch (Exception error)
             {
-                SetConnection(MisaConnection.Lost, "Dịch vụ nền của MisaManager không khởi động được; hãy mở lại ứng dụng.");
+                SetConnection(MisaConnection.Lost, "Dịch vụ nền chưa khởi động được (sẽ tự thử lại): " + error.GetBaseException().Message);
                 return;
             }
             var windows = await services.Native.FindCandidatesAsync();
-            if (windows.Count == 0) SetConnection(MisaConnection.Lost, "Không thấy cửa sổ MISA SME 2023 R20.");
-            else SetConnection(MisaConnection.Connected, "");
+            SetConnection(Sessions(windows).Count > 0 ? MisaConnection.Connected : MisaConnection.Lost, NoSessionDetail(windows));
         }
         catch (Exception error)
         {

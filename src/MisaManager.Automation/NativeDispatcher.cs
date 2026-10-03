@@ -41,11 +41,22 @@ public sealed class NativeDispatcher : IDisposable
     {
         token.ThrowIfCancellationRequested();
         if (Volatile.Read(ref unavailable) != 0 || Volatile.Read(ref stopping) != 0)
-            throw new AutomationException("NATIVE_OWNER_UNAVAILABLE", "Native provider chưa kết thúc; cần đóng và mở lại tool trước khi thao tác tiếp.");
+            throw new AutomationException("NATIVE_OWNER_UNAVAILABLE", "MISA chưa trả lời thao tác trước đó; chờ MISA hết bận rồi thử lại.");
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = 0;
         var finished = false;
         var abandoned = false;
+        // The owner thread runs one call at a time, so once an abandoned in-flight call returns
+        // nothing else touches UIA concurrently: lift the block instead of requiring an app restart.
+        // Workflow state still records that input may have been sent, so nothing is replayed blindly.
+        void Finish()
+        {
+            lock (startGate)
+            {
+                finished = true;
+                if (abandoned && Volatile.Read(ref started) != 0) Interlocked.Exchange(ref unavailable, 0);
+            }
+        }
         try
         {
             if (!queue.TryAdd(() =>
@@ -60,17 +71,17 @@ public sealed class NativeDispatcher : IDisposable
                         Interlocked.Exchange(ref started, 1);
                     }
                     var result = action();
-                    lock (startGate) finished = true;
+                    Finish();
                     completion.TrySetResult(result);
                 }
                 catch (OperationCanceledException)
                 {
-                    lock (startGate) finished = true;
+                    Finish();
                     completion.TrySetCanceled(token);
                 }
                 catch (Exception error)
                 {
-                    lock (startGate) finished = true;
+                    Finish();
                     completion.TrySetException(error);
                 }
             })) throw new InvalidOperationException("Native queue is full or stopping.");
