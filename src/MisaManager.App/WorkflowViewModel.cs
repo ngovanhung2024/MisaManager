@@ -269,6 +269,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var mismatched = 0;
         var skipped = 0;
         var blockedNumbers = new List<string>();
+        var failedNumbers = new List<string>();
+        var consecutiveFailures = 0;
         string? stopNote = null;
         services.BeginUiBatch(first.Identity.Number);
         ResetPerformance();
@@ -291,7 +293,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             }
             // One MISA session per batch: resolving it per invoice costs a UIA window scan each time.
             var findWindow = BeginTrace("Tìm cửa sổ MISA", "Xác định đúng PID/HWND phiên MISA");
-            var identity = await ResolveWindowIdentityAsync();
+            var identity = await WaitForSessionAsync();
             FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
             if (identity is null) return;
             operation = "enter";
@@ -325,6 +327,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     + (explicitRun ? "" : " Chưa tick hóa đơn nào nên chạy từ hóa đơn đang chọn trở đi.");
                 PerformanceCurrent = "live_run · đang chạy";
                 OperationResult response;
+                var windowReruns = 0;
                 for (var rerun = 0; ; rerun++)
                 {
                     var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}"
@@ -338,6 +341,19 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                         allowKgToTon = true
                     });
                     FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
+                    // MISA was restarted, re-logged or switched data with nothing of this invoice left open:
+                    // find the session again (waiting for login if needed) and enter the invoice from scratch.
+                    if (response.Status != "completed" && !stopRequested && windowReruns == 0
+                        && services.Workflow.LastLiveRun is { MisaClean: true } lost && lost.Context.Invoice.Fingerprint == fingerprint
+                        && IsSessionLoss(lost.Context.Snapshot.LastErrorCode ?? lost.Verification.ErrorCode))
+                    {
+                        windowReruns++;
+                        Status = $"{position} · phiên MISA đã thay đổi; đang tìm lại phiên MISA để nhập lại từ đầu…";
+                        NotifyWorkflowChanged();
+                        identity = await WaitForSessionAsync();
+                        if (identity is null) break;
+                        continue;
+                    }
                     // Interference (stray click, tab switch/drag) with the half-entered voucher already discarded:
                     // enter the same invoice again from scratch instead of stopping with an error.
                     if (response.Status == "completed" || stopRequested || rerun >= InterferenceRetry.InvoiceReruns
@@ -364,8 +380,27 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     NotifyWorkflowChanged();
                 }
                 // A completed run (saved, verified discard, or number already in MISA) advances the queue.
-                // Any other response stops here so repair can rebuild and rerun from Ready.
-                if (response.Status != "completed") break;
+                // A failed invoice that left MISA clean is set aside so one bad invoice does not block the
+                // rest; anything that may have left data in MISA, or an environment problem, stops here.
+                if (response.Status != "completed")
+                {
+                    var failed = services.Workflow.LastLiveRun;
+                    var code = failed?.Context.Snapshot.LastErrorCode ?? failed?.Verification.ErrorCode;
+                    if (stopRequested || failed is not { MisaClean: true } || failed.Context.Invoice.Fingerprint != fingerprint
+                        || IsEnvironmentFailure(code) || ++consecutiveFailures >= 3)
+                    {
+                        if (consecutiveFailures >= 3)
+                            stopNote = Status = $"{consecutiveFailures} hóa đơn liên tiếp bị lỗi; dừng để kiểm tra MISA/dữ liệu. Lỗi gần nhất: {response.Message}";
+                        break;
+                    }
+                    handledInBatch.Add(fingerprint);
+                    failedNumbers.Add(invoice.Identity.Number);
+                    performanceOutcome = "Hoàn tất";
+                    Status = $"{position} · lỗi ({failed.Error ?? response.Message}). Chứng từ đã được Bỏ an toàn; giữ tick để xử lý sau, chuyển sang hóa đơn kế tiếp.";
+                    NotifyWorkflowChanged();
+                    continue;
+                }
+                consecutiveFailures = 0;
                 var current = services.Workflow.Current;
                 var final = current?.Invoice.Fingerprint == fingerprint ? current.Snapshot : null;
                 if (final?.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded)
@@ -391,6 +426,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (mismatched > 0) parts.Add($"{mismatched} đã bỏ vì lệch");
                     if (existing > 0) parts.Add($"{existing} đã tồn tại trong MISA");
                     if (skipped > 0) parts.Add($"{skipped} bỏ qua (đã nhập trước đó)");
+                    if (failedNumbers.Count > 0) parts.Add($"{failedNumbers.Count} lỗi, đã bỏ chứng từ, cần xem lại ({string.Join(", ", failedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
                     var scope = explicitRun ? "các hóa đơn đã tick" : "từ hóa đơn đang chọn (chưa tick hóa đơn nào)";
                     Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy " + (explicitRun ? "trong danh sách đã tick." : "từ vị trí đã chọn.")
@@ -476,6 +512,33 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     private static string FormatDuration(TimeSpan duration)
         => duration.TotalSeconds < 1 ? $"{duration.TotalMilliseconds:N0} ms" : duration.ToString(@"mm\:ss\.fff");
+
+    // Codes that mean the MISA session itself changed (restart, re-login, other data), not the invoice.
+    private static bool IsSessionLoss(string? code)
+        => code is "WINDOW_IDENTITY_CHANGED" or "WINDOW_NOT_FOUND" or "WINDOW_IDENTITY_INVALID" or "NOT_MISA" or "NOT_CONNECTED";
+
+    // Problems every following invoice would hit too; continuing would only repeat the same failure.
+    private static bool IsEnvironmentFailure(string? code)
+        => IsSessionLoss(code) || code is "SALES_SURFACE_MISSING" or "EXISTING_EDITOR" or "DIALOG_REQUIRES_ATTENTION"
+            or "NATIVE_OWNER_UNAVAILABLE" or "PROFILE_REVISION_CHANGED" or "ITEM_CATALOG_MISSING" or "ITEM_CREATE_UNCERTAIN";
+
+    // Waits (up to 2 minutes, cancellable with Dừng ngay) for exactly one logged-in MISA R20 session,
+    // so starting while MISA is still on its login screen or restarting does not fail the run.
+    private async Task<string?> WaitForSessionAsync()
+    {
+        var deadline = DateTimeOffset.UtcNow.AddMinutes(2);
+        while (true)
+        {
+            var windows = await services.Native.FindCandidatesAsync();
+            var sessions = Sessions(windows);
+            if (sessions.Count == 1 || stopRequested || DateTimeOffset.UtcNow >= deadline
+                || sessions.Count > 1 || windows.Any(window => MisaWindowDiscovery.IsSessionTitle(window.Title)))
+                return await ResolveWindowIdentityAsync();
+            var left = (int)Math.Ceiling((deadline - DateTimeOffset.UtcNow).TotalSeconds);
+            Status = NoSessionDetail(windows) + $" Đang chờ phiên MISA sẵn sàng ({left}s), bấm Dừng ngay để hủy.";
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+    }
 
     private async Task<string?> ResolveWindowIdentityAsync()
     {
