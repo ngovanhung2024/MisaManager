@@ -15,9 +15,8 @@ foreach ($entry in $manifest.files.PSObject.Properties) {
     $signature = $manifest.signatures.PSObject.Properties[$entry.Name]
     if ($signature -and $signature.Value -eq 'Valid' -and (Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'Valid') { throw ('Payload signature mismatch: ' + $entry.Name) }
 }
-# Prove the staged bridge carries its runtime before touching the installed generation.
-Assert-SelfContainedPayload (Join-Path $release 'payload\bridge') 'Bridge trong release'
-Assert-BridgeLaunch (Join-Path $release 'payload\bridge\MisaManager.McpBridge.exe')
+# Prove the staged app carries its runtime before touching the installed generation.
+Assert-SelfContainedPayload (Join-Path $release 'payload\app') 'App trong release'
 $lease = Open-MaintenanceLease
 try {
     New-Item -ItemType Directory -Path $script:DeploymentRoot -Force | Out-Null

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  build-test:
+    name: Build & test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore MisaManager.sln
+
+      - name: Build
+        run: dotnet build MisaManager.sln -c Release --no-restore
+
+      - name: Unit tests (Core/Import)
+        run: dotnet test tests/MisaManager.Core.Tests -c Release --no-build --logger "trx;LogFileName=core.trx" --results-directory TestResults
+
+      # The fake MISA needs a desktop large enough that no control is off-screen.
+      - name: Desktop resolution
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+
+      - name: UI integration tests (fake MISA R20)
+        env:
+          MISAMANAGER_UI_TESTS: "1"
+        run: dotnet test tests/MisaManager.Integration.Tests -c Release --no-build --logger "trx;LogFileName=integration.trx" --logger "console;verbosity=normal" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            TestResults/**
+            out/bin/MisaManager.Integration.Tests/**/TestResults/**
+          if-no-files-found: ignore
+          retention-days: 14

@@ -238,39 +238,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     public static bool IsTerminal(WorkflowStatus status) => status is WorkflowStatus.Saved or WorkflowStatus.Discarded
         or WorkflowStatus.Cancelled or WorkflowStatus.Failed;
 
-    public async Task<InvoiceCorrectionResult> CorrectAsync(InvoiceCorrection correction, CancellationToken cancellationToken = default)
-    {
-        await transitionGate.WaitAsync(cancellationToken);
-        try
-        {
-            WorkflowContext current;
-            lock (gate) { current = context ?? throw new InvalidOperationException("Chưa có invoice draft để correction."); }
-            if (current.Snapshot.Status != WorkflowStatus.Ready || current.Snapshot.InputPending || current.NativeValues?.Count > 0)
-                throw new InvalidOperationException("Chỉ sửa draft trước input. Chứng từ đã nhập phải được giải quyết trước khi đổi nguồn.");
-            var correctionResult = InvoiceCorrectionService.Apply(current.Invoice, correction);
-            var blocking = correctionResult.Issues.Any(issue => issue.Severity == IssueSeverity.Blocking);
-            var snapshot = current.Snapshot with
-            {
-                InvoiceId = correctionResult.Invoice.InvoiceId,
-                InvoiceRevision = correctionResult.Invoice.Revision,
-                Status = blocking ? WorkflowStatus.Blocked : WorkflowStatus.Ready,
-                ActiveLine = null,
-                NativeFrame = null,
-                PendingAction = null,
-                InputPending = false,
-                InputMayHaveBeenSent = false,
-                LastMessage = blocking ? "Correction đã lưu nhưng còn lỗi chặn; chưa được phép nhập." : "Correction đã lưu; cần preflight lại trước khi nhập.",
-                LastInputDisposition = InputDisposition.NotSent,
-                RuntimeIdentity = new RuntimeStateIdentity(ProductIdentity.RuntimeVersion, ProductIdentity.SourceRevision, current.ProfileRevision)
-            };
-            var updated = current with { Invoice = correctionResult.Invoice, Snapshot = snapshot, NativeValues = null };
-            lock (gate) context = updated;
-            await PersistAsync(updated, cancellationToken);
-            return correctionResult;
-        }
-        finally { transitionGate.Release(); }
-    }
-
     public async Task<WorkflowContext> StartAsync(InvoiceDocument invoice, string companyIdentity,
         string windowIdentity, CancellationToken cancellationToken = default, bool liveValidation = false, string profileRevision = "",
         string? requestId = null, string? operationId = null, bool allowKgToTon = false,
@@ -415,6 +382,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         string? operationId = null,
         WorkflowExecutionMode executionMode = WorkflowExecutionMode.LiveProduction)
     {
+        if (executionMode == WorkflowExecutionMode.LiveTest)
+            throw new ArgumentException("Live test mode was retired; use the fake MISA integration tests instead.", nameof(executionMode));
         var startedAt = DateTimeOffset.UtcNow;
         WorkflowContext? current = null;
         ReconciliationResult? comparison = null;
@@ -422,7 +391,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             current = await StartAsync(invoice, companyIdentity, windowIdentity, token, liveValidation,
                 profileRevision, requestId, operationId, allowKgToTon,
-                liveMode: executionMode == WorkflowExecutionMode.LiveTest,
                 executionMode: executionMode);
             var batch = await RunUntilAsync(current.Snapshot.RunId, invoice.Fingerprint, WorkflowStatus.Ready,
                 WorkflowStatus.AwaitingSave, 20, token, allowKgToTon);
@@ -443,21 +411,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             }
 
             comparison = await ReconcileWithRetryAsync(token);
-            if (comparison.Matched && executionMode == WorkflowExecutionMode.LiveTest)
-            {
-                // Live tests may exercise the complete editor and reconciliation
-                // path, but they never create an accounting record.
-                current = await FinishAsync(save: false, token: token);
-                if (current.Snapshot.Status == WorkflowStatus.Discarded)
-                    return await CompleteLiveRecordAsync(current, startedAt, "tested", true, true, comparison,
-                        "Live test khớp; đã Bỏ chứng từ thử nghiệm, không ghi sổ.", token);
-
-                var testDiscardMessage = current.Snapshot.LastMessage ?? "Không xác nhận được thao tác Bỏ của live test.";
-                current = await MarkLiveFailureAsync(current, testDiscardMessage, "TEST_DISCARD_UNCERTAIN", token);
-                return await CompleteLiveRecordAsync(current, startedAt, "failed", true, true, comparison,
-                    testDiscardMessage, token);
-            }
-
             if (comparison.Matched)
             {
                 current = await FinishAsync(save: true, token: token);
@@ -488,12 +441,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             // discard the open voucher and keep the mismatch as the proof.
             current = await FinishAsync(save: false, token: token);
             if (current.Snapshot.Status == WorkflowStatus.Discarded)
-                return await CompleteLiveRecordAsync(current, startedAt,
-                    executionMode == WorkflowExecutionMode.LiveTest ? "tested" : "discarded",
-                    true, false, comparison,
-                    executionMode == WorkflowExecutionMode.LiveTest
-                        ? "Live test không khớp; đã Bỏ chứng từ thử nghiệm, không ghi sổ."
-                        : "Đối chiếu không khớp; đã Bỏ chứng từ và lưu hồ sơ kiểm chứng.", token);
+                return await CompleteLiveRecordAsync(current, startedAt, "discarded", true, false, comparison,
+                    "Đối chiếu không khớp; đã Bỏ chứng từ và lưu hồ sơ kiểm chứng.", token);
 
             var discardMessage = current.Snapshot.LastMessage ?? "Không xác nhận được thao tác Bỏ.";
             current = await MarkLiveFailureAsync(current, discardMessage, current.Snapshot.LastErrorCode ?? "DISCARD_UNCERTAIN", token);
@@ -863,32 +812,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         }
     }
 
-    public async Task<WorkflowContext> ResetUncertainAsync(string expectedRevision, string windowIdentity,
-        CancellationToken token = default)
-    {
-        await transitionGate.WaitAsync(token);
-        try
-        {
-            WorkflowContext current;
-            lock (gate) current = context ?? throw new InvalidOperationException("Chưa có workflow active.");
-            if (!string.Equals(current.Invoice.Fingerprint, expectedRevision, StringComparison.Ordinal))
-                throw new InvalidOperationException("Expected revision không khớp hóa đơn trong workflow.");
-            if (current.Snapshot.Status == WorkflowStatus.SaveUncertain
-                || current.Snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain)
-                throw new InvalidOperationException("An uncertain Save must be resolved by native verification; reset cannot establish whether the voucher was saved.");
-            if (current.Snapshot.Status is not (WorkflowStatus.InputUncertain or WorkflowStatus.Blocked or WorkflowStatus.Paused))
-                throw new InvalidOperationException("Chỉ reset workflow đang dừng hoặc chưa rõ input.");
-            var reset = Replace(current, WorkflowStatus.Cancelled, null, message:
-                "Workflow reset sau fresh native readback xác nhận không còn voucher editor; không replay input và không tác động chứng từ MISA.");
-            reset = reset with { WindowIdentity = windowIdentity,
-                Snapshot = reset.Snapshot with { WindowIdentity = windowIdentity } };
-            lock (gate) { cancellation?.Cancel(); context = reset; cancellation = new(); }
-            await PersistAsync(reset, CancellationToken.None);
-            return reset;
-        }
-        finally { transitionGate.Release(); }
-    }
-
     public async Task<ReconciliationResult> ReconcileAsync(CancellationToken token = default)
     {
         await transitionGate.WaitAsync(token);
@@ -989,109 +912,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         finally { transitionGate.Release(); }
     }
 
-    public async Task<WorkflowContext> RecoverAsync(string windowIdentity, WorkflowStatus expectedStatus, CancellationToken token = default)
-    {
-        await transitionGate.WaitAsync(token);
-        try
-        {
-            var current = Current ?? throw new InvalidOperationException("Chưa có phiên để khôi phục.");
-            if (current.Snapshot.Status is not (WorkflowStatus.Paused or WorkflowStatus.Blocked or WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain))
-                throw new InvalidOperationException("Chỉ khôi phục phiên đang dừng hoặc chưa rõ kết quả.");
-            // Recovery may rebind any guarded forward checkpoint; terminal outcomes
-            // remain available only as explicit native proofs.
-            if (expectedStatus is not (WorkflowStatus.Saved or WorkflowStatus.Discarded)
-                and not (>= WorkflowStatus.Ready and <= WorkflowStatus.AwaitingSave))
-                throw new InvalidOperationException("Chọn trạng thái cần chứng minh: awaitingSave, saved hoặc discarded.");
-            if ((current.Snapshot.Status == WorkflowStatus.SaveUncertain || current.Snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain)
-                && expectedStatus != WorkflowStatus.Saved)
-                throw new InvalidOperationException("Cất chưa rõ kết quả: chỉ xác minh chứng từ đã lưu, không mở đường Cất lại.");
-            if (expectedStatus is >= WorkflowStatus.Ready and <= WorkflowStatus.AwaitingSave
-                && (current.Snapshot.PausedFromStatus is not { } checkpoint
-                    || expectedStatus < checkpoint
-                    || current.Snapshot.Status == WorkflowStatus.InputUncertain && expectedStatus == checkpoint))
-                throw new InvalidOperationException("Recovery cannot rewind or replay an uncertain transition; verify its completed outcome or resolve the voucher explicitly.");
-            if (await FileDigest.Sha256Async(current.Invoice.Source.FilePath, token) != current.Invoice.Source.Sha256)
-                throw new InvalidDataException("Nguồn đã đổi; không rebind hóa đơn revision cũ.");
-            var candidate = current with { WindowIdentity = windowIdentity,
-                Snapshot = current.Snapshot with { WindowIdentity = windowIdentity } };
-            var transition = new WorkflowTransition(current.Snapshot.Status, expectedStatus, "recover", "Explicit rebind",
-                "verify_only", "Fresh full readback, no accounting write", RecoveryTimeout(expectedStatus));
-            var observed = await VerifyRecoveryAsync(candidate, transition, token);
-            if (!observed.Confirmed || observed.Status != expectedStatus)
-                throw new InvalidOperationException("Chưa khôi phục: " + observed.Message);
-            candidate = Replace(candidate, expectedStatus, observed.NativeFrame, message: observed.Message);
-            candidate = candidate with { Snapshot = candidate.Snapshot with { InputPending = false, PendingAction = null } };
-            lock (gate) { context = candidate; cancellation?.Dispose(); cancellation = new(); }
-            await PersistAsync(candidate, CancellationToken.None);
-            return candidate;
-        }
-        finally { transitionGate.Release(); }
-    }
-
-    public async Task<WorkflowContext> RebindAfterRestartAsync(string windowIdentity, WorkflowStatus expectedStatus,
-        CancellationToken token = default)
-    {
-        if (string.IsNullOrWhiteSpace(windowIdentity)) throw new ArgumentException("Window identity is required.", nameof(windowIdentity));
-        await transitionGate.WaitAsync(token);
-        try
-        {
-            var current = Current ?? throw new InvalidOperationException("Không có phiên để rebind.");
-            if (current.Snapshot.Status is not (WorkflowStatus.Paused or WorkflowStatus.Blocked or WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain))
-                throw new InvalidOperationException("Chỉ rebind candidate cho workflow đang dừng hoặc chưa rõ.");
-            if (!CanRebindCheckpoint(current.Snapshot, expectedStatus))
-                throw new InvalidOperationException("Checkpoint rebind does not match the failed checkpoint; fresh native readback is required.");
-            if (await FileDigest.Sha256Async(current.Invoice.Source.FilePath, token) != current.Invoice.Source.Sha256)
-                throw new InvalidDataException("Workbook đã thay đổi; không rebind revision cũ.");
-            var candidate = current with { WindowIdentity = windowIdentity,
-                Snapshot = current.Snapshot with { WindowIdentity = windowIdentity } };
-            var transition = new WorkflowTransition(current.Snapshot.Status, expectedStatus, "rebind_after_restart",
-                "Explicit candidate rebind", "verify_only", "Fresh native proof of the requested checkpoint", RecoveryTimeout(expectedStatus));
-            var observation = await VerifyRecoveryAsync(candidate, transition, token);
-            if (!observation.Confirmed || observation.Status != expectedStatus)
-            {
-                // A failed verification must preserve the original checkpoint and any save uncertainty.
-                var blocked = Replace(current, current.Snapshot.Status, observation.NativeFrame,
-                    current.Snapshot.PausedFromStatus, observation.Message);
-                blocked = blocked with { Snapshot = blocked.Snapshot with {
-                    LastErrorCode = observation.ErrorCode, ErrorChain = observation.ErrorChain,
-                    LastInputDisposition = observation.InputDisposition,
-                    InputMayHaveBeenSent = current.Snapshot.InputMayHaveBeenSent || observation.InputMayHaveBeenSent } };
-                lock (gate) context = blocked;
-                await PersistAsync(blocked, CancellationToken.None);
-                throw new InvalidOperationException("Native readback sau restart chưa khớp checkpoint: " + observation.Message);
-            }
-            var rebound = Replace(candidate, expectedStatus, observation.NativeFrame, message: "Candidate restart đã rebind và native readback xác nhận.");
-            rebound = rebound with { Snapshot = rebound.Snapshot with { InputPending = false, PendingAction = null } };
-            lock (gate) { context = rebound; cancellation?.Dispose(); cancellation = new(); }
-            await PersistAsync(rebound, CancellationToken.None);
-            return rebound;
-        }
-        finally { transitionGate.Release(); }
-    }
-
-    private async Task<WorkflowObservation> VerifyRecoveryAsync(WorkflowContext candidate,
-        WorkflowTransition transition, CancellationToken token)
-    {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(transition.Timeout);
-        lock (gate)
-        {
-            activeOperation = deadline;
-            if (pauseRequested || cancelRequested) deadline.Cancel();
-        }
-        try
-        {
-            var result = await native.ExecuteAsync(candidate, transition, (_, _) => Task.CompletedTask, deadline.Token);
-            deadline.Token.ThrowIfCancellationRequested();
-            return result;
-        }
-        finally
-        {
-            lock (gate)
-                if (ReferenceEquals(activeOperation, deadline)) activeOperation = null;
-        }
-    }
-
     private static WorkflowContext ApplyProgress(WorkflowContext current, WorkflowProgress progress)
     {
         var values = (current.NativeValues ?? System.Collections.Immutable.ImmutableDictionary<string, string>.Empty)
@@ -1181,39 +1001,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             System.Diagnostics.Trace.TraceWarning("Could not separate workflow session: {0}", error.Message);
         }
-    }
-
-    // Full multi-tab reconciliation needs the same budget in recovery and entry.
-    private static TimeSpan RecoveryTimeout(WorkflowStatus expectedStatus) => expectedStatus switch
-    {
-        WorkflowStatus.Ready => TimeSpan.FromSeconds(10),
-        WorkflowStatus.PreflightPassed => TimeSpan.FromSeconds(30),
-        WorkflowStatus.SalesSurface => TimeSpan.FromMinutes(2),
-        WorkflowStatus.VoucherCreated => TimeSpan.FromMinutes(2),
-        WorkflowStatus.CustomerVerified => TimeSpan.FromMinutes(2),
-        WorkflowStatus.DatesVerified => TimeSpan.FromMinutes(2),
-        // Verifying this checkpoint may need to settle the same virtualized
-        // item surface used by the ten-minute entry transition.
-        WorkflowStatus.InvoiceVerified => TimeSpan.FromMinutes(10),
-        WorkflowStatus.ItemsVerified => TimeSpan.FromMinutes(2),
-        WorkflowStatus.TotalsVerified => TimeSpan.FromMinutes(2),
-        WorkflowStatus.AwaitingSave => TimeSpan.FromMinutes(2),
-        WorkflowStatus.Saved or WorkflowStatus.Discarded => TimeSpan.FromMinutes(2),
-        _ => throw new ArgumentOutOfRangeException(nameof(expectedStatus), expectedStatus, "Unsupported recovery checkpoint.")
-    };
-
-    private static bool CanRebindCheckpoint(WorkflowSnapshot snapshot, WorkflowStatus expectedStatus)
-    {
-        if (snapshot.Status == WorkflowStatus.SaveUncertain || snapshot.PausedFromStatus == WorkflowStatus.SaveUncertain)
-            return expectedStatus == WorkflowStatus.Saved;
-        if (snapshot.Status == WorkflowStatus.InputUncertain)
-            return false;
-        if (expectedStatus is WorkflowStatus.Saved or WorkflowStatus.Discarded)
-            return false;
-        var checkpoint = (int)expectedStatus;
-        if (checkpoint < (int)WorkflowStatus.Ready || checkpoint > (int)WorkflowStatus.AwaitingSave)
-            return false;
-        return snapshot.PausedFromStatus == expectedStatus;
     }
 
     private static bool HasVoucherCheckpoint(WorkflowStatus status)

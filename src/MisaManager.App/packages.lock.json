@@ -32,12 +32,6 @@
           "MisaManager.Core": "[0.2.197, )"
         }
       },
-      "misamanager.control": {
-        "type": "Project",
-        "dependencies": {
-          "MisaManager.Core": "[0.2.197, )"
-        }
-      },
       "misamanager.core": {
         "type": "Project"
       },

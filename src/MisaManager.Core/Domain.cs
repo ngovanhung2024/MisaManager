@@ -8,7 +8,6 @@ public static class ProductIdentity
     public const string TechnicalName = "MisaManager";
     public const int StateSchemaVersion = 1;
     public const int WorkbookSchemaVersion = 1;
-    public const int ControlProtocolVersion = 1;
     public const int LocatorProfileVersion = 1;
 
     public static string RuntimeVersion => typeof(ProductIdentity).Assembly.GetName().Version?.ToString() ?? "0.0.0";
@@ -39,6 +38,8 @@ public enum IssueSeverity { Info, Warning, Blocking }
 public enum ValuePresence { Missing, Provided, NotApplicable }
 public enum PartyKind { Unspecified, Organization, Individual }
 public enum InputDisposition { NotSent, SentUnverified, Verified, Uncertain }
+// LiveTest is retired but kept so run history written by older versions still deserializes
+// (ContractJson disallows unknown values) and keeps blocking duplicate entry.
 public enum WorkflowExecutionMode { Interactive, LiveTest, LiveProduction }
 public enum WorkflowStatus
 {
@@ -205,19 +206,6 @@ public sealed record WorkflowSnapshot(
     RuntimeStateIdentity? RuntimeIdentity = null,
     string? RequestId = null, string? OperationId = null, string? ErrorChain = null);
 
-public sealed record CapabilitySnapshot(
-    string AppVersion,
-    int ControlProtocolVersion,
-    int LocatorProfileVersion,
-    string Status,
-    IReadOnlyList<string> Capabilities,
-    string? BlockedReason = null,
-    string? SessionNonce = null,
-    string? SourceRevision = null,
-    int? StateSchemaVersion = null,
-    string? ProfileRevision = null,
-    string? CoreAssemblySha256 = null);
-
 public sealed record OperationResult(
     string RequestId,
     string Status,
@@ -270,18 +258,6 @@ public static class OperationStatuses
     public const string Error = "error";
 }
 
-public sealed record DirectControlResult(
-    string GuardStatus,
-    string Destination,
-    InputDisposition InputDisposition,
-    bool InputMayHaveBeenSent,
-    object? FreshReadback,
-    string? ReadbackReason = null,
-    IReadOnlyList<string>? AppliedGuards = null,
-    IReadOnlyList<string>? BypassedGuards = null,
-    string? ErrorCode = null,
-    string? ErrorChain = null);
-
 public sealed record InvoiceCorrection(
     string InvoiceId,
     int ExpectedRevision,
@@ -296,31 +272,9 @@ public sealed record CorrectionAudit(int Revision, DateTimeOffset OccurredAt, st
 public sealed record InvoiceCorrectionResult(InvoiceDocument Invoice, IReadOnlyList<CorrectionChange> Changes,
     IReadOnlyList<ImportIssue> Issues);
 
-public sealed record OperationStatusSnapshot(
-    string OperationId,
-    string RequestId,
-    string SessionId,
-    string Action,
-    string Status,
-    DateTimeOffset StartedAt,
-    DateTimeOffset? CompletedAt,
-    string Message,
-    bool InputMayHaveBeenSent);
-
 public sealed record RunEvent(string RunId, long Sequence, DateTimeOffset OccurredAt, string Checkpoint,
     string InvoiceId, int InvoiceRevision, string AppVersion, int SchemaVersion, WorkflowStatus Status,
     string? NativeFrame, string? InputDisposition, string? ErrorCode, string Message,
     string? RequestId = null, string? OperationId = null, string? ProfileRevision = null,
     string? SourceEpoch = null, string? SourceRevision = null, string? ErrorChain = null);
 
-public sealed record ControlRequest(
-    int ProtocolVersion,
-    string RequestId,
-    string IdempotencyKey,
-    string SessionId,
-    DateTimeOffset IssuedAt,
-    DateTimeOffset Deadline,
-    string Action,
-    string? ExpectedRevision,
-    System.Text.Json.JsonElement Payload,
-    string? SessionNonce = null);

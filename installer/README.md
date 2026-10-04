@@ -1,7 +1,9 @@
 # MisaManager installer and rollback runbook
 
 WiX 4.0.6 consumes the captured self-contained win-x64 payload. The per-user MSI
-installs app and bridge below `%LOCALAPPDATA%\Programs\MisaManager`.
+installs the app below `%LOCALAPPDATA%\Programs\MisaManager`. GitHub Actions
+(`.github/workflows/release.yml`) builds and publishes it for every `v*.*.*` tag; the
+in-app updater installs those releases. The steps below are the manual path.
 State under `%LOCALAPPDATA%\MisaManager` is not removed by uninstall.
 
 ## Stage
@@ -47,15 +49,21 @@ Rollback never undoes a voucher saved in MISA. Clean-machine acceptance was remo
 by user instruction. Upgrade-failure and real native repair-restart evidence are
 not implied by build or health checks.
 
-## Retired task board
+## Retired components
 
-The Pending Task Board is no longer published. A major MSI upgrade removes the
-old package's board files. Historical rollback packages remain unchanged.
+The Pending Task Board and the MCP bridge (`bridge\MisaManager.McpBridge.exe`) are no
+longer published. A major MSI upgrade removes the old package's files. Historical
+rollback packages remain unchanged.
 
 ## Runtime check
 
-`release.ps1` fails when the app or bridge payload is framework-dependent (missing
+`release.ps1` fails when the app payload is framework-dependent (missing
 `hostfxr.dll`/`coreclr.dll`/`System.Private.CoreLib.dll`), because the build host's
-own .NET would hide that. `install.ps1`, rollback health checks, `owner-interlock.ps1`
-and `start-manager.ps1` also launch the bridge with `--health-check` and report a
-Vietnamese message when the .NET runtime is missing (`scripts/bridge-runtime.ps1`).
+own .NET would hide that (`scripts/payload-runtime.ps1`). `install.ps1` and rollback
+health checks repeat the check on the installed app.
+
+## Signing
+
+Pass `-CertificatePath <pfx>` (password in `MISAMANAGER_SIGNING_PASSWORD`) or
+`-CertificateThumbprint <sha1>` to `release.ps1`; `signtool.exe` is located in the
+Windows SDK when `-SignToolPath` is omitted. See the root README for CI secrets.

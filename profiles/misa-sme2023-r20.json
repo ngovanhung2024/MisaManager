@@ -1,60 +1,89 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
   "revision": "r20-workflow-readiness-20260926",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
-  "editorId": "frmSAVoucherDetail",
-  "salesScopeId": "frmSAVoucher",
-  "itemGridId": "grdDetail",
-  "salesGridId": "grdList",
-  "receiptTab": "Phiếu thu",
-  "invoiceTab": "Hóa đơn",
-  "itemTab": "1. Hàng tiền",
-  "taxTab": "2. Thuế",
-  "openVoucher": { "name": "Thêm", "controlType": "Button" },
-  "saveVoucher": { "name": "Cất", "controlType": "Button" },
-  "discardVoucher": { "name": "Đóng", "controlType": "Button" },
-  "itemNewCode": { "automationId": "txtInventoryItemCode", "controlType": "Edit" },
-  "itemNewName": { "automationId": "txtInventoryItemName", "controlType": "Edit" },
-  "itemNewUnit": { "automationId": "cboUnit", "controlType": "ComboBox" },
-  "itemNewStock": { "automationId": "cboDefaultStock", "controlType": "ComboBox" },
-  "itemNewTaxRate": { "automationId": "cboTaxRate", "controlType": "ComboBox" },
-  "itemNewSave": { "name": "Cất", "controlType": "Button" },
-  "itemNewStockCode": "KHH",
-  "fields": {
-    "customer": { "automationId": "cboAccountObjectID" },
-    "customer_name": { "automationId": "txtAccountObjectName" },
-    "customer_tax": { "automationId": "txtAccountObjectTaxCode" },
-    "voucher_date": { "automationId": "dteRefDate" },
-    "posted_date": { "automationId": "dtePostedDate" },
-    "issued_date": { "automationId": "dteInvDate" },
-    "number": { "automationId": "txtInvNo" },
-    "series": { "automationId": "txtInvSeries" },
-    "currency": { "automationId": "cboCurrencyID" },
-    "payment": { "automationId": "cboPaymentMethodType" },
-    "voucher_number": { "automationId": "txtRefNo" },
-    "subtotal": { "automationId": "creTotalTotalSaleAmountOC" },
-    "tax_total": { "automationId": "creTotalVATAmountOC" },
-    "grand_total": { "automationId": "creTotalAmountOC" }
-  },
-  "columns": {
-    "code": "Mã hàng",
-    "name": "Tên hàng",
-    "unit": "ĐVT",
-    "debit_account": "TK tiền/chi phí",
-    "quantity": "Số lượng",
-    "unit_price": "Đơn giá",
-    "amount": "Thành tiền",
-    "tax_rate": "% thuế GTGT",
-    "tax_amount": "Tiền thuế GTGT"
-  },
-  "salesColumns": {
-    "voucher_number": "Số chứng từ",
-    "number": "Số hóa đơn",
-    "customer": "Khách hàng",
-    "subtotal": "Tổng tiền hàng",
-    "voucher_date": "Ngày chứng từ"
+  "screens": {
+    "sales_list": {
+      "title": "Phân hệ Bán hàng - danh sách chứng từ",
+      "scope": { "automationId": "frmSAVoucher", "name": "Bán hàng" },
+      "elements": {
+        "module_tab": { "automationId": "TabItem Key SAVoucher", "name": "Bán hàng", "description": "Tab phân hệ Bán hàng trên thanh tab chính" },
+        "add": { "name": "Thêm", "controlType": "Button", "description": "Nút Thêm chứng từ bán hàng" }
+      },
+      "grids": {
+        "vouchers": {
+          "automationId": "grdList",
+          "columns": {
+            "voucher_number": "Số chứng từ",
+            "number": "Số hóa đơn",
+            "customer": "Khách hàng",
+            "subtotal": "Tổng tiền hàng",
+            "voucher_date": "Ngày chứng từ"
+          }
+        }
+      }
+    },
+    "sales_voucher": {
+      "title": "Chứng từ bán hàng (Bán hàng hóa, dịch vụ trong nước)",
+      "scope": { "automationId": "frmSAVoucherDetail" },
+      "tabs": { "receipt": "Phiếu thu", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế" },
+      "elements": {
+        "save": { "name": "Cất", "controlType": "Button" },
+        "close": { "name": "Đóng", "controlType": "Button" },
+        "customer": { "automationId": "cboAccountObjectID", "description": "Mã khách hàng" },
+        "customer_name": { "automationId": "txtAccountObjectName", "description": "Tên khách hàng" },
+        "customer_tax": { "automationId": "txtAccountObjectTaxCode", "tab": "invoice", "description": "Mã số thuế" },
+        "voucher_date": { "automationId": "dteRefDate", "tab": "receipt", "description": "Ngày chứng từ" },
+        "posted_date": { "automationId": "dtePostedDate", "tab": "receipt", "description": "Ngày hạch toán" },
+        "voucher_number": { "automationId": "txtRefNo", "tab": "receipt", "description": "Số phiếu thu" },
+        "issued_date": { "automationId": "dteInvDate", "tab": "invoice", "description": "Ngày hóa đơn" },
+        "number": { "automationId": "txtInvNo", "tab": "invoice", "description": "Số hóa đơn" },
+        "series": { "automationId": "txtInvSeries", "tab": "invoice", "description": "Ký hiệu HĐ" },
+        "payment": { "automationId": "cboPaymentMethodType", "tab": "invoice", "description": "Hình thức TT" },
+        "currency": { "automationId": "cboCurrencyID", "required": false, "description": "Loại tiền" },
+        "subtotal": { "automationId": "creTotalTotalSaleAmountOC", "description": "Tổng tiền hàng" },
+        "tax_total": { "automationId": "creTotalVATAmountOC", "description": "Tiền thuế GTGT" },
+        "grand_total": { "automationId": "creTotalAmountOC", "description": "Tổng tiền thanh toán" }
+      },
+      "grids": {
+        "items": {
+          "automationId": "grdDetail",
+          "columns": {
+            "code": "Mã hàng",
+            "name": "Tên hàng",
+            "unit": "ĐVT",
+            "debit_account": "TK tiền/chi phí",
+            "quantity": "Số lượng",
+            "unit_price": "Đơn giá",
+            "amount": "Thành tiền",
+            "tax_rate": "% thuế GTGT",
+            "tax_amount": "Tiền thuế GTGT"
+          }
+        }
+      }
+    },
+    "item_new": {
+      "title": "Thêm Vật tư, hàng hóa, dịch vụ (mở bằng F9 trên ô Mã hàng)",
+      "elements": {
+        "code": { "automationId": "txtInventoryItemCode", "controlType": "Edit" },
+        "name": { "automationId": "txtInventoryItemName", "controlType": "Edit" },
+        "unit": { "automationId": "cboUnit", "controlType": "ComboBox" },
+        "stock": { "automationId": "cboDefaultStock", "controlType": "ComboBox" },
+        "tax_rate": { "automationId": "cboTaxRate", "controlType": "ComboBox" },
+        "save": { "name": "Cất", "controlType": "Button" }
+      },
+      "settings": { "defaultStock": "KHH" }
+    },
+    "tax_rounding_prompt": {
+      "title": "Cảnh báo chênh lệch tổng tiền thuế khi Cất",
+      "scope": { "automationId": "frmShowMessageLinkCustom" },
+      "elements": {
+        "message": { "automationId": "lblMessage" },
+        "no": { "automationId": "btnNo", "controlType": "Button" }
+      }
+    }
   }
 }

@@ -125,6 +125,7 @@ public partial class MainWindow : Window
             PositionRail(workArea);
             RefreshCatalogLabel();
             await workflow.RestoreAsync();
+            _ = UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: false, status => StatusLabel.Text = status);
         }
         catch (Exception error) { StatusLabel.Text = "Không khôi phục được phiên trước: " + error.Message; }
     }
@@ -638,8 +639,36 @@ public partial class MainWindow : Window
         StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy thông tin lỗi và hiệu năng vào clipboard.";
     }
 
+    private async void ExportReport_Click(object sender, RoutedEventArgs e)
+    {
+        var services = ((App)Application.Current).Services;
+        StatusLabel.Text = "Đang tạo báo cáo lỗi (chụp màn hình, đọc giao diện MISA)…";
+        try
+        {
+            var path = await services.ExportFailureReportAsync(lastWorkflowError?.Message, lastWorkflowError?.Details, workflow.ExportPerformance());
+            StatusLabel.Text = "Đã tạo báo cáo lỗi: " + path;
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true });
+        }
+        catch (Exception error) { StatusLabel.Text = "Không tạo được báo cáo lỗi: " + error.Message; }
+    }
+
+    private async void CheckScreens_Click(object sender, RoutedEventArgs e)
+    {
+        StatusLabel.Text = "Đang kiểm tra ID giao diện MISA…";
+        var report = await workflow.CheckScreensAsync();
+        StatusLabel.Text = report.Summary;
+        MessageBox.Show(this, report.Details, "Kiểm tra giao diện MISA", MessageBoxButton.OK,
+            report.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+        => await UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: true, status => StatusLabel.Text = status);
+
+    private void UpdateSettings_Click(object sender, RoutedEventArgs e)
+        => UpdatePrompt.EditSettings(this, ((App)Application.Current).Services.Updates, status => StatusLabel.Text = status);
+
     private void CopyPerformance_Click(object sender, RoutedEventArgs e)
-        => StatusLabel.Text = TryCopy(workflow.ExportPerformance(), "hieu-nang") ?? "Đã copy báo cáo hiệu năng vào clipboard để gửi ChatGPT.";
+        => StatusLabel.Text = TryCopy(workflow.ExportPerformance(), "hieu-nang") ?? "Đã copy báo cáo hiệu năng vào clipboard.";
 
     // The clipboard is often held by RDP or clipboard managers (CLIPBRD_E_CANT_OPEN); retry, then fall back to a file.
     private static string? TryCopy(string text, string name)

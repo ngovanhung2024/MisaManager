@@ -32,5 +32,5 @@ try {
     }
     # State is byte-identical to the pre-upgrade snapshot; retain it without rewriting.
     Write-DeploymentJson $activePath ([ordered]@{ id=$previous.id; version=$previous.version; updatedAt=[DateTimeOffset]::UtcNow.ToString('O') })
-    Write-Output ('Restored installed app/bridge ' + $previous.version + '; state unchanged and verified.')
+    Write-Output ('Restored installed app ' + $previous.version + '; state unchanged and verified.')
 } finally { $lease.ReleaseMutex(); $lease.Dispose() }
