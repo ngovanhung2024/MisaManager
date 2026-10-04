@@ -52,12 +52,24 @@ public sealed class MainWindow : Window, IGridSource
         }
         modules.SelectedIndex = 3;
         var content = new DockPanel();
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Background = Brushes.White };
-        var add = Ui.Button(profile.Caption("sales_list", "add"), automationId: profile.Id("sales_list", "add"));
-        add.Click += (_, _) => OpenVoucher();
-        toolbar.Children.Add(add);
+        // R20's module toolbar is a WinForms window: the automation clicks a command and binds its HWND.
+        var commands = new System.Windows.Forms.FlowLayoutPanel { BackColor = System.Drawing.Color.White, WrapContents = false };
+        System.Windows.Forms.Button Command(string caption, bool enabled = true)
+        {
+            var button = new System.Windows.Forms.Button
+            {
+                Text = caption, Enabled = enabled, AutoSize = true, FlatStyle = System.Windows.Forms.FlatStyle.Flat, Margin = new System.Windows.Forms.Padding(1)
+            };
+            button.FlatAppearance.BorderSize = 0;
+            commands.Controls.Add(button);
+            return button;
+        }
+        var add = Command(profile.Caption("sales_list", "add"));
+        if (profile.Id("sales_list", "add") is { Length: > 0 } addId) add.Name = addId;
+        add.Click += (_, _) => Dispatcher.BeginInvoke(OpenVoucher);
         foreach (var (caption, enabled) in new[] { ("Xem", true), ("Xóa", true), ("Ghi sổ", true), ("Bỏ ghi", false), ("Gửi email, Zalo", true), ("Xuất khẩu", true), ("Giúp", true) })
-            toolbar.Children.Add(Ui.Button(caption, enabled));
+            Command(caption, enabled);
+        var toolbar = new System.Windows.Forms.Integration.WindowsFormsHost { Child = commands, Height = 30 };
         DockPanel.SetDock(toolbar, Dock.Top);
         content.Children.Add(toolbar);
 
@@ -79,7 +91,7 @@ public sealed class MainWindow : Window, IGridSource
         content.Children.Add(list);
         modules.Items.Cast<TabItem>().ElementAt(3).Content = content;
         scope.Children.Add(modules);
-        root.Children.Add(new ChildWindowHost(scope, "Bán hàng"));
+        root.Children.Add(scope);
         Content = root;
     }
 
