@@ -28,6 +28,7 @@ public sealed class MainWindow : Window, IGridSource
         Height = Math.Min(800, area.Height);
         ResizeMode = ResizeMode.CanMinimize;
         Background = Ui.Chrome;
+        this.IgnoreBareAlt();
 
         var root = new DockPanel();
         var menu = new StackPanel { Orientation = Orientation.Horizontal, Background = Brushes.White };

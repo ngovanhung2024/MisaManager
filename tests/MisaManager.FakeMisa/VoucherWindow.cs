@@ -58,6 +58,7 @@ public sealed class VoucherWindow : Window, IGridSource
         ResizeMode = ResizeMode.CanMinimize;
         ShowInTaskbar = false;
         Background = Ui.Chrome;
+        this.IgnoreBareAlt();
         var today = DateTime.Today.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
         header["posted_date"] = header["voucher_date"] = header["issued_date"] = today;
         header["voucher_number"] = store.NextVoucherNumber();

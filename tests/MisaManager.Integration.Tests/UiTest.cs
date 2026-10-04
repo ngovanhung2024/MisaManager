@@ -38,7 +38,8 @@ public abstract class UiTest
 
     protected static string Describe(LiveRunResult result)
         => $"outcome={result.Outcome}, status={result.Context.Snapshot.Status}, code={result.Context.Snapshot.LastErrorCode}, "
-            + $"message={result.Context.Snapshot.LastMessage}, error={result.Error}";
+            + $"message={result.Context.Snapshot.LastMessage}, error={result.Error}"
+            + Environment.NewLine + (result.Context.Snapshot.ErrorChain is { } chain ? chain[..Math.Min(chain.Length, 4000)] : "");
 
     protected static string TempDirectory(FakeMisa misa) => Path.Combine(misa.Root, "source");
 }

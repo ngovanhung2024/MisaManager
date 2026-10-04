@@ -29,6 +29,20 @@ internal static class Ui
     public static readonly Brush Chrome = new SolidColorBrush(Color.FromRgb(0xDC, 0xE3, 0xF3));
     public static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0xF7, 0xC9, 0x6B));
 
+    /// <summary>
+    /// R20 windows own a menu/toolbar manager that consumes a bare Alt. Without it Windows enters
+    /// system-menu mode on Alt (sent by the automation's foreground activation) and eats the next key.
+    /// </summary>
+    public static void IgnoreBareAlt(this System.Windows.Window window)
+        => window.SourceInitialized += (_, _) =>
+            System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(window).Handle)?.AddHook(
+                (nint _, int message, nint wParam, nint lParam, ref bool handled) =>
+                {
+                    const int WM_SYSCOMMAND = 0x0112, SC_KEYMENU = 0xF100;
+                    if (message == WM_SYSCOMMAND && (wParam.ToInt64() & 0xFFF0) == SC_KEYMENU && lParam == 0) handled = true;
+                    return nint.Zero;
+                });
+
     public static T Id<T>(this T element, string automationId) where T : DependencyObject
     {
         if (automationId.Length > 0) AutomationProperties.SetAutomationId(element, automationId);

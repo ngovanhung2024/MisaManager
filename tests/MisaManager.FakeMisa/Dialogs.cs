@@ -21,6 +21,7 @@ public sealed class NewItemWindow : Window
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Ui.Chrome;
+        this.IgnoreBareAlt();
         string Id(string key) => profile.Id("item_new", key);
         code = Ui.Text(Id("code"), value: store.NextItemCode());
         name = Ui.Text(Id("name"));
@@ -87,6 +88,7 @@ public sealed class TaxPromptWindow : Window
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        this.IgnoreBareAlt();
         var message = $"Tổng tiền thuế GTGT <{Ui.Money(source)}> khác (Tiền hàng - Tiền chiết khấu) * Thuế suất <{Ui.Money(calculated)}>, "
             + $"chênh lệch <{Ui.Money(source - calculated)}>. Bạn có muốn chương trình tự điều chỉnh số tiền chênh lệch này vào dòng hàng đầu tiên "
             + "có tiền thuế không? Xem hướng dẫn <a href=\"https://helpsme.misa.vn/2023/kb/canh_bao_tong_tien_thue_chenh_lech_khi_cat_chung_tu_ban_hang/\">TẠI ĐÂY</a>";
