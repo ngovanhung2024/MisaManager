@@ -129,6 +129,11 @@
         <Button.ContextMenu><ContextMenu>
           <MenuItem Header="Trang tính &amp; cột dữ liệu…" Click="SourceSettings_Click"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
+          <Separator/>
+          <MenuItem Header="Kiểm tra giao diện MISA" Click="CheckScreens_Click" ToolTip="Đối chiếu ID control trong profile với các màn hình MISA đang mở"/>
+          <MenuItem Header="Xuất báo cáo lỗi…" Click="ExportReport_Click"/>
+          <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
+          <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>
         </ContextMenu></Button.ContextMenu>
       </Button>
       <!-- Source settings live behind the ••• menu -->
@@ -509,7 +514,10 @@
           <TextBlock x:Name="ErrorPopupHint" TextWrapping="Wrap" Foreground="#78350F" FontSize="11"/>
         </Border>
         <TextBox Grid.Row="3" x:Name="ErrorPopupDetails" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="120" VerticalScrollBarVisibility="Auto" Background="#FEF2F2" BorderBrush="#FECACA" FontFamily="Consolas" FontSize="10" Padding="4"/>
-        <Button Grid.Row="4" Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}" HorizontalAlignment="Right" Margin="0,6,0,0"/>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
+          <Button Content="Xuất báo cáo lỗi" Click="ExportReport_Click" Style="{StaticResource RailButton}" Margin="0,0,4,0" ToolTip="Tạo file zip gồm lỗi, trạng thái, cây giao diện và ảnh chụp màn hình để gửi cho AI/lập trình viên"/>
+          <Button Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}"/>
+        </StackPanel>
       </Grid>
     </Border>
   </Grid>

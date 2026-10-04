@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.IO;
 using MisaManager.Automation;
 using MisaManager.Core;
-using MisaManager.Control;
 using MisaManager.Import;
 
 namespace MisaManager.App;
@@ -74,7 +73,6 @@ public static class Program
             output = CommandOutputPath.Resolve(Option("--output"));
             if (args[0] == "--health-check")
             {
-                await ControlServer.CheckListenerHealthAsync();
                 var profile = WorkflowProfile.Load();
                 using var owner = new NativeDispatcher();
                 var native = await owner.RunAsync(() =>
@@ -86,11 +84,11 @@ public static class Program
                     version = typeof(Program).Assembly.GetName().Version?.ToString(),
                     sourceRevision = ProductIdentity.SourceRevision,
                     coreAssemblySha256 = ProductIdentity.RuntimeAssemblySha256,
-                    protocolVersion = ProductIdentity.ControlProtocolVersion, schemaVersion = ProductIdentity.StateSchemaVersion,
+                    schemaVersion = ProductIdentity.StateSchemaVersion,
                     workbookSchemaVersion = ProductIdentity.WorkbookSchemaVersion,
                     locatorProfileVersion = ProductIdentity.LocatorProfileVersion,
                     architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
-                    inputSent = false, controlListener = "healthy", native,
+                    inputSent = false, native,
                     profile = new { profile.Id, profile.Revision, profile.Status } };
             }
             else if (args[0] == "--check-workbook")

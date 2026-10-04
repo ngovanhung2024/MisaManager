@@ -5,7 +5,7 @@
     <Platform>x64</Platform>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.1.0</PackageVersion>
     <PublishRoot Condition="'$(PublishRoot)' == ''">$(MSBuildThisFileDirectory)..\out\publish\staged</PublishRoot>
-    <DefineConstants>PublishRoot=$(PublishRoot);AppRoot=$(PublishRoot)\app;BridgeRoot=$(PublishRoot)\bridge;NoticeRoot=$(PublishRoot)\notices;PackageVersion=$(PackageVersion)</DefineConstants>
+    <DefineConstants>PublishRoot=$(PublishRoot);AppRoot=$(PublishRoot)\app;NoticeRoot=$(PublishRoot)\notices;PackageVersion=$(PackageVersion)</DefineConstants>
     <HarvestDirectoryAutogenerateGuids>true</HarvestDirectoryAutogenerateGuids>
     <HarvestDirectoryGenerateGuidsNow>false</HarvestDirectoryGenerateGuidsNow>
     <!-- ICE91 is a known per-user diagnostic: this package intentionally installs only under LocalAppData. -->
@@ -20,14 +20,6 @@
       <ComponentGroupName>AppFiles</ComponentGroupName>
       <DirectoryRefId>APPFOLDER</DirectoryRefId>
       <PreprocessorVariable>AppRoot</PreprocessorVariable>
-      <SuppressRootDirectory>true</SuppressRootDirectory>
-      <SuppressRegistry>true</SuppressRegistry>
-      <Transforms>$(MSBuildThisFileDirectory)HeatPerUser.xsl</Transforms>
-    </HarvestDirectory>
-    <HarvestDirectory Include="$(PublishRoot)\bridge">
-      <ComponentGroupName>BridgeFiles</ComponentGroupName>
-      <DirectoryRefId>BRIDGEFOLDER</DirectoryRefId>
-      <PreprocessorVariable>BridgeRoot</PreprocessorVariable>
       <SuppressRootDirectory>true</SuppressRootDirectory>
       <SuppressRegistry>true</SuppressRegistry>
       <Transforms>$(MSBuildThisFileDirectory)HeatPerUser.xsl</Transforms>

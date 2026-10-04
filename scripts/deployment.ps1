@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $script:DeploymentRoot = Join-Path $env:LOCALAPPDATA 'MisaManager\deployment'
 $script:StateRoot = Join-Path $env:LOCALAPPDATA 'MisaManager'
 $script:InstallRoot = Join-Path $env:LOCALAPPDATA 'Programs\MisaManager'
-. (Join-Path $PSScriptRoot 'bridge-runtime.ps1')
+. (Join-Path $PSScriptRoot 'payload-runtime.ps1')
 
 function Write-DeploymentJson([string]$Path, $Value) {
     $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
@@ -95,16 +95,11 @@ function Invoke-InstalledHealth([string]$Version, [string]$Folder, $Manifest) {
     if ($Manifest.documentType -ne 'MisaManager.ReleaseManifest' -or $Manifest.version -ne $Version) {
         throw 'Installed health-check requires the matching release manifest.'
     }
-    foreach ($component in @('app', 'bridge', 'taskboard')) {
-        $name = switch ($component) {
-            'app' { 'MisaManager.App.exe' }
-            'bridge' { 'MisaManager.McpBridge.exe' }
-            default { 'MisaManager.TaskBoard.exe' }
-        }
+    # Older releases may still list the retired MCP bridge/task board; only the app is checked now.
+    foreach ($component in @('app')) {
+        $name = 'MisaManager.App.exe'
         $entry = $Manifest.files.PSObject.Properties[($component + '/' + $name)]
         if (-not $entry) {
-            # The retired board is checked only when rolling back to a release that shipped it.
-            if ($component -eq 'taskboard') { continue }
             throw ('Required component is absent from the release manifest: ' + $component)
         }
         $executable = Join-Path $script:InstallRoot ($component + '\' + $name)
@@ -116,10 +111,7 @@ function Invoke-InstalledHealth([string]$Version, [string]$Folder, $Manifest) {
             (Get-AuthenticodeSignature -LiteralPath $executable).Status -ne 'Valid') {
             throw ('Installed signature validation failed: ' + $component)
         }
-        if ($component -eq 'bridge') {
-            Assert-SelfContainedPayload (Split-Path -Parent $executable) 'Bridge da cai'
-            Assert-BridgeLaunch $executable
-        }
+        Assert-SelfContainedPayload (Split-Path -Parent $executable) 'App da cai'
         $output = Join-Path $Folder ($component + '-installed-health.json')
         $arguments = @('--health-check')
         $start = @{ FilePath = $executable; PassThru = $true; Wait = $true; WindowStyle = 'Hidden'; RedirectStandardError = ($output + '.stderr') }

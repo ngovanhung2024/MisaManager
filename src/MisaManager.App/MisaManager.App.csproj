@@ -11,7 +11,6 @@
     <ProjectReference Include="../MisaManager.Core/MisaManager.Core.csproj" />
     <ProjectReference Include="../MisaManager.Import/MisaManager.Import.csproj" />
     <ProjectReference Include="../MisaManager.Automation/MisaManager.Automation.csproj" />
-    <ProjectReference Include="../MisaManager.Control/MisaManager.Control.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="../../profiles/*.json" Link="profiles/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

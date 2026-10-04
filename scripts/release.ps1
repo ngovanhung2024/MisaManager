@@ -5,13 +5,15 @@ param(
     [string]$OutputRoot = 'out\releases',
     [string]$DotnetPath = '',
     [string]$CertificateThumbprint = '',
+    # PFX file for CI signing; its password is read from MISAMANAGER_SIGNING_PASSWORD, never from the command line.
+    [string]$CertificatePath = '',
     [string]$SignToolPath = '',
     [string]$TimestampUrl = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-. (Join-Path $PSScriptRoot 'bridge-runtime.ps1')
+. (Join-Path $PSScriptRoot 'payload-runtime.ps1')
 if ([string]::IsNullOrWhiteSpace($DotnetPath)) {
     $dotnet = Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe'
     if (-not (Test-Path -LiteralPath $dotnet)) { $dotnet = (Get-Command dotnet -ErrorAction Stop).Source }
@@ -28,7 +30,7 @@ $assemblyVersion = $Version + '.0'
 $sourceRevision = (& git -C $root rev-parse HEAD 2>$null | Out-String).Trim()
 if ([string]::IsNullOrWhiteSpace($sourceRevision)) { $sourceRevision = 'uncommitted' }
 $sourceDirty = -not [string]::IsNullOrWhiteSpace((& git -C $root status --porcelain 2>$null | Out-String).Trim())
-$components = @('Core', 'Import', 'Automation', 'Control', 'App', 'McpBridge')
+$components = @('Core', 'Import', 'Automation', 'App')
 
 function Get-SourceFiles {
     foreach ($name in @('global.json', 'Directory.Build.props', 'Directory.Packages.props', 'MisaManager.sln', 'README.md', 'AGENTS.md', 'APP_WORKFLOW.md', 'RECOVERY.md', 'MIGRATION_REPORT.md', 'THIRD_PARTY_NOTICES.md')) {
@@ -194,21 +196,23 @@ if ($Stage -or $Installer) {
 
 Push-Location $buildRoot
 try {
+    # Tests are not part of the captured release source; the app project pulls in every shipped library.
+    $appProject = 'src\MisaManager.App\MisaManager.App.csproj'
     $sdk = (& $dotnet --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Pinned .NET SDK is unavailable.' }
     # Generate/refresh RID-specific lock entries inside the build snapshot,
     # then prove the exact snapshot is reproducible with locked mode.
-    & $dotnet restore MisaManager.sln -r win-x64 --force-evaluate --nologo
+    & $dotnet restore $appProject -r win-x64 --force-evaluate --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Runtime restore failed.' }
-    & $dotnet restore MisaManager.sln -r win-x64 --locked-mode --nologo
+    & $dotnet restore $appProject -r win-x64 --locked-mode --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Locked restore failed.' }
-    & $dotnet build MisaManager.sln -c Release --no-restore -p:Version=$Version --nologo
+    & $dotnet build $appProject -c Release --no-restore -p:Version=$Version --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
     if (-not $releaseRoot) { return }
 
     $publish = Join-Path $releaseRoot 'payload'
-    foreach ($component in @('App', 'McpBridge')) {
-        $folder = switch ($component) { 'App' { 'app' } 'McpBridge' { 'bridge' } }
+    foreach ($component in @('App')) {
+        $folder = 'app'
         & $dotnet publish "src\MisaManager.$component\MisaManager.$component.csproj" -c Release -r win-x64 --self-contained true --no-restore -p:Version=$Version -o (Join-Path $publish $folder) --nologo
         if ($LASTEXITCODE -ne 0) { throw ('Publish failed: ' + $component) }
         # The build host has .NET installed, so health checks alone cannot catch a framework-dependent payload.
@@ -217,10 +221,6 @@ try {
     $metadata = Join-Path $releaseRoot 'metadata'
     New-Item -ItemType Directory -Path $metadata | Out-Null
     $appHealth = Invoke-ArtifactHealth (Join-Path $publish 'app\MisaManager.App.exe') (Join-Path $metadata 'app-health.json') -Gui
-    $bridgeHealth = Invoke-ArtifactHealth (Join-Path $publish 'bridge\MisaManager.McpBridge.exe') (Join-Path $metadata 'bridge-health.json')
-    foreach ($field in @('version', 'protocolVersion', 'schemaVersion', 'workbookSchemaVersion', 'locatorProfileVersion', 'architecture')) {
-        if ($appHealth.$field -ne $bridgeHealth.$field) { throw ('App/bridge contract mismatch: ' + $field) }
-    }
     if (-not $appHealth.native.initialized -or $appHealth.native.backend -ne 'UIA3/Win32') { throw 'Native backend health-check failed.' }
 
     # Restore the captured source files after RID restore. Lock files can gain
@@ -239,11 +239,22 @@ try {
 
     $signingState = 'unsigned_internal'
     $signArgs = @()
-    if (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
-        if ([string]::IsNullOrWhiteSpace($SignToolPath) -or -not (Test-Path -LiteralPath $SignToolPath)) { throw 'A real SignToolPath is required when signing is requested.' }
+    if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+        if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) { throw 'CertificatePath does not exist.' }
+        $signArgs = @('sign', '/f', [IO.Path]::GetFullPath($CertificatePath), '/fd', 'SHA256')
+        if (-not [string]::IsNullOrEmpty($env:MISAMANAGER_SIGNING_PASSWORD)) { $signArgs += @('/p', $env:MISAMANAGER_SIGNING_PASSWORD) }
+    } elseif (-not [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
         $signArgs = @('sign', '/sha1', $CertificateThumbprint, '/fd', 'SHA256', '/a')
-        if (-not [string]::IsNullOrWhiteSpace($TimestampUrl)) { $signArgs += @('/tr', $TimestampUrl, '/td', 'SHA256') }
-        foreach ($file in @('app\MisaManager.App.exe', 'bridge\MisaManager.McpBridge.exe')) {
+    }
+    if ($signArgs.Count -gt 0) {
+        if ([string]::IsNullOrWhiteSpace($SignToolPath)) {
+            $SignToolPath = Get-ChildItem -Path (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin\*\x64\signtool.exe') -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+        }
+        if ([string]::IsNullOrWhiteSpace($SignToolPath) -or -not (Test-Path -LiteralPath $SignToolPath)) { throw 'signtool.exe was not found; pass -SignToolPath.' }
+        if ([string]::IsNullOrWhiteSpace($TimestampUrl)) { $TimestampUrl = 'http://timestamp.digicert.com' }
+        $signArgs += @('/tr', $TimestampUrl, '/td', 'SHA256')
+        foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $publish 'app') -File | Where-Object { $_.Name -like 'MisaManager.*' -and $_.Extension -in '.exe', '.dll' } | ForEach-Object { 'app\' + $_.Name })) {
             & $SignToolPath @signArgs (Join-Path $publish $file)
             if ($LASTEXITCODE -ne 0 -or (Get-AuthenticodeSignature -LiteralPath (Join-Path $publish $file)).Status -ne 'Valid') { throw ('Signing failed: ' + $file) }
         }
@@ -296,7 +307,7 @@ try {
         verification = 'build_verified'; signing = $signingState; liveVerification = 'not_run'
         sourceRevision = $sourceRevision; sourceDirty = $sourceDirty
         stateSchemaVersion = $appHealth.schemaVersion; workbookSchemaVersion = $appHealth.workbookSchemaVersion
-        controlProtocolVersion = $appHealth.protocolVersion; locatorProfileVersion = $appHealth.locatorProfileVersion
+        locatorProfileVersion = $appHealth.locatorProfileVersion
         source = [ordered]@{ directory = 'source'; files = $sourceFiles }
         nativeProfileStatus = 'pending_live_verify'; payload = 'payload'; files = [ordered]@{}
         signatures = [ordered]@{}; installer = $installerArtifact
@@ -313,7 +324,7 @@ try {
         $relative = $file.FullName.Substring($publish.Length + 1).Replace('\', '/')
         $manifest.files[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    foreach ($entry in @('app/MisaManager.App.exe', 'bridge/MisaManager.McpBridge.exe')) {
+    foreach ($entry in @('app/MisaManager.App.exe')) {
         $manifest.signatures[$entry] = (Get-AuthenticodeSignature -LiteralPath (Join-Path $publish $entry)).Status.ToString()
     }
     # Recheck source inputs after restore/build, including lockfiles.

@@ -68,23 +68,8 @@ public static class MisaManagerWindow {
         return
     }
 
-    # Never blocks the manager: only warns when a bridge (payload or installed) cannot start without .NET.
-    . (Join-Path $PSScriptRoot 'bridge-runtime.ps1')
-    $bridgeWarnings = @()
-    foreach ($bridge in @((Join-Path $latest.Directory 'payload\bridge\MisaManager.McpBridge.exe'),
-            (Join-Path $env:LOCALAPPDATA 'Programs\MisaManager\bridge\MisaManager.McpBridge.exe'))) {
-        if (-not (Test-Path -LiteralPath $bridge -PathType Leaf)) { continue }
-        $check = Test-BridgeLaunch $bridge 10
-        if (-not $check.Ok) { $bridgeWarnings += $check.Message }
-    }
-
     $started = Start-Process -FilePath $executable -WorkingDirectory (Split-Path $executable -Parent) -PassThru
     Wait-ForManagerWindow $started | Out-Null
-    if ($bridgeWarnings.Count -gt 0) {
-        Add-Type -AssemblyName PresentationFramework
-        [void][System.Windows.MessageBox]::Show(($bridgeWarnings | Select-Object -Unique) -join [Environment]::NewLine,
-            'MISA Excel Manager - bridge')
-    }
 }
 catch {
     Add-Type -AssemblyName PresentationFramework

@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <AssemblyName>MisaManager.Control</AssemblyName>
-    <RootNamespace>MisaManager.Control</RootNamespace>
-  </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="../MisaManager.Core/MisaManager.Core.csproj" />
-  </ItemGroup>
-</Project>

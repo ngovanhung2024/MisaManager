@@ -11,6 +11,8 @@ namespace MisaManager.App;
 
 public enum MisaConnection { Unknown, Connected, Lost }
 
+public sealed record ScreenCheckView(bool Ok, string Summary, string Details, ScreenCheckReport? Report = null);
+
 public sealed class WorkflowViewModel : INotifyPropertyChanged
 {
     private readonly AppServices services;
@@ -83,7 +85,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (!running) return;
         stopRequested = true;
         if (services.Workflow.Current is null) return;
-        try { Status = (await services.ExecuteAsync("pause")).Message; }
+        try { Status = (await services.PauseAsync()).Message; }
         catch (Exception error) { Status = error.Message; }
     }
 
@@ -95,7 +97,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         running = true;
         operation = "resume";
         NotifyWorkflowChanged();
-        try { Status = (await services.ExecuteAsync("resume")).Message; }
+        try { Status = (await services.ResumeAsync()).Message; }
         catch (Exception error) { Status = error.Message; }
         finally { running = false; operation = null; NotifyWorkflowChanged(); }
     }
@@ -205,7 +207,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             .AppendLine(new string('-', 100));
         foreach (var entry in PerformanceEntries)
             lines.AppendLine($"{entry.Name} | {entry.Status} | {entry.DurationDisplay} | {entry.StartedDisplay} | {entry.Details}{(string.IsNullOrWhiteSpace(entry.Error) ? "" : " | " + entry.Error)}");
-        lines.AppendLine().AppendLine("HƯỚNG DẪN CHO CHATGPT");
+        lines.AppendLine().AppendLine("HƯỚNG DẪN CHO AI");
         lines.AppendLine("Hãy xác định 3 bước tốn thời gian nhất, phân biệt chờ MISA/UI Automation với xử lý nội bộ, và đề xuất cách đo hoặc tối ưu tiếp theo. Không giả định thành công nếu có bước lỗi.");
         return lines.ToString();
     }
@@ -296,6 +298,17 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             var identity = await WaitForSessionAsync();
             FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
             if (identity is null) return;
+            var precheck = BeginTrace("Kiểm tra giao diện MISA", "Đối chiếu ID control của profile với MISA đang mở");
+            var screens = await CheckScreensAsync();
+            // Only a concrete selector mismatch blocks; an unreadable tree is left to the workflow's own guards.
+            if (screens.Report is { Ok: false })
+            {
+                FinishTrace(precheck, "Không khớp", screens.Summary);
+                Status = screens.Summary;
+                RaiseError("Giao diện MISA không khớp profile. Có thể MISA đã cập nhật phiên bản hoặc cửa sổ quá nhỏ.", screens.Details);
+                return;
+            }
+            FinishTrace(precheck, "Hoàn tất", screens.Report is null ? screens.Summary : null);
             operation = "enter";
             SetConnection(MisaConnection.Connected, "");
             foreach (var invoice in queue)
@@ -325,21 +338,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
                 Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để hủy bước đang chạy."
                     + (explicitRun ? "" : " Chưa tick hóa đơn nào nên chạy từ hóa đơn đang chọn trở đi.");
-                PerformanceCurrent = "live_run · đang chạy";
+                PerformanceCurrent = "Nhập hóa đơn · đang chạy";
                 OperationResult response;
                 var windowReruns = 0;
                 for (var rerun = 0; ; rerun++)
                 {
-                    var liveRun = BeginTrace("live_run", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}"
+                    var liveRun = BeginTrace("Nhập hóa đơn", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}"
                         + (rerun == 0 ? "" : $" · chạy lại lần {rerun}"));
-                    response = await services.ExecuteAsync("live_run", new
-                    {
-                        invoice,
-                        windowIdentity = identity,
-                        executionMode = "live_production",
-                        liveValidation = true,
-                        allowKgToTon = true
-                    });
+                    response = await services.RunInvoiceAsync(invoice, identity ?? "");
                     FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
                     // MISA was restarted, re-logged or switched data with nothing of this invoice left open:
                     // find the session again (waiting for login if needed) and enter the invoice from scratch.
@@ -564,12 +570,31 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (owned) { running = true; operation = "reconcile"; NotifyWorkflowChanged(); }
         try
         {
-            var result = await services.ExecuteAsync("reconcile", expectedRevision: invoice.Fingerprint);
+            var result = await services.ReconcileAsync(invoice.Fingerprint);
             Status = result.Message;
             NotifyWorkflowChanged();
             return result;
         }
         finally { if (owned) { running = false; operation = null; NotifyWorkflowChanged(); } }
+    }
+
+    /// <summary>Matches the profile selectors against the open MISA screens (read-only).</summary>
+    public async Task<ScreenCheckView> CheckScreensAsync(CancellationToken token = default)
+    {
+        try
+        {
+            var windows = await services.Native.FindCandidatesAsync(token);
+            var sessions = Sessions(windows);
+            if (sessions.Count != 1)
+                return new(false, sessions.Count == 0 ? NoSessionDetail(windows) : "Đang mở nhiều phiên MISA; hãy đóng bớt rồi kiểm tra lại.", "");
+            var report = await services.CheckScreensAsync(sessions[0], token);
+            return new(report.Ok, report.Summary, report.Details, report);
+        }
+        catch (Exception error) when (error is AutomationException or InvalidOperationException or ArgumentException
+            or System.ComponentModel.Win32Exception or System.Runtime.InteropServices.COMException)
+        {
+            return new(false, "Không kiểm tra được giao diện MISA: " + error.Message, error.ToString());
+        }
     }
 
     private void SetConnection(MisaConnection value, string detail)
@@ -688,7 +713,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         {
             var observation = await services.Native.ObserveAsync(window.WindowHandle, null, token,
                 services.WorkflowProfile.SalesScopeId);
-            return (services.MisaProfile.IsSalesSurface(observation.Elements), observation.Frame.Window);
+            return (services.WorkflowProfile.IsSalesSurface(observation.Elements), observation.Frame.Window);
         }
         catch (Exception error) when (error is AutomationException or ArgumentException
             or InvalidOperationException or System.ComponentModel.Win32Exception)
