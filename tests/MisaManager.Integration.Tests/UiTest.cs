@@ -24,7 +24,12 @@ public abstract class UiTest
         catch
         {
             var shot = FakeMisa.Screenshot(name);
+            var tree = UiaDump.Dump(misa.Window.WindowHandle);
+            var dumpDirectory = Path.Combine(AppContext.BaseDirectory, "TestResults", "uia");
+            Directory.CreateDirectory(dumpDirectory);
+            await File.WriteAllTextAsync(Path.Combine(dumpDirectory, name + ".txt"), tree, CancellationToken.None);
             TestContext.Current.TestOutputHelper?.WriteLine($"Screenshot: {shot ?? "(không chụp được)"}; state: {misa.StatePath}; logs: {misa.Root}");
+            TestContext.Current.TestOutputHelper?.WriteLine(tree.Length > 6000 ? tree[..6000] : tree);
             throw;
         }
     }
