@@ -80,7 +80,7 @@ public sealed class TaxPromptWindow : Window
 {
     public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated)
     {
-        this.Id(profile.ScopeId("tax_rounding_prompt"));
+        Ui.Id(this, profile.ScopeId("tax_rounding_prompt"));
         Title = "MISA SME 2023";
         Width = 560;
         Height = 230;

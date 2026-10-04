@@ -48,7 +48,7 @@ public sealed class VoucherWindow : Window, IGridSource
         this.store = store;
         this.main = main;
         Owner = main;
-        this.Id(profile.ScopeId("sales_voucher"));
+        Ui.Id(this, profile.ScopeId("sales_voucher"));
         Title = "Bán hàng hóa, dịch vụ trong nước - Tiền mặt - " + company;
         var area = SystemParameters.WorkArea;
         Left = area.Left;
@@ -228,15 +228,15 @@ public sealed class VoucherWindow : Window, IGridSource
         return grid;
     }
 
-    private string Id(string element) => profile.Id("sales_voucher", element);
+    private string FieldId(string element) => profile.Id("sales_voucher", element);
 
     private Grid ReceiptTab() => Split(
         Ui.Group("Thông tin chung", Ui.Form(100, ("Khách hàng", CustomerRow()), ("Người nộp", Field("payer")),
             ("Địa chỉ", Field("address")), ("Lý do nộp", Field("reason")), ("NV bán hàng", Ui.Text()), ("Kèm theo", Ui.Text()))),
         Ui.Group("Chứng từ", Ui.Form(100,
-            ("Ngày hạch toán", Field("posted_date", Id("posted_date"))),
-            ("Ngày chứng từ", Field("voucher_date", Id("voucher_date"))),
-            ("Số phiếu thu", Field("voucher_number", Id("voucher_number"))))));
+            ("Ngày hạch toán", Field("posted_date", FieldId("posted_date"))),
+            ("Ngày chứng từ", Field("voucher_date", FieldId("voucher_date"))),
+            ("Số phiếu thu", Field("voucher_number", FieldId("voucher_number"))))));
 
     private Grid IssueTab() => Split(
         Ui.Group("Thông tin chung", Ui.Form(100, ("Khách hàng", CustomerRow()), ("Người nhận", Ui.Text()),
@@ -246,12 +246,12 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private Grid InvoiceTab() => Split(
         Ui.Group("Thông tin chung", Ui.Form(100, ("Khách hàng", CustomerRow()), ("Địa chỉ", Field("address")),
-            ("Mã số thuế", Field("customer_tax", Id("customer_tax"))), ("Diễn giải", Ui.Text(value: "Xuất hóa đơn")),
-            ("Người mua hàng", Field("buyer")), ("Hình thức TT", Field("payment", Id("payment"))))),
+            ("Mã số thuế", Field("customer_tax", FieldId("customer_tax"))), ("Diễn giải", Ui.Text(value: "Xuất hóa đơn")),
+            ("Người mua hàng", Field("buyer")), ("Hình thức TT", Field("payment", FieldId("payment"))))),
         Ui.Group("Hoá đơn", Ui.Form(100, ("Mẫu số HĐ", Field("template")),
-            ("Ký hiệu HĐ", Field("series", Id("series"))),
-            ("Số hóa đơn", Field("number", Id("number"))),
-            ("Ngày hóa đơn", Field("issued_date", Id("issued_date"))))));
+            ("Ký hiệu HĐ", Field("series", FieldId("series"))),
+            ("Số hóa đơn", Field("number", FieldId("number"))),
+            ("Ngày hóa đơn", Field("issued_date", FieldId("issued_date"))))));
 
     private void CommitField(string key, string text)
     {
