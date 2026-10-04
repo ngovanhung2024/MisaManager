@@ -79,7 +79,7 @@ public sealed class MainWindow : Window, IGridSource
         content.Children.Add(list);
         modules.Items.Cast<TabItem>().ElementAt(3).Content = content;
         scope.Children.Add(modules);
-        root.Children.Add(scope);
+        root.Children.Add(new ChildWindowHost(scope, "Bán hàng"));
         Content = root;
     }
 

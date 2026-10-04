@@ -26,7 +26,14 @@ public sealed record Scenario
     };
 
     public static Scenario Load(string? path)
-        => path is null ? new Scenario() : JsonSerializer.Deserialize<Scenario>(File.ReadAllText(path), Json) ?? new Scenario();
+    {
+        var scenario = path is null ? null : JsonSerializer.Deserialize<Scenario>(File.ReadAllText(path), Json);
+        return scenario is null ? new Scenario() : scenario with
+        {
+            ExistingVouchers = scenario.ExistingVouchers ?? [],
+            TakenItemCodes = scenario.TakenItemCodes ?? []
+        };
+    }
 }
 
 public sealed record SavedLine(string Code, string Name, string Unit, string DebitAccount, string RevenueAccount,
