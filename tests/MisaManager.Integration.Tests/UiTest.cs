@@ -28,6 +28,8 @@ public abstract class UiTest
             var dumpDirectory = Path.Combine(AppContext.BaseDirectory, "TestResults", "uia");
             Directory.CreateDirectory(dumpDirectory);
             await File.WriteAllTextAsync(Path.Combine(dumpDirectory, name + ".txt"), tree, CancellationToken.None);
+            var events = Path.Combine(misa.Root, "fake-events.log");
+            if (File.Exists(events)) File.Copy(events, Path.Combine(dumpDirectory, name + ".events.log"), overwrite: true);
             TestContext.Current.TestOutputHelper?.WriteLine($"Screenshot: {shot ?? "(không chụp được)"}; state: {misa.StatePath}; logs: {misa.Root}");
             TestContext.Current.TestOutputHelper?.WriteLine(tree.Length > 6000 ? tree[..6000] : tree);
             throw;

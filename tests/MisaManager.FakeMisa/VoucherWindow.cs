@@ -255,6 +255,7 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void CommitField(string key, string text)
     {
+        FakeLog.Write($"field {key} <- '{text}'{(saved ? " (ignored: saved)" : "")}");
         if (saved) return;
         var value = text.Trim();
         if (key.EndsWith("_date", StringComparison.Ordinal) && DateTime.TryParseExact(value,
@@ -270,6 +271,7 @@ public sealed class VoucherWindow : Window, IGridSource
             header["address"] = customer.Address;
             header["customer_tax"] = customer.TaxCode;
             header["payer"] = header["buyer"] = customer.Name;
+            FakeLog.Write($"customer {customer.Code} → {customer.Name} / {customer.TaxCode}");
         }
         SyncHeader();
     }
@@ -284,6 +286,7 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void OnCellCommitted(object? sender, CellCommitEventArgs e)
     {
+        FakeLog.Write($"cell row={e.Row?.ToString() ?? "-1"} {e.Key} <- '{e.Text}' by {e.Trigger}");
         if (saved) return;
         var focusRow = e.Row;
         var text = e.Text.Trim();
@@ -366,7 +369,9 @@ public sealed class VoucherWindow : Window, IGridSource
     private void QuickAddItem(int? row)
     {
         if (saved || row is { } index && lines[index].Code.Length > 0) return;
-        var dialog = new NewItemWindow(profile, store) { Owner = this };
+        FakeLog.Write("F9 new item");
+        // Owned by the main window like R20, so the dialog is not a UIA descendant of the voucher editor.
+        var dialog = new NewItemWindow(profile, store) { Owner = main };
         if (dialog.ShowDialog() != true || dialog.Created is not { } item) return;
         var line = row is { } existing ? lines[existing] : new LineModel();
         Apply(line, item);
@@ -381,6 +386,7 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void Save()
     {
+        FakeLog.Write($"Cất (saved={saved}, lines={lines.Count}, customer='{header["customer"]}', number='{header["number"]}')");
         if (saved) return;
         if (Keyboard.FocusedElement is TextBox focused && bound.FirstOrDefault(item => item.Box == focused) is { Box: not null } field)
             CommitField(field.Key, focused.Text);
@@ -425,6 +431,7 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void CloseVoucher()
     {
+        FakeLog.Write($"Đóng (dirty={dirty}, saved={saved})");
         if (dirty && !saved)
         {
             var answer = MessageBox.Show(this, "Dữ liệu đã bị thay đổi. Bạn có muốn cất không?", Prompt,
