@@ -181,6 +181,25 @@ public sealed partial class AppServices : IAsyncDisposable
         finally { workflowGate.Release(); }
     }
 
+    public async Task<OperationResult> AbandonStoppedSessionAsync(CancellationToken token = default)
+    {
+        await workflowGate.WaitAsync(token);
+        try
+        {
+            await EnsureInitializedAsync(token);
+            var abandoned = await Workflow.AbandonStoppedSessionAsync(token);
+            return new("ui", OperationStatuses.Completed,
+                abandoned?.SessionDetached == true
+                    ? "Đã bỏ checkpoint cũ; bắt đầu phiên Thêm vào MISA mới."
+                    : "Không có checkpoint tạm dừng cần bỏ.", Data: abandoned?.Snapshot);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return new("ui", OperationStatuses.Blocked, error.Message);
+        }
+        finally { workflowGate.Release(); }
+    }
+
     public async Task<OperationResult> ReconcileAsync(string expectedRevision, CancellationToken token = default)
     {
         await workflowGate.WaitAsync(token);

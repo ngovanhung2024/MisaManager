@@ -13,7 +13,8 @@ public sealed record WorkflowContext(
     IReadOnlyList<ReconciliationAttempt>? Reconciliations = null,
     bool AllowKgToTon = false,
     bool LiveMode = false,
-    WorkflowExecutionMode ExecutionMode = WorkflowExecutionMode.Interactive);
+    WorkflowExecutionMode ExecutionMode = WorkflowExecutionMode.Interactive,
+    bool SessionDetached = false);
 
 public sealed record ReconciliationAttempt(DateTimeOffset OccurredAt, string Phase,
     ReconciliationResult? Result, string? Error = null);
@@ -200,6 +201,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 ArchiveIncompatibleSession(error.Message);
                 saved = null;
             }
+            // Detached sessions remain in history for duplicate/uncertainty
+            // checks, but never become the active checkpoint on restart.
+            if (saved?.SessionDetached == true) saved = null;
             if (saved is not null)
             {
                 // Legacy live sessions were persisted without an execution mode.
@@ -310,6 +314,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     + string.Join(" | ", blocking));
             }
             var previous = Current;
+            var detachedSaved = await ResolveDetachedInvoiceAsync(invoice, companyIdentity, windowIdentity, cancellationToken);
             if (previous?.Snapshot.Status == WorkflowStatus.Saved && previous.Snapshot.RunId != resolvedSavedRunId)
             {
                 // Recovery can confirm Save while its read-only editor remains
@@ -348,6 +353,12 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                         && previous.Invoice.Source.Sha256 == invoice.Source.Sha256
                         && previous.CompanyIdentity == companyIdentity && previous.WindowIdentity == windowIdentity
                 };
+                if (detachedSaved)
+                {
+                    context = Replace(context, WorkflowStatus.Discarded, null,
+                        message: "Hóa đơn của phiên đã dừng đã được Cất; bỏ qua, không nhập lại.");
+                    context = context with { Snapshot = context.Snapshot with { LastErrorCode = ExistingInvoiceCode } };
+                }
             }
             await PersistAsync(context!, CancellationToken.None);
             return context!;
@@ -360,6 +371,50 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         await transitionGate.WaitAsync(cancellationToken);
         try { return await AdvanceCoreAsync(cancellationToken); }
         finally { transitionGate.Release(); }
+    }
+
+    // Only the same invoice needs the old outcome; unrelated new sessions use
+    // their own preflight and never resume a detached checkpoint.
+    private async Task<bool> ResolveDetachedInvoiceAsync(InvoiceDocument invoice, string companyIdentity,
+        string windowIdentity, CancellationToken token)
+    {
+        var saved = false;
+        foreach (var old in await ReadHistoryAsync(token))
+        {
+            if (!old.SessionDetached
+                || InvoiceLookup.ByNumber([old.Invoice], invoice.Identity.Number, invoice.Identity.Series) is null
+                || TextKey.Compact(old.Invoice.Identity.Series) != TextKey.Compact(invoice.Identity.Series)
+                || TextKey.Compact(old.Invoice.Identity.SellerTaxCode) != TextKey.Compact(invoice.Identity.SellerTaxCode)
+                || old.CompanyIdentity.Length > 0 && companyIdentity.Length > 0 && old.CompanyIdentity != companyIdentity)
+                continue;
+            if (old.Snapshot.Status == WorkflowStatus.Saved && !old.Snapshot.InputPending)
+            {
+                saved |= old.WindowIdentity == windowIdentity;
+                continue;
+            }
+            var uncertain = old.Snapshot.Status is WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain
+                || old.Snapshot.InputPending || old.Snapshot.LastInputDisposition == InputDisposition.Uncertain
+                || old.Snapshot.PausedFromStatus is WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain;
+            if (IsTerminal(old.Snapshot.Status) && !uncertain) continue;
+            var voucher = old.NativeValues?.GetValueOrDefault("voucher_number");
+            if (!uncertain && !VoucherWasOpened(old) && string.IsNullOrWhiteSpace(voucher)) continue;
+            if (old.WindowIdentity != windowIdentity || uncertain && string.IsNullOrWhiteSpace(voucher))
+                throw new AutomationException("DETACHED_INVOICE_UNCERTAIN",
+                    $"Hóa đơn {invoice.Identity.Number} chưa rõ kết quả lần nhập trước; chưa gửi input cho hóa đơn này.");
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(90));
+            var proof = await native.ExecuteAsync(old,
+                new(old.Snapshot.Status, WorkflowStatus.Discarded, ResolveStaleAction, "Voucher no longer open",
+                    ResolveStaleAction, "Complete sales register readback", TimeSpan.FromSeconds(90)),
+                (_, _) => Task.CompletedTask, deadline.Token);
+            if (!proof.Confirmed || proof.Status is not (WorkflowStatus.Saved or WorkflowStatus.Discarded))
+                throw new AutomationException("DETACHED_INVOICE_UNCERTAIN",
+                    $"Hóa đơn {invoice.Identity.Number} chưa rõ đã Cất hay chưa. " + proof.Message);
+            var resolved = Replace(old, proof.Status, proof.NativeFrame, message: proof.Message);
+            await stateStore.WriteAsync("workflow-context", Path.Combine("runs", old.Snapshot.RunId, "workflow.json"), resolved, token);
+            saved |= proof.Status == WorkflowStatus.Saved;
+        }
+        return saved;
     }
 
     // Hold the same transition lease across the batch; pause can still cancel active native work.
@@ -448,6 +503,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             current = await StartAsync(invoice, companyIdentity, windowIdentity, token, liveValidation,
                 profileRevision, requestId, operationId, allowKgToTon,
                 executionMode: executionMode);
+            if (current.Snapshot.Status == WorkflowStatus.Discarded && current.Snapshot.LastErrorCode == ExistingInvoiceCode)
+                return await CompleteLiveRecordAsync(current, startedAt, "existing", false, false, null,
+                    current.Snapshot.LastMessage, token, misaClean: true);
             var batch = await RunUntilAsync(current.Snapshot.RunId, invoice.Fingerprint, WorkflowStatus.Ready,
                 WorkflowStatus.AwaitingSave, 20, token, allowKgToTon);
             current = batch.Context;
@@ -825,6 +883,39 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             lock (gate) context = resumed;
             await PersistAsync(resumed, CancellationToken.None);
             return resumed;
+        }
+        finally { transitionGate.Release(); }
+    }
+
+    /// <summary>
+    /// Releases the active checkpoint after a stop or an explicit new batch.
+    /// History retains the actual outcome, including uncertain input/save.
+    /// </summary>
+    public async Task<WorkflowContext?> AbandonStoppedSessionAsync(CancellationToken token = default)
+    {
+        await InitializeAsync(token);
+        await transitionGate.WaitAsync(token);
+        try
+        {
+            WorkflowContext? current;
+            lock (gate) current = context;
+            if (current is null)
+                return current;
+            var abandoned = current with { SessionDetached = true };
+            // Journal first: a crash must never lose the uncertainty proof.
+            await stateStore.WriteAsync("workflow-context", Path.Combine("runs", current.Snapshot.RunId, "workflow.json"),
+                abandoned, CancellationToken.None);
+            await stateStore.WriteAsync("workflow-session", SessionPath(current.ExecutionMode), abandoned, CancellationToken.None);
+            lock (gate)
+            {
+                context = null;
+                cancellation?.Dispose();
+                cancellation = null;
+                pauseRequested = false;
+                cancelRequested = false;
+                LastLiveRun = null;
+            }
+            return abandoned;
         }
         finally { transitionGate.Release(); }
     }

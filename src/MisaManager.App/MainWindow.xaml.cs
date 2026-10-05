@@ -103,6 +103,11 @@ public partial class MainWindow : Window
         MappingItems.ItemsSource = mappingRows;
         PerformanceList.ItemsSource = workflow.PerformanceEntries;
         workflow.WorkflowChanged += (_, _) => { RefreshWorkflowPanel(); RefreshRunSummary(); };
+        workflow.SessionReset += (_, _) =>
+        {
+            lastWorkflowError = null;
+            ErrorPopup.Visibility = Visibility.Collapsed;
+        };
         ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
         ((App)Application.Current).Services.PartyCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshPartyLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
