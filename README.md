@@ -84,9 +84,11 @@ CI (`.github/workflows/ci.yml`) chạy build + unit test + integration test trê
 1. Mỗi push/merge vào `master` (trừ thay đổi chỉ ở `*.md`), `release.yml` tự phát hành bản
    `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `<Version>` trong `Directory.Build.props` (đổi ở đó để
    lên 0.3, 1.0…). Vẫn có thể phát hành version cụ thể bằng tag `v1.2.3` hoặc chạy tay workflow với ô version.
-2. `release.yml` chạy unit test, `scripts/release.ps1 -Stage -Installer` (build self-contained, health-check, MSI có
+2. `release.yml` chạy ngay sau merge, không chạy test và không chờ kết quả CI. Workflow chạy
+   `scripts/release.ps1 -Stage -Installer` (build self-contained, health-check, MSI có
    shortcut Start menu/Desktop), ký số (nếu có secret), rồi tạo GitHub Release gồm `MisaManager-<version>.msi`,
-   `SHA256SUMS.txt`, `release-manifest.json`. Với PR, workflow chỉ build MSI và đính kèm làm artifact.
+   `SHA256SUMS.txt`, `release-manifest.json`. Build và đóng gói vẫn cần thời gian trước khi app thấy bản cập nhật.
+   CI chạy build và test độc lập; lỗi test không chặn phát hành. Với PR, workflow chỉ build MSI và đính kèm làm artifact.
 3. App tự kiểm tra khi mở (tắt được) hoặc qua **••• → Kiểm tra cập nhật…**: tải MSI, kiểm tra SHA-256, đóng app, chạy
    `msiexec /passive` (per-user, không cần quyền admin) rồi mở lại app. App từ chối cập nhật khi đang có hóa đơn dở.
 
