@@ -131,6 +131,7 @@ internal static class NativeKeyboard
     internal static void Click(int x, int y, nint windowHandle, int processId, nint targetHandle = default)
     {
         Activate(targetHandle == nint.Zero ? windowHandle : targetHandle, windowHandle, processId);
+        WaitForUserButtonsReleased();
         if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới ô MISA.");
         // A topmost window (toast, this tool's own rail) over the point would receive the click instead of MISA.
         var hit = WindowFromPoint(new PointStruct { X = x, Y = y });
@@ -139,13 +140,38 @@ internal static class NativeKeyboard
             throw new AutomationException("FOCUS_LOST", hit != nint.Zero && hitProcess == Environment.ProcessId
                 ? "Cửa sổ của MISA Manager (đối chiếu/tool) đang che nút MISA cần bấm; không click."
                 : "Có cửa sổ khác che ô MISA cần click; không click.");
+        // Every event carries the absolute target, and SendInput queues the batch without
+        // interleaving: a user moving the mouse meanwhile cannot redirect the press or release.
+        var (dx, dy) = AbsolutePoint(x, y);
+        const uint at = MouseMove | MouseAbsolute | MouseVirtualDesk;
         var inputs = new[]
         {
-            Mouse(0x0002),
-            Mouse(0x0004)
+            Mouse(at, dx, dy),
+            Mouse(at | MouseLeftDown, dx, dy),
+            Mouse(at | MouseLeftUp, dx, dy)
         };
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length)
             throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được click ô MISA.", true);
+    }
+
+    private const uint MouseMove = 0x0001, MouseLeftDown = 0x0002, MouseLeftUp = 0x0004,
+        MouseVirtualDesk = 0x4000, MouseAbsolute = 0x8000;
+
+    private static (int X, int Y) AbsolutePoint(int x, int y)
+    {
+        var left = GetSystemMetrics(76); var top = GetSystemMetrics(77);
+        var width = Math.Max(2, GetSystemMetrics(78)); var height = Math.Max(2, GetSystemMetrics(79));
+        return ((int)Math.Round((x - left) * 65535d / (width - 1)), (int)Math.Round((y - top) * 65535d / (height - 1)));
+    }
+
+    // A physically held button would merge with the injected press (drag/selection instead of a click).
+    private static void WaitForUserButtonsReleased()
+    {
+        for (var attempt = 0; (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0; attempt++)
+        {
+            if (attempt >= 40) throw new AutomationException("FOCUS_LOST", "Chuột đang được giữ; thả chuột để tool bấm tiếp.");
+            Thread.Sleep(50);
+        }
     }
 
     private static nint InputRoot(nint targetHandle, nint windowHandle, int processId)
@@ -188,8 +214,10 @@ internal static class NativeKeyboard
     { Type = 1, Data = new() { Keyboard = new() { Key = code, Flags = up ? 2u : 0u } } };
     [StructLayout(LayoutKind.Sequential)] private struct PointStruct { public int X, Y; }
     [DllImport("user32.dll")] private static extern nint WindowFromPoint(PointStruct point);
-    private static NativeInput Mouse(uint flags) => new()
-    { Type = 0, Data = new() { Mouse = new() { Flags = flags } } };
+    private static NativeInput Mouse(uint flags, int x, int y) => new()
+    { Type = 0, Data = new() { Mouse = new() { X = x, Y = y, Flags = flags } } };
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [StructLayout(LayoutKind.Sequential)] private struct KeyboardInput { public ushort Key, Scan; public uint Flags, Time; public nuint Extra; }
     [StructLayout(LayoutKind.Sequential)] private struct MouseInput { public int X, Y; public uint Data, Flags, Time; public nuint Extra; }
     [StructLayout(LayoutKind.Explicit)] private struct InputUnion
