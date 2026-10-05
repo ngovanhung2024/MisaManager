@@ -18,6 +18,8 @@ public sealed record Scenario
     public IReadOnlyList<string> TakenItemCodes { get; init; } = [];
     /// <summary>Also opens the "MISA SME 2023" login window next to the session window.</summary>
     public bool ShowLoginWindow { get; init; }
+    /// <summary>R20 builds whose "Hóa đơn" tab shows the buyer MST in a control the profile selector does not match.</summary>
+    public bool CustomerTaxUnlisted { get; init; }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {

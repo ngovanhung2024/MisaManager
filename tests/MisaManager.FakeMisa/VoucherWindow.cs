@@ -247,7 +247,8 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private Grid InvoiceTab() => Split(
         Ui.Group("Thông tin chung", Ui.Form(100, ("Khách hàng", CustomerRow()), ("Địa chỉ", Field("address")),
-            ("Mã số thuế", Field("customer_tax", FieldId("customer_tax"))), ("Diễn giải", Ui.Text(value: "Xuất hóa đơn")),
+            ("Mã số thuế", Field("customer_tax", scenario.CustomerTaxUnlisted ? "txtUnlistedTaxCode" : FieldId("customer_tax"))),
+            ("Diễn giải", Ui.Text(value: "Xuất hóa đơn")),
             ("Người mua hàng", Field("buyer")), ("Hình thức TT", Field("payment", FieldId("payment"))))),
         Ui.Group("Hoá đơn", Ui.Form(100, ("Mẫu số HĐ", Field("template")),
             ("Ký hiệu HĐ", Field("series", FieldId("series"))),

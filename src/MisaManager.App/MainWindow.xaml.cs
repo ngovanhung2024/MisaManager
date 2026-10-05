@@ -675,7 +675,9 @@ public partial class MainWindow : Window
         ErrorPopupMessage.Text = error.Message;
         ErrorPopupHint.Text = hint ?? "";
         ErrorPopupHintBox.Visibility = hint is null ? Visibility.Collapsed : Visibility.Visible;
-        ErrorPopupDetails.Text = error.Details;
+        var causes = ErrorPrompt.Causes(error.Message, error.Details);
+        ErrorPopupDetails.Text = string.Join(Environment.NewLine, causes.Select(cause => "• " + cause));
+        ErrorPopupDetailsBox.Visibility = causes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         ErrorPopup.Visibility = Visibility.Visible;
         Motion.FadeIn(ErrorPopup, fromY: -6);
     }
@@ -696,7 +698,7 @@ public partial class MainWindow : Window
     {
         if (lastWorkflowError is null) return;
         var text = workflow.ExportLastError(lastWorkflowError.Message, lastWorkflowError.Details, lastWorkflowError.OccurredAt);
-        StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy thông tin lỗi và hiệu năng vào clipboard.";
+        StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy lỗi; dán vào AI để được hỗ trợ sửa.";
     }
 
     private async void ExportReport_Click(object sender, RoutedEventArgs e)

@@ -218,8 +218,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var checkpointStarted = Stopwatch.GetTimestamp();
         try
         {
-            var window = BindTarget(context, activate: transition.Action != "verify_only");
+            var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction));
             ValidateDocument(context);
+            if (transition.Action == WorkflowRunner.ResolveStaleAction)
+                return await ResolveStaleAsync(context, window, token);
             if (transition.Action == "verify_only")
             {
                 if (transition.To is WorkflowStatus.Saved or WorkflowStatus.Discarded)
@@ -840,9 +842,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             ("posted_date", context.Invoice.PostedDate!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date)
         ];
         var taxField = CustomerTaxField(context);
-        var taxOnReceipt = taxField is { } tax && await CustomerTaxTab(token) == profile.ReceiptTab;
-        if (taxOnReceipt) receiptFields.Add(taxField!.Value);
-        await CompareFields(profile.ReceiptTab, [.. receiptFields]);
+        var taxOnReceipt = taxField is not null && CustomerTaxTab == profile.ReceiptTab;
         var invoiceFields = new List<(string Key, string Expected, NativeValueKind Kind)>
         {
             ("number", context.Invoice.Identity.Number, NativeValueKind.Exact),
@@ -852,8 +852,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // An empty source series keeps MISA's default series; there is nothing to compare.
         if (context.Invoice.Identity.Series.Length > 0)
             invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
-        if (taxField is not null && !taxOnReceipt) invoiceFields.Add(taxField.Value);
+        // Invoice tab first: entry ends there, and Cất needs the receipt tab, so each header tab is selected once.
         await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
+        if (taxField is { } tax && !taxOnReceipt) values.Add(await CompareCustomerTaxAsync(tax.Expected, BuyerCode(context), token));
+        await CompareFields(profile.ReceiptTab, [.. receiptFields]);
+        if (taxField is { } receiptTax && taxOnReceipt) values.Add(await CompareCustomerTaxAsync(receiptTax.Expected, BuyerCode(context), token));
         // BindEditor/ValidateDocument require the exact domestic cash editor.
         // R20 has no currency control on this VND-only surface.
         values.Add(new("currency", context.Invoice.Currency, "VND",
@@ -945,25 +948,64 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         => string.IsNullOrWhiteSpace(context.Invoice.Buyer.TaxCode) ? null
             : ("customer_tax", context.Invoice.Buyer.TaxCode, NativeValueKind.Exact);
 
-    private string? customerTaxTab;
-
     // R20 cash sales show the buyer tax code on the "Hóa đơn" tab; "Phiếu thu" has no MST control.
-    // Probe the receipt tab once (no wait) and remember which tab exposes the field.
-    private async Task<string> CustomerTaxTab(CancellationToken token)
+    private string CustomerTaxTab => profile.FieldTabs.GetValueOrDefault("customer_tax", profile.InvoiceTab);
+    // Once the MST control proved absent in this MISA session, later reads try once instead of waiting.
+    private volatile bool customerTaxAbsent;
+
+    /// <summary>
+    /// Reads the buyer MST on the already selected tab. MISA fills it from its customer list once the code is chosen;
+    /// when this R20 build shows no control matching the profile selector, the customer list (exported from MISA) is
+    /// the proof: the verified customer code must carry the source MST there. A readable MISA value always decides.
+    /// </summary>
+    private async Task<ValueComparison> CompareCustomerTaxAsync(string expected, string? customerCode, CancellationToken token)
     {
-        if (customerTaxTab is not null) return customerTaxTab;
-        await Tab(profile.ReceiptTab, token);
+        Readback? read = null;
         try
         {
-            await input.ReadFieldsAsync(await input.CaptureAsync(token),
-                new Dictionary<string, NativeSelector> { ["customer_tax"] = profile.Fields["customer_tax"] }, token);
-            customerTaxTab = profile.ReceiptTab;
+            read = await NativeWait.UntilAsync(async () => await input.ReadFieldAsync(await input.CaptureAsync(token),
+                profile.Fields["customer_tax"], token), _ => true, "TARGET_NOT_FOUND", "Không thấy ô Mã số thuế.", token,
+                timeoutMilliseconds: customerTaxAbsent ? 1 : 1500);
         }
-        catch (AutomationException error) when (error.Code == "TARGET_NOT_FOUND" && !error.InputMayHaveBeenSent)
+        catch (AutomationException error) when (error.Code == "TARGET_NOT_FOUND" && !error.InputMayHaveBeenSent) { }
+        customerTaxAbsent = read is null;
+        if (read is not null)
+            return new("customer_tax", expected, read.Value,
+                PartyCatalogStore.TaxKey(expected) == PartyCatalogStore.TaxKey(read.Value), read.Source);
+        var listed = PartyCatalog?.FindByCode(customerCode)?.TaxCode ?? "";
+        return new("customer_tax", expected, listed.Length == 0 ? null : listed,
+            listed.Length > 0 && PartyCatalogStore.TaxKey(expected) == PartyCatalogStore.TaxKey(listed),
+            $"PartyCatalog:{customerCode} (MISA không hiện ô MST theo profile)");
+    }
+
+    // The run ended in doubt and the user has since closed its voucher. Nothing is typed or clicked:
+    // a complete register read decides whether that voucher was saved.
+    private async Task<WorkflowObservation> ResolveStaleAsync(WorkflowContext context, WindowIdentity window, CancellationToken token)
+    {
+        var number = context.Invoice.Identity.Number;
+        try
         {
-            customerTaxTab = profile.InvoiceTab;
+            if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                return new(false, context.Snapshot.Status, "",
+                    $"Chứng từ bán hàng vẫn đang mở trong MISA; chưa xác định được hóa đơn {number} đã Cất hay chưa.",
+                    ErrorCode: "EXISTING_EDITOR");
+            // Without a voucher number the voucher was never identified; MISA's duplicate-number prompt still guards it.
+            if (context.NativeValues?.GetValueOrDefault("voucher_number") is not { Length: > 0 } voucher)
+                return new(true, WorkflowStatus.Discarded, Frame(await input.CaptureAsync(token)),
+                    $"Lần chạy trước của hóa đơn {number} dừng trước khi có chứng từ; chứng từ đã đóng.");
+            var sales = await BindSales(context, token, activate: false);
+            var register = await input.ReadCompleteTableAsync(sales, profile.SalesGridId, SalesFinishedColumns(), token);
+            var saved = register.Rows.Any(row =>
+                Match(voucher, row[profile.SalesColumns["voucher_number"]], NativeValueKind.Exact)
+                && Match(number, row[profile.SalesColumns["number"]], NativeValueKind.Exact));
+            return new(true, saved ? WorkflowStatus.Saved : WorkflowStatus.Discarded, Frame(register.Frame), saved
+                ? $"Danh sách MISA có chứng từ {voucher} (hóa đơn {number}): lần chạy trước đã Cất."
+                : $"Danh sách MISA không có chứng từ {voucher}: hóa đơn {number} chưa được Cất, chứng từ đã đóng.");
         }
-        return customerTaxTab;
+        catch (AutomationException error)
+        {
+            return new(false, context.Snapshot.Status, "", error.Message, ErrorCode: error.Code);
+        }
     }
 
     private async Task<NativeFields> VerifyCustomer(WorkflowContext context, CancellationToken token, bool selecting = false)
@@ -979,16 +1021,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             actual => expected.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)
                 || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)),
             "READBACK_MISMATCH", "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.", token, timeoutMilliseconds: 15000);
-        if (CustomerTaxField(context) is { } tax)
-        {
-            var tab = await CustomerTaxTab(token);
-            await Tab(tab, token);
-            await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token),
-                    new Dictionary<string, NativeSelector> { [tax.Key] = profile.Fields[tax.Key] }, token),
-                actual => Match(tax.Expected, actual.Values[tax.Key].Value, tax.Kind),
-                "READBACK_MISMATCH", $"Mã số thuế khách hàng MISA (tab {tab}) chưa khớp nguồn {tax.Expected}.", token, timeoutMilliseconds: 15000);
-            if (tab != profile.ReceiptTab) await Tab(profile.ReceiptTab, token);
-        }
+        // The buyer MST is compared by the reconciliation before Cất, on the tab it is already reading.
         return customer;
     }
     private async Task VerifyDates(WorkflowContext context, CancellationToken token)

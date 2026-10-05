@@ -139,8 +139,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private bool IsDone(InvoiceDocument invoice) => History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
         && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot)));
 
-    private bool HasDiscardedRun(InvoiceDocument invoice) => History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
-        && run.Snapshot.Status == WorkflowStatus.Discarded);
     public IReadOnlyList<WorkflowContext> History { get; private set; } = [];
     public WorkflowActivity? Activity => services.Activity;
     public ObservableCollection<PerformanceTraceEntry> PerformanceEntries { get; } = [];
@@ -211,24 +209,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             .AppendLine(new string('-', 100));
         foreach (var entry in PerformanceEntries)
             lines.AppendLine($"{entry.Name} | {entry.Status} | {entry.DurationDisplay} | {entry.StartedDisplay} | {entry.Details}{(string.IsNullOrWhiteSpace(entry.Error) ? "" : " | " + entry.Error)}");
-        lines.AppendLine().AppendLine("HƯỚNG DẪN CHO AI");
-        lines.AppendLine("Hãy xác định 3 bước tốn thời gian nhất, phân biệt chờ MISA/UI Automation với xử lý nội bộ, và đề xuất cách đo hoặc tối ưu tiếp theo. Không giả định thành công nếu có bước lỗi.");
         return lines.ToString();
     }
 
     public string ExportLastError(string message, string details, DateTimeOffset occurredAt)
-        => new StringBuilder()
-            .AppendLine("MISA Manager - LỖI KHI THÊM VÀO MISA")
-            .AppendLine($"Thời điểm: {occurredAt:O}")
-            .AppendLine($"Hóa đơn: {PerformanceInvoice}")
-            .AppendLine($"Lỗi: {message}")
-            .AppendLine()
-            .AppendLine("CHI TIẾT")
-            .AppendLine(details)
-            .AppendLine()
-            .AppendLine("HIỆU NĂNG ĐẾN THỜI ĐIỂM LỖI")
-            .AppendLine(ExportPerformance())
-            .ToString();
+    {
+        RefreshPerformance();
+        return ErrorPrompt.Build(message, details, occurredAt, PerformanceInvoice, PerformanceEntries);
+    }
 
     public async Task LoadHistoryAsync()
     {
@@ -248,21 +236,12 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private async Task RunAsync(bool resume = false)
     {
         if (running) return;
-        // Ticked invoices run in list order; with none ticked, fall back to "from the selected invoice onward".
+        // Only ticked invoices run, in list order; nothing ticked means nothing runs.
         var ticked = InvoiceQueue.Where(invoice => checkedFingerprints.Contains(invoice.Fingerprint)).ToArray();
-        var explicitRun = ticked.Length > 0;
-        if (!explicitRun && SelectedInvoice is null)
-        { Status = "Tick chọn các hóa đơn cần chạy (hoặc chọn một hóa đơn) trước khi thêm vào MISA."; return; }
+        if (ticked.Length == 0)
+        { Status = "Chưa tick hóa đơn nào. Tick ô vuông trước các hóa đơn cần nhập rồi bấm Thêm vào MISA."; return; }
         if (!resume) { handledInBatch.Clear(); batchIndex = 0; }
-        InvoiceDocument[] queue;
-        if (explicitRun) queue = ticked;
-        else
-        {
-            var selected = SelectedInvoice!;
-            var offset = InvoiceQueue.ToList().FindIndex(invoice => invoice.Fingerprint == selected.Fingerprint);
-            queue = offset < 0 ? [selected] : [.. InvoiceQueue.Skip(offset)];
-        }
-        queue = [.. queue.Where(invoice => !handledInBatch.Contains(invoice.Fingerprint))];
+        InvoiceDocument[] queue = [.. ticked.Where(invoice => !handledInBatch.Contains(invoice.Fingerprint))];
         if (queue.Length == 0) { Status = "Không còn hóa đơn nào cần chạy."; return; }
         var batchTotal = batchIndex + queue.Length;
         var first = queue[0];
@@ -321,7 +300,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 if (stopRequested) break;
                 var fingerprint = invoice.Fingerprint;
                 var position = $"Hóa đơn {++batchIndex}/{batchTotal}: {invoice.Identity.Number}";
-                if (IsDone(invoice) || (!explicitRun && HasDiscardedRun(invoice)))
+                if (IsDone(invoice))
                 {
                     handledInBatch.Add(fingerprint);
                     SetChecked(fingerprint, false);
@@ -330,8 +309,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 }
                 if (invoice.IsBlocked)
                 {
-                    if (!explicitRun)
-                    { stopNote = $"Hóa đơn {invoice.Identity.Number} còn lỗi nguồn; cần bổ sung dữ liệu."; Status = stopNote; break; }
                     handledInBatch.Add(fingerprint);
                     blockedNumbers.Add(invoice.Identity.Number);
                     Status = $"{position} · còn lỗi nguồn, bỏ qua và chuyển sang hóa đơn kế tiếp.";
@@ -341,8 +318,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
                 performanceInvoice = invoice.Identity.Number;
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
-                Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để hủy bước đang chạy."
-                    + (explicitRun ? "" : " Chưa tick hóa đơn nào nên chạy từ hóa đơn đang chọn trở đi.");
+                Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để hủy bước đang chạy.";
                 PerformanceCurrent = "Nhập hóa đơn · đang chạy";
                 OperationResult response;
                 var windowReruns = 0;
@@ -439,9 +415,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (skipped > 0) parts.Add($"{skipped} bỏ qua (đã nhập trước đó)");
                     if (failedNumbers.Count > 0) parts.Add($"{failedNumbers.Count} lỗi, đã bỏ chứng từ, cần xem lại ({string.Join(", ", failedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
-                    var scope = explicitRun ? "các hóa đơn đã tick" : "từ hóa đơn đang chọn (chưa tick hóa đơn nào)";
-                    Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy " + (explicitRun ? "trong danh sách đã tick." : "từ vị trí đã chọn.")
-                        : $"Xong {scope}: {string.Join(" · ", parts)}.";
+                    Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy trong danh sách đã tick."
+                        : $"Xong các hóa đơn đã tick: {string.Join(" · ", parts)}.";
                 }
             }
         }

@@ -64,6 +64,17 @@ public sealed partial class PartyCatalogStore
     public static string TaxKey(string? taxCode)
         => new((taxCode ?? "").Normalize(NormalizationForm.FormKC).Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
+    /// <summary>Entry with this exact code (customers before suppliers), or null.</summary>
+    public PartyCatalogEntry? FindByCode(string? code)
+    {
+        var key = (code ?? "").Trim();
+        if (key.Length == 0) return null;
+        Index[] lists;
+        lock (gate) lists = [customers, suppliers];
+        return lists.SelectMany(list => list.Entries)
+            .FirstOrDefault(entry => string.Equals(entry.Code, key, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>A MISA export is the complete list of that kind, so it replaces the previous one.</summary>
     public int Replace(PartyRole role, IEnumerable<PartyCatalogEntry> entries, string sourceFile)
     {

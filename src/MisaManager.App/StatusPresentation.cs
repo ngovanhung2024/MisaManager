@@ -84,8 +84,9 @@ public static partial class ErrorHints
         ["ITEM_STOCK_NOT_FOUND"] = "Không tìm thấy kho mặc định (ví dụ KHH). Kiểm tra mã kho trong MISA có bị đổi tên hoặc xóa không.",
         ["ITEM_TAX_NOT_SET"] = "Thuế suất của vật tư chưa đặt hoặc không hợp lệ. Sửa thuế suất trong Excel (5, 5% hoặc 5,0000 đều được).",
         ["GRID_COMPLETENESS_UNAVAILABLE"] = "Chưa đọc đủ các dòng của bảng hàng tiền (đang cuộn hoặc có dòng ẩn). Đưa bảng về đầu rồi bấm Đọc lại.",
-        ["SAVE_UNCERTAIN"] = "Chưa rõ chứng từ đã được Cất hay chưa. KHÔNG nhập lại; kiểm tra danh sách chứng từ bán hàng trong MISA rồi dùng ••• > Khôi phục checkpoint.",
-        ["INPUT_UNCERTAIN"] = "Chưa rõ thao tác nhập đã vào MISA hay chưa. Xem chứng từ đang mở, bấm Đọc lại để đối chiếu; không chạy lại ngay.",
+        ["SAVE_UNCERTAIN"] = "Chưa rõ chứng từ đã được Cất hay chưa. KHÔNG nhập tay lại; kiểm tra chứng từ trong MISA, đóng nó rồi bấm Thêm vào MISA: tool tự đọc danh sách MISA để biết đã Cất hay chưa.",
+        ["INPUT_UNCERTAIN"] = "Chưa rõ thao tác nhập đã vào MISA hay chưa. Kiểm tra chứng từ đang mở, đóng nó rồi bấm Thêm vào MISA: tool tự đọc danh sách MISA để biết đã Cất hay chưa.",
+        ["EXISTING_EDITOR"] = "Đang có chứng từ bán hàng mở trong MISA. Kiểm tra, Cất hoặc đóng chứng từ đó rồi bấm Thêm vào MISA.",
         ["RECONCILIATION_FAILED"] = "Không đọc/đối chiếu được dữ liệu MISA. Giữ chứng từ đang mở, bấm Đọc lại; nếu vẫn lỗi hãy kiểm tra tay trên MISA.",
         ["NOT_CONNECTED"] = "Chưa kết nối được MISA. Mở MISA SME 2023 R20 và đăng nhập vào dữ liệu kế toán; tool tự kết nối lại.",
         ["CUSTOMER_CODE_MISSING"] = "Chưa có mã khách hàng. Ghi mã vào cột Mã khách hàng của Excel, hoặc nạp danh mục khách hàng/nhà cung cấp (menu •••) rồi chạy lại.",
@@ -125,7 +126,7 @@ public static partial class ErrorHints
     {
         WorkflowStatus.SaveUncertain => Hints["SAVE_UNCERTAIN"],
         WorkflowStatus.InputUncertain => Hints["INPUT_UNCERTAIN"],
-        WorkflowStatus.Blocked => "Workflow bị chặn để bảo vệ dữ liệu. Đọc thông báo bên dưới, xử lý trên MISA rồi chạy lại hoặc dùng ••• > Khôi phục checkpoint.",
+        WorkflowStatus.Blocked => "Workflow bị chặn để bảo vệ dữ liệu. Đọc thông báo bên dưới, xử lý trên MISA (đóng chứng từ dở) rồi bấm Thêm vào MISA.",
         WorkflowStatus.Failed => "Lượt chạy lỗi. Xem chi tiết lỗi, kiểm tra chứng từ đang mở trong MISA rồi chạy lại từ đầu.",
         _ => ""
     };

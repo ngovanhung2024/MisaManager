@@ -75,6 +75,19 @@ public sealed class PartyCatalogTests : IDisposable
         Assert.Equal(("KBNN PHÚ LỘC", "trùng mã số thuế"), (match?.Code, match?.Method));
     }
 
+    [Fact]
+    public void FindByCodeReturnsTheListedTaxCode()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [new("NAMHOA", "CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA", "3300100096")], "Khach_hang.xlsx");
+        store.Replace(PartyRole.Supplier, [new("AMC", "CÔNG TY CỔ PHẦN HÓA NÔNG AMC", "0108364972")], "Nha_cung_cap.xlsx");
+
+        Assert.Equal("3300100096", store.FindByCode(" namhoa ")?.TaxCode);
+        Assert.Equal("0108364972", store.FindByCode("AMC")?.TaxCode);
+        Assert.Null(store.FindByCode("KHONGCO"));
+        Assert.Null(store.FindByCode(null));
+    }
+
     [Theory]
     [InlineData("CTY CP DỆT MAY HUẾ")]
     [InlineData("Công ty CP Dệt-May Huế.")]

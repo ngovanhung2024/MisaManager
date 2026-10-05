@@ -137,6 +137,9 @@ tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MT
 `TextKey` (cách bỏ dấu cũ/mới, chữ Đ giả, khoảng trắng, ký tự ẩn, hoa/thường). Bán cho người tiêu dùng luôn dùng `NTD`;
 mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ**
 (`CUSTOMER_CODE_MISSING` / `CUSTOMER_AMBIGUOUS`).
+Mã số thuế người mua được đối chiếu ở bước đối chiếu trước khi Cất (tab Hóa đơn). Nếu bản R20 không hiện ô MST khớp
+selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
+`PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.
 
 ## Đối chiếu hóa đơn
 
@@ -144,10 +147,22 @@ Nút **Đối chiếu hóa đơn** so hóa đơn đang chọn với chứng từ
 đọc tab Phiếu thu/Hóa đơn, toàn bộ dòng của tab Hàng tiền và Thuế, tổng tiền, rồi mở cửa sổ đối chiếu. Chỉ chuyển tab,
 không gõ/Cất/Bỏ gì. Dòng hàng ghép theo mã hàng (Excel hoặc danh mục mã hàng), rồi theo tên đã chuẩn hóa, rồi theo vị
 trí khi số dòng bằng nhau. Đang có phiên nhập dở của chính hóa đơn đó thì dùng đối chiếu theo checkpoint như trước.
+Cửa sổ đối chiếu nằm ở mép đối diện của màn hình (tool bên phải → đối chiếu bên trái), cùng chiều ngang và chiều cao
+với tool, để không che chứng từ MISA (nút Đóng/Cất) ở giữa. Thu nhỏ tool thì cửa sổ đối chiếu ẩn theo.
+
+## Chạy hóa đơn & lần chạy dở
+
+**Thêm vào MISA** chỉ chạy các hóa đơn đã tick; chưa tick hóa đơn nào thì không chạy. Một lần chạy kết thúc ở trạng thái
+chưa rõ/bị chặn/tạm dừng sẽ chặn lần chạy mới cho tới khi xác định được kết quả: khi chứng từ đó đã được đóng trong MISA
+(cùng phiên MISA), bấm **Thêm vào MISA** là tool tự đọc toàn bộ danh sách chứng từ bán hàng — có số chứng từ + số hóa đơn
+→ ghi nhận đã Cất (không nhập lại), không có → ghi nhận chưa Cất. Bước này chỉ đọc, không gõ/bấm gì trong MISA.
 
 ## Báo cáo lỗi
 
-Khi có lỗi, bấm **Xuất báo cáo lỗi** (trong popup lỗi hoặc menu •••). App tạo
+Popup lỗi chỉ hiện lỗi, nguyên nhân (exception bên trong, trường lệch) và gợi ý xử lý. Nút **Copy lỗi** copy một prompt
+ngắn cho AI: mã lỗi, nguyên nhân, yêu cầu sửa, stack trace, các bước trước lỗi và dữ liệu kỹ thuật rút gọn (bỏ các trường
+đã khớp).
+Lập trình viên cần gói đầy đủ thì dùng **••• → Xuất báo cáo lỗi…**. App tạo
 `%LOCALAPPDATA%\MisaManager\logs\reports\misa-report-*.zip` gồm: `README-AI.md` (hướng dẫn cho AI), `summary.json`
 (phiên bản, mã lỗi + exception, bước lỗi, checkpoint, dữ liệu hóa đơn mong đợi, giá trị đọc từ MISA, kết quả đối chiếu,
 timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**, trước khi tool Bỏ chứng từ), trạng thái
