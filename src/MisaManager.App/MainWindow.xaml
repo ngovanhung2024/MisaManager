@@ -90,7 +90,7 @@
     </Grid.RowDefinitions>
 
     <!-- Sources (row 0 is empty: the live status badge sits in the footer) -->
-    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" app:Motion.Entrance="True">
+    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed" app:Motion.Entrance="True">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel Margin="5,2">
@@ -137,6 +137,11 @@
               ToolTip="Tiếp tục bước hiện tại từ checkpoint đã dừng"/>
       <Button x:Name="MoreButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
+          <MenuItem Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Chọn file Excel hóa đơn (hodon.xlsx)"/>
+          <MenuItem Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA"/>
+          <Separator/>
           <MenuItem Header="Trang tính &amp; cột dữ liệu…" Click="SourceSettings_Click"/>
           <MenuItem Header="Thêm mã khách hàng…" Click="ChooseCustomers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách khách hàng xuất từ MISA (Mã, Tên, MST) để tìm mã khách hàng theo tên người mua"/>
