@@ -55,14 +55,14 @@ public sealed partial class NativeWorkflowGateway
         static string Number(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "";
 
         var taxCode = invoice.Buyer.TaxCode.Trim();
-        var taxTab = taxCode.Length == 0 ? null : await CustomerTaxTab(token);
+        var taxTab = taxCode.Length == 0 ? null : CustomerTaxTab;
         var receiptKeys = new List<string> { "voucher_number", "customer", "customer_name", "voucher_date", "posted_date" };
-        if (taxTab == profile.ReceiptTab) receiptKeys.Add("customer_tax");
         var receipt = await ReadTab(profile.ReceiptTab, receiptKeys);
         BuyerCode? resolved;
         try { resolved = BuyerCodes.Resolve(invoice.Buyer, PartyCatalog); }
         catch (AutomationException) { resolved = null; }
         var expectedCode = resolved?.Code;
+        if (taxTab == profile.ReceiptTab) values.Add(await CompareCustomerTaxAsync(taxCode, expectedCode, token));
         // R20 exposes the selected customer's internal GUID instead of its code; the name identifies it then.
         var customer = receipt["customer"];
         if (expectedCode is not null && !Guid.TryParse(customer.Value, out _))
@@ -74,17 +74,12 @@ public sealed partial class NativeWorkflowGateway
         Add("posted_date", Day(invoice.PostedDate), receipt["posted_date"], Match(Day(invoice.PostedDate), receipt["posted_date"].Value, NativeValueKind.Date));
 
         var invoiceKeys = new List<string> { "number", "issued_date", "series" };
-        if (taxTab is not null && taxTab != profile.ReceiptTab) invoiceKeys.Add("customer_tax");
         var header = await ReadTab(profile.InvoiceTab, invoiceKeys);
         Add("number", invoice.Identity.Number, header["number"], Match(invoice.Identity.Number, header["number"].Value, NativeValueKind.Exact));
         Add("issued_date", Day(invoice.Issued), header["issued_date"], Match(Day(invoice.Issued), header["issued_date"].Value, NativeValueKind.Date));
         if (invoice.Identity.Series.Length > 0)
             Add("series", invoice.Identity.Series, header["series"], Match(invoice.Identity.Series, header["series"].Value, NativeValueKind.Exact));
-        if (taxTab is not null)
-        {
-            var read = (taxTab == profile.ReceiptTab ? receipt : header)["customer_tax"];
-            Add("customer_tax", taxCode, read, PartyCatalogStore.TaxKey(taxCode) == PartyCatalogStore.TaxKey(read.Value));
-        }
+        if (taxTab is not null && taxTab != profile.ReceiptTab) values.Add(await CompareCustomerTaxAsync(taxCode, expectedCode, token));
 
         var itemFrame = await Tab(profile.ItemTab, token);
         var items = await input.ReadCompleteTableAsync(itemFrame, profile.ItemGridId,

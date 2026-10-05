@@ -180,4 +180,56 @@ public sealed class SalesVoucherTests : UiTest
         Assert.True(result.MisaClean, Describe(result));
         Assert.Empty(misa.State().Vouchers);
     }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
+
+    [Fact]
+    public Task CompanyMstWithoutAProfileControlIsProvenByTheCustomerList() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1011", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var tax = Assert.Single(result.Verification.Comparison!.Values, value => value.Field == "customer_tax");
+        Assert.True(tax.Matched);
+        Assert.StartsWith("PartyCatalog:A&V", tax.Source, StringComparison.Ordinal);
+        Assert.Equal("0107286506", Assert.Single(misa.State().Vouchers).CustomerTaxCode);
+    }, new FakeScenario(CustomerTaxUnlisted: true),
+        customers: [new("A&V", "CÔNG TY CỔ PHẦN ĐẦU TƯ VÀ PHÁT TRIỂN A&V", "0107286506")]);
+
+    [Fact]
+    public Task CompanyMstDifferentInTheCustomerListIsNotSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1012", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome is "discarded" or "failed", Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+    }, new FakeScenario(CustomerTaxUnlisted: true),
+        customers: [new("A&V", "CÔNG TY CỔ PHẦN ĐẦU TƯ VÀ PHÁT TRIỂN A&V", "0100000000")]);
+
+    [Fact]
+    public Task UnfinishedRunClosedByTheUserNoLongerBlocksTheNextInvoice() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var first = Invoices.Build(TempDirectory(misa), "1013", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+        var second = Invoices.Build(TempDirectory(misa), "1014", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+        var entered = await harness.EnterWithoutSavingAsync(first, misa, token);
+        Assert.Equal(WorkflowStatus.AwaitingSave, entered.Context.Snapshot.Status);
+
+        // Still open in MISA: nothing can prove its outcome, so the next invoice must not start.
+        var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.RunAsync(second, misa, token));
+        Assert.Contains("1013", blocked.Message, StringComparison.Ordinal);
+
+        await misa.CloseVoucherAsUserAsync(token);
+        var result = await harness.RunAsync(second, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(["1014"], misa.State().Vouchers.Select(voucher => voucher.InvoiceNumber));
+        var history = await harness.Runner.ReadHistoryAsync(token);
+        Assert.Equal(WorkflowStatus.Discarded, history.Single(run => run.Invoice.Identity.Number == "1013").Snapshot.Status);
+    });
 }

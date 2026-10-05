@@ -138,7 +138,42 @@ public partial class MainWindow : Window
 
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        RememberRailBounds();
         if (IsLoaded && !positioningRail) WindowPairing.KeepOnScreen(this);
+    }
+
+    // Last bounds seen while really shown (not minimized). Minimizing must never change the rail: if anything
+    // resized/moved it meanwhile (MISA 0.2.53 did, which squeezed out the invoice list), restore puts it back.
+    private System.Windows.Rect? railBounds;
+
+    private void RememberRailBounds()
+    {
+        if (!IsLoaded || positioningRail || WindowState != WindowState.Normal || WindowPairing.IsMinimized(this)) return;
+        railBounds = new(Left, Top, ActualWidth, ActualHeight);
+    }
+
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        RememberRailBounds();
+    }
+
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        if (WindowState != WindowState.Normal || railBounds is not { } saved) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (WindowState != WindowState.Normal || WindowPairing.IsMinimized(this)) return;
+            if (new System.Windows.Rect(Left, Top, ActualWidth, ActualHeight) != saved)
+            {
+                positioningRail = true;
+                try { (Left, Top, Width, Height) = (saved.Left, saved.Top, saved.Width, saved.Height); }
+                finally { positioningRail = false; }
+            }
+            WindowPairing.KeepOnScreen(this);
+            pairing?.Place();
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
@@ -161,6 +196,7 @@ public partial class MainWindow : Window
             Top = workArea.Top;
         }
         finally { positioningRail = false; }
+        railBounds = new(Left, Top, Width, Height);
     }
 
     private async void ChooseWorkbook_Click(object sender, RoutedEventArgs e)
@@ -675,7 +711,9 @@ public partial class MainWindow : Window
         ErrorPopupMessage.Text = error.Message;
         ErrorPopupHint.Text = hint ?? "";
         ErrorPopupHintBox.Visibility = hint is null ? Visibility.Collapsed : Visibility.Visible;
-        ErrorPopupDetails.Text = error.Details;
+        var causes = ErrorPrompt.Causes(error.Message, error.Details);
+        ErrorPopupDetails.Text = string.Join(Environment.NewLine, causes.Select(cause => "• " + cause));
+        ErrorPopupDetailsBox.Visibility = causes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         ErrorPopup.Visibility = Visibility.Visible;
         Motion.FadeIn(ErrorPopup, fromY: -6);
     }
@@ -696,7 +734,7 @@ public partial class MainWindow : Window
     {
         if (lastWorkflowError is null) return;
         var text = workflow.ExportLastError(lastWorkflowError.Message, lastWorkflowError.Details, lastWorkflowError.OccurredAt);
-        StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy thông tin lỗi và hiệu năng vào clipboard.";
+        StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy lỗi; dán vào AI để được hỗ trợ sửa.";
     }
 
     private async void ExportReport_Click(object sender, RoutedEventArgs e)

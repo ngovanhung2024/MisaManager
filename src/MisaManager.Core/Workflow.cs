@@ -238,6 +238,57 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     public static bool IsTerminal(WorkflowStatus status) => status is WorkflowStatus.Saved or WorkflowStatus.Discarded
         or WorkflowStatus.Cancelled or WorkflowStatus.Failed;
 
+    public const string ResolveStaleAction = "resolve_stale";
+    private string? resolvedSavedRunId;
+    private string? staleRunNote;
+
+    /// <summary>
+    /// A run that ended in doubt (chưa rõ, bị chặn, tạm dừng) blocks every new run. Once its voucher is no longer open
+    /// in the same MISA session, a read-only check settles it: the sales register decides Saved or not saved.
+    /// Nothing is typed, clicked or replayed; when it cannot be settled the run stays active.
+    /// </summary>
+    private async Task ResolveStaleRunAsync(string windowIdentity, CancellationToken token)
+    {
+        await InitializeAsync(token);
+        await transitionGate.WaitAsync(token);
+        try
+        {
+            staleRunNote = null;
+            var stale = Current;
+            if (stale is null || IsTerminal(stale.Snapshot.Status) || stale.Snapshot.Status == WorkflowStatus.Saved) return;
+            // Absence in another MISA session (restart, other data) proves nothing about this voucher.
+            if (stale.WindowIdentity != windowIdentity)
+            {
+                staleRunNote = "Lần chạy trước thuộc phiên MISA khác (MISA đã mở lại hoặc đổi dữ liệu).";
+                return;
+            }
+            WorkflowObservation observation;
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(90));
+            try
+            {
+                observation = await native.ExecuteAsync(stale, new(stale.Snapshot.Status, WorkflowStatus.Discarded, ResolveStaleAction,
+                        "Voucher no longer open", ResolveStaleAction, "Complete sales register readback", TimeSpan.FromSeconds(90)),
+                    (_, _) => Task.CompletedTask, deadline.Token);
+            }
+            catch (Exception error) when (!token.IsCancellationRequested)
+            {
+                observation = new(false, stale.Snapshot.Status, "", error.Message);
+            }
+            if (!observation.Confirmed || observation.Status is not (WorkflowStatus.Saved or WorkflowStatus.Discarded))
+            {
+                staleRunNote = observation.Message;
+                return;
+            }
+            var resolved = Replace(stale, observation.Status, observation.NativeFrame, message: observation.Message);
+            lock (gate) context = resolved;
+            await PersistAsync(resolved, CancellationToken.None);
+            // The register just proved the save with the editor closed; StartAsync need not prove it again.
+            if (observation.Status == WorkflowStatus.Saved) resolvedSavedRunId = resolved.Snapshot.RunId;
+        }
+        finally { transitionGate.Release(); }
+    }
+
     public async Task<WorkflowContext> StartAsync(InvoiceDocument invoice, string companyIdentity,
         string windowIdentity, CancellationToken cancellationToken = default, bool liveValidation = false, string profileRevision = "",
         string? requestId = null, string? operationId = null, bool allowKgToTon = false,
@@ -259,7 +310,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     + string.Join(" | ", blocking));
             }
             var previous = Current;
-            if (previous?.Snapshot.Status == WorkflowStatus.Saved)
+            if (previous?.Snapshot.Status == WorkflowStatus.Saved && previous.Snapshot.RunId != resolvedSavedRunId)
             {
                 // Recovery can confirm Save while its read-only editor remains
                 // open. Finish that verified editor before replacing its run.
@@ -282,7 +333,11 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             lock (gate)
             {
                 if (context is not null && !IsTerminal(context.Snapshot.Status))
-                    throw new InvalidOperationException("Đang có workflow active; hãy dừng hoặc hoàn tất trước khi bắt đầu run khác.");
+                    throw new InvalidOperationException(
+                        $"Hóa đơn {context.Invoice.Identity.Number} của lần chạy trước chưa xác định được kết quả ({context.Snapshot.Status}). "
+                        + (staleRunNote ?? context.Snapshot.LastMessage ?? "")
+                        + " Kiểm tra chứng từ đó trong MISA, Cất hoặc đóng nó, mở lại danh sách Bán hàng rồi bấm Thêm vào MISA: "
+                        + "tool sẽ tự đọc danh sách MISA để biết đã Cất hay chưa.");
                 cancellation?.Dispose();
                 cancellation = new CancellationTokenSource();
                 context = NewContext(invoice, companyIdentity, windowIdentity, requestId, operationId) with
@@ -389,6 +444,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         ReconciliationResult? comparison = null;
         try
         {
+            await ResolveStaleRunAsync(windowIdentity, token);
             current = await StartAsync(invoice, companyIdentity, windowIdentity, token, liveValidation,
                 profileRevision, requestId, operationId, allowKgToTon,
                 executionMode: executionMode);

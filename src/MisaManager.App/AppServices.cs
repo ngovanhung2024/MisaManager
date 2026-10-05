@@ -133,7 +133,7 @@ public sealed partial class AppServices : IAsyncDisposable
                 "saved" => "Đối chiếu khớp và đã Cất hóa đơn.",
                 "discarded" => "Đối chiếu không khớp, đã Bỏ chứng từ và lưu hồ sơ kiểm chứng.",
                 "existing" => "Hóa đơn đã tồn tại trong MISA: đã chọn Không, đóng chứng từ và chuyển sang hóa đơn tiếp theo.",
-                _ => "Nhập hóa đơn bị lỗi; đã cố gắng Bỏ chứng từ dở. Bấm \"Xuất báo cáo lỗi\" để lấy gói chẩn đoán."
+                _ => "Nhập hóa đơn bị lỗi; đã cố gắng Bỏ chứng từ dở. Bấm \"Copy lỗi\" để gửi cho AI."
             };
             return new(requestId, status, message, result.Context.Snapshot.InputMayHaveBeenSent, new
             {

@@ -49,6 +49,8 @@ public sealed class WorkflowProfile
         SalesColumns = sales.Columns;
         Fields = voucher.Elements.Where(pair => !NonFieldElements.Contains(pair.Key))
             .ToDictionary(pair => pair.Key, pair => pair.Value.Selector, StringComparer.Ordinal);
+        FieldTabs = voucher.Elements.Where(pair => pair.Value.Tab is not null)
+            .ToDictionary(pair => pair.Key, pair => voucher.Tab(pair.Value.Tab!), StringComparer.Ordinal);
         ItemNewCode = item.Element("code").Selector;
         ItemNewName = item.Element("name").Selector;
         ItemNewUnit = item.Element("unit").Selector;
@@ -94,6 +96,8 @@ public sealed class WorkflowProfile
     public NativeSelector ItemNewTaxRate { get; }
     public NativeSelector ItemNewSave { get; }
     public IReadOnlyDictionary<string, NativeSelector> Fields { get; }
+    /// <summary>Caption of the voucher tab that shows a field, for fields the profile places on a tab.</summary>
+    public IReadOnlyDictionary<string, string> FieldTabs { get; }
     public IReadOnlyDictionary<string, string> Columns { get; }
     public IReadOnlyDictionary<string, string> SalesColumns { get; }
     /// <summary>Default warehouse for items created by the tool ("Kho ngầm định").</summary>

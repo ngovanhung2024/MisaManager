@@ -2,6 +2,9 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Text.Json;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
+using FlaUI.UIA3;
 using MisaManager.Automation;
 
 namespace MisaManager.Integration.Tests;
@@ -19,7 +22,8 @@ public sealed record FakeState(IReadOnlyList<FakeVoucher> Vouchers, IReadOnlyLis
 
 /// <summary>Scenario switches understood by MISA.SME.exe (see tests/MisaManager.FakeMisa/Scenario.cs).</summary>
 public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<FakeVoucher>? ExistingVouchers = null,
-    bool TaxRoundingPrompt = false, decimal TaxOffset = 0, IReadOnlyList<string>? TakenItemCodes = null, bool ShowLoginWindow = false);
+    bool TaxRoundingPrompt = false, decimal TaxOffset = 0, IReadOnlyList<string>? TakenItemCodes = null, bool ShowLoginWindow = false,
+    bool CustomerTaxUnlisted = false);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable
@@ -91,6 +95,28 @@ public sealed class FakeMisa : IDisposable
     }
 
     public string WindowIdentityText => $"pid={Window.ProcessId};start={Window.ProcessStartUtc:O};hwnd={Window.WindowHandle};exe={Window.ExecutablePath}";
+
+    /// <summary>Closes the open voucher as a user would: Đóng, then No (do not save) on the "data changed" prompt.</summary>
+    public async Task CloseVoucherAsUserAsync(CancellationToken token)
+    {
+        using var automation = new UIA3Automation();
+        var conditions = automation.ConditionFactory;
+        AutomationElement[] Buttons() => automation.GetDesktop().FindAllChildren(conditions.ByProcessId(Window.ProcessId))
+            .SelectMany(window => window.FindAllDescendants(conditions.ByControlType(ControlType.Button))).ToArray();
+        var voucherButtons = automation.GetDesktop().FindAllChildren(conditions.ByProcessId(Window.ProcessId))
+            .Select(window => window.FindAllDescendants(conditions.ByControlType(ControlType.Button)))
+            .First(buttons => buttons.Any(button => button.Name == "Cất"));
+        voucherButtons.First(button => button.Name == "Đóng").Patterns.Invoke.Pattern.Invoke();
+        // MessageBox buttons keep their Win32 ids as AutomationId: 7 = IDNO.
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            await Task.Delay(100, token);
+            if (Buttons().FirstOrDefault(button => button.AutomationId == "7") is not { } no) continue;
+            no.Patterns.Invoke.Pattern.Invoke();
+            break;
+        }
+        for (var attempt = 0; attempt < 50 && Buttons().Any(button => button.Name == "Cất"); attempt++) await Task.Delay(100, token);
+    }
 
     public FakeState State()
         => File.Exists(StatePath) ? JsonSerializer.Deserialize<FakeState>(File.ReadAllText(StatePath), Json)! : new FakeState([], []);

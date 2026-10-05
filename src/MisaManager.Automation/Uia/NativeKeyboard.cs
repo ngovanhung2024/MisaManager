@@ -134,8 +134,11 @@ internal static class NativeKeyboard
         if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới ô MISA.");
         // A topmost window (toast, this tool's own rail) over the point would receive the click instead of MISA.
         var hit = WindowFromPoint(new PointStruct { X = x, Y = y });
-        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out var hitProcess) == 0 || hitProcess != processId)
-            throw new AutomationException("FOCUS_LOST", "Có cửa sổ khác che ô MISA cần click; không click.");
+        uint hitProcess = 0;
+        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out hitProcess) == 0 || hitProcess != processId)
+            throw new AutomationException("FOCUS_LOST", hit != nint.Zero && hitProcess == Environment.ProcessId
+                ? "Cửa sổ của MISA Manager (đối chiếu/tool) đang che nút MISA cần bấm; không click."
+                : "Có cửa sổ khác che ô MISA cần click; không click.");
         var inputs = new[]
         {
             Mouse(0x0002),

@@ -27,7 +27,7 @@ tests/
   MisaManager.Integration.Tests/ Chạy luồng nhập thật (Automation + WorkflowRunner) trên MISA giả lập
 installer/                 WiX 4 MSI per-user (%LOCALAPPDATA%\Programs\MisaManager)
 scripts/                   release.ps1 (build/publish/MSI/ký số), install/rollback, chứng chỉ ký số
-.github/workflows/         ci.yml và release.yml (chạy thủ công khi cần)
+.github/workflows/         ci.yml (mỗi PR) và release.yml (mỗi merge vào master, sau khi test qua)
 ```
 
 Luồng một hóa đơn (`src/MisaManager.Core/Workflow.cs`): `Ready → PreflightPassed → SalesSurface → VoucherCreated →
@@ -43,8 +43,8 @@ không bao giờ được gửi lại tự động.
 3. Repo đang private: lần đầu vào **••• → Cài đặt cập nhật…** và dán GitHub token (xem mục Phát hành). Từ đó mỗi lần mở
    app sẽ tự hỏi khi có bản mới → bấm cài → app tự đóng, cài và mở lại.
 
-Sau khi lập trình viên merge và phát hành lên GitHub Releases, app tự tìm thấy bản mới; người dùng chỉ cần bấm cập nhật.
-GitHub không build lại khi push hay merge. Dữ liệu (lịch sử chống nhập trùng, danh mục mã hàng/khách hàng, cài đặt) nằm ở
+Mỗi lần merge PR vào `master`, GitHub Actions chạy test rồi tự tạo bản phát hành mới; app tự tìm thấy và người dùng chỉ
+cần bấm cập nhật. Dữ liệu (lịch sử chống nhập trùng, danh mục mã hàng/khách hàng, cài đặt) nằm ở
 `%LOCALAPPDATA%\MisaManager` và được giữ nguyên qua mọi lần cập nhật.
 
 Thư mục `scripts/` chỉ dùng cho CI và lập trình viên; người dùng không cần chạy script nào.
@@ -75,21 +75,19 @@ Integration test khởi động `MISA.SME.exe` giả lập (tests/MisaManager.Fa
 (`NativeWorkflowGateway` + `WorkflowRunner`) rồi kiểm tra cả kết quả workflow lẫn dữ liệu chứng từ mà app giả lập đã lưu.
 Không còn chế độ "live test" trên MISA thật. Khi đổi hành vi automation, hãy thêm kịch bản vào app giả lập trước.
 
-CI (`.github/workflows/ci.yml`) chỉ chạy thủ công qua **Actions → CI → Run workflow** khi cần;
-push và PR không tự chạy test trên GitHub.
+CI (`.github/workflows/ci.yml`) chạy build + unit test + integration test trên `windows-latest` cho mỗi PR (trừ PR chỉ
+đổi `*.md`), và được `release.yml` gọi lại trước khi phát hành.
 
 ## Phát hành & tự cập nhật
 
-1. Lập trình viên merge vào `master`, đồng bộ checkout local rồi chạy `scripts/publish-local.ps1 -Publish` trên
-   Windows có desktop và GitHub CLI đã đăng nhập với quyền phát hành. Script chạy build, unit test và integration test
-   trên MISA giả lập, rồi dùng `release.ps1` để build self-contained, health-check, ký số (nếu được cấu hình) và tạo MSI.
-   Nếu test hoặc build lỗi, script dừng trước khi phát hành. Không có `-Publish` thì chỉ tạo bộ file ở local để kiểm tra.
-2. Version vẫn là `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `Directory.Build.props`. Script chỉ
-   phát hành đúng commit đã merge trên `origin/master`, từ checkout sạch và với version lớn hơn các release hiện có.
-   Ba file `MisaManager-<version>.msi`, `SHA256SUMS.txt`, `release-manifest.json` được upload vào draft Release trước,
-   rồi mới công bố để app không thấy bản thiếu file. GitHub chỉ lưu file, không chạy lại build/test.
-   `release.yml` là phương án dự phòng chạy thủ công qua **Actions → Release → Run workflow**; không tự chạy khi merge
-   hay tạo tag. Không chạy đồng thời phát hành local và workflow dự phòng cho cùng một version.
+1. Mỗi merge vào `master` (trừ thay đổi chỉ ở `*.md`) chạy `release.yml`: job `test` gọi `ci.yml` (build, unit test,
+   integration test trên MISA giả lập, ~10 phút); chỉ khi qua hết, job `release` chạy `scripts/release.ps1 -Stage
+   -Installer` (build self-contained, health-check, MSI, ký số nếu có secret) rồi tạo GitHub Release dạng draft gồm
+   `MisaManager-<version>.msi`, `SHA256SUMS.txt`, `release-manifest.json` và công bố khi đủ file. Test lỗi → không phát hành.
+2. Version là `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `Directory.Build.props`. Chạy tay
+   **Actions → Release → Run workflow** để phát hành lại hoặc với version cụ thể (vẫn chạy test trước).
+   `scripts/publish-local.ps1 -Publish` (Windows có desktop) vẫn dùng được khi GitHub Actions không chạy được; không chạy
+   nó cùng lúc với workflow cho cùng một version.
 3. App tự kiểm tra khi mở (tắt được) hoặc qua **••• → Kiểm tra cập nhật…**: tải MSI, kiểm tra SHA-256, đóng app, chạy
    `msiexec /passive` (per-user, không cần quyền admin) rồi mở lại app. App từ chối cập nhật khi đang có hóa đơn dở.
 
@@ -137,6 +135,9 @@ tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MT
 `TextKey` (cách bỏ dấu cũ/mới, chữ Đ giả, khoảng trắng, ký tự ẩn, hoa/thường). Bán cho người tiêu dùng luôn dùng `NTD`;
 mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ**
 (`CUSTOMER_CODE_MISSING` / `CUSTOMER_AMBIGUOUS`).
+Mã số thuế người mua được đối chiếu ở bước đối chiếu trước khi Cất (tab Hóa đơn). Nếu bản R20 không hiện ô MST khớp
+selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
+`PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.
 
 ## Đối chiếu hóa đơn
 
@@ -144,10 +145,22 @@ Nút **Đối chiếu hóa đơn** so hóa đơn đang chọn với chứng từ
 đọc tab Phiếu thu/Hóa đơn, toàn bộ dòng của tab Hàng tiền và Thuế, tổng tiền, rồi mở cửa sổ đối chiếu. Chỉ chuyển tab,
 không gõ/Cất/Bỏ gì. Dòng hàng ghép theo mã hàng (Excel hoặc danh mục mã hàng), rồi theo tên đã chuẩn hóa, rồi theo vị
 trí khi số dòng bằng nhau. Đang có phiên nhập dở của chính hóa đơn đó thì dùng đối chiếu theo checkpoint như trước.
+Cửa sổ đối chiếu nằm ở mép đối diện của màn hình (tool bên phải → đối chiếu bên trái), cùng chiều ngang và chiều cao
+với tool, để không che chứng từ MISA (nút Đóng/Cất) ở giữa. Thu nhỏ tool thì cửa sổ đối chiếu ẩn theo.
+
+## Chạy hóa đơn & lần chạy dở
+
+**Thêm vào MISA** chỉ chạy các hóa đơn đã tick; chưa tick hóa đơn nào thì không chạy. Một lần chạy kết thúc ở trạng thái
+chưa rõ/bị chặn/tạm dừng sẽ chặn lần chạy mới cho tới khi xác định được kết quả: khi chứng từ đó đã được đóng trong MISA
+(cùng phiên MISA), bấm **Thêm vào MISA** là tool tự đọc toàn bộ danh sách chứng từ bán hàng — có số chứng từ + số hóa đơn
+→ ghi nhận đã Cất (không nhập lại), không có → ghi nhận chưa Cất. Bước này chỉ đọc, không gõ/bấm gì trong MISA.
 
 ## Báo cáo lỗi
 
-Khi có lỗi, bấm **Xuất báo cáo lỗi** (trong popup lỗi hoặc menu •••). App tạo
+Popup lỗi chỉ hiện lỗi, nguyên nhân (exception bên trong, trường lệch) và gợi ý xử lý. Nút **Copy lỗi** copy một prompt
+ngắn cho AI: mã lỗi, nguyên nhân, yêu cầu sửa, stack trace, các bước trước lỗi và dữ liệu kỹ thuật rút gọn (bỏ các trường
+đã khớp).
+Lập trình viên cần gói đầy đủ thì dùng **••• → Xuất báo cáo lỗi…**. App tạo
 `%LOCALAPPDATA%\MisaManager\logs\reports\misa-report-*.zip` gồm: `README-AI.md` (hướng dẫn cho AI), `summary.json`
 (phiên bản, mã lỗi + exception, bước lỗi, checkpoint, dữ liệu hóa đơn mong đợi, giá trị đọc từ MISA, kết quả đối chiếu,
 timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**, trước khi tool Bỏ chứng từ), trạng thái
