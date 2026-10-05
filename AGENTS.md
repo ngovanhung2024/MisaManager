@@ -34,6 +34,8 @@
 | State machine, checkpoint, chống trùng | `src/MisaManager.Core/Workflow.cs` |
 | Kiểm tra dữ liệu hóa đơn | `src/MisaManager.Core/Validation.cs` |
 | Đọc Excel | `src/MisaManager.Import/InvoiceWorkbookImporter.cs` |
+| Mã khách hàng/nhà cung cấp (danh mục, tìm theo tên) | `src/MisaManager.Core/PartyCatalog.cs`, `src/MisaManager.Import/PartyCatalogWorkbook.cs` |
+| Đối chiếu chứng từ đang mở (ngoài phiên nhập) | `src/MisaManager.Automation/Workflows/SalesVoucher/OpenVoucherComparison.cs` |
 | Báo cáo lỗi (zip cho AI) | `src/MisaManager.App/Diagnostics/FailureReports.cs` |
 | Tự cập nhật từ GitHub Releases | `src/MisaManager.App/Updates/` |
 | CI / phát hành | `.github/workflows/`, `scripts/release.ps1`, `installer/` |

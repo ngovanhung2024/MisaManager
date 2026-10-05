@@ -105,6 +105,9 @@ public sealed partial class AppServices
         var windows = await SafeAsync(() => Native.FindCandidatesAsync(token));
         var session = windows?.FirstOrDefault(window => snapshot?.WindowIdentity is { } id && TryReadHandle(id, out var h) && h == window.WindowHandle)
             ?? windows?.FirstOrDefault(window => window.Title.StartsWith(WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal));
+        var companies = (windows ?? []).SelectMany(window => MisaWindowDiscovery.CompanyNames(window.ProcessId)
+            .Concat(MisaWindowDiscovery.CompanyNames([window.Title]))).Distinct(StringComparer.Ordinal).ToArray();
+        string Clean(string text) => CompanyRedaction.Redact(text, companies);
         if (busy) uiNowError = "Tool đang nhập hóa đơn; không đọc giao diện MISA để tránh làm chậm/chen ngang. Xem ui-at-failure.json.";
         else if (session is not null)
         {
@@ -159,7 +162,7 @@ public sealed partial class AppServices
             comparison = verification,
             steps = (failure?.RunId == snapshot?.RunId ? failure?.Steps : null) ?? workflowGateway.Timeline().Steps,
             metrics = workflowGateway.Metrics,
-            misaWindows = windows
+            misaWindows = windows?.Select(window => window with { Title = MisaWindowDiscovery.ProductTitle(window.Title) }).ToArray()
         };
 
         var directory = Path.Combine(LogRoot, "reports");
@@ -168,23 +171,23 @@ public sealed partial class AppServices
         await Task.Run(() =>
         {
             using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
-            Text(zip, "README-AI.md", AiReadme(summary.error.code, summary.error.message));
-            Text(zip, "summary.json", JsonSerializer.Serialize(summary, ReportJson));
+            Text(zip, "README-AI.md", Clean(AiReadme(summary.error.code, summary.error.message)));
+            Text(zip, "summary.json", Clean(JsonSerializer.Serialize(summary, ReportJson)));
             if (failure is not null)
             {
-                Text(zip, "ui-at-failure.json", JsonSerializer.Serialize(new { failure.RunId, failure.Step, failure.At, failure.Ui }, ReportJson));
+                Text(zip, "ui-at-failure.json", Clean(JsonSerializer.Serialize(new { failure.RunId, failure.Step, failure.At, failure.Ui }, ReportJson)));
                 if (failure.Screenshot is { } shot) Bytes(zip, "screen-at-failure.png", shot);
             }
-            Text(zip, "ui-now.json", JsonSerializer.Serialize(new { ui = uiNow, error = uiNowError }, ReportJson));
-            if (screens is not null) Text(zip, "screen-check.json", JsonSerializer.Serialize(screens, ReportJson));
+            Text(zip, "ui-now.json", Clean(JsonSerializer.Serialize(new { ui = uiNow, error = uiNowError }, ReportJson)));
+            if (screens is not null) Text(zip, "screen-check.json", Clean(JsonSerializer.Serialize(screens, ReportJson)));
             if (freshScreenshot is not null) Bytes(zip, "screen-now.png", freshScreenshot);
-            if (!string.IsNullOrWhiteSpace(performance)) Text(zip, "performance.txt", performance);
-            CopyRecentLogs(zip);
+            if (!string.IsNullOrWhiteSpace(performance)) Text(zip, "performance.txt", Clean(performance));
+            CopyRecentLogs(zip, Clean);
         }, token);
         return path;
     }
 
-    private void CopyRecentLogs(ZipArchive zip)
+    private void CopyRecentLogs(ZipArchive zip, Func<string, string> clean)
     {
         if (!Directory.Exists(LogRoot)) return;
         var cutoff = DateTime.UtcNow.AddDays(-2);
@@ -199,8 +202,8 @@ public sealed partial class AppServices
                 // Keep only the tail of large logs: the failure is at the end.
                 const long limit = 2 * 1024 * 1024;
                 if (source.Length > limit) source.Seek(-limit, SeekOrigin.End);
-                using var target = zip.CreateEntry("logs/" + file.Name, CompressionLevel.Optimal).Open();
-                source.CopyTo(target);
+                using var reader = new StreamReader(source, Encoding.UTF8);
+                Text(zip, "logs/" + file.Name, clean(reader.ReadToEnd()));
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }

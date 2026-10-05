@@ -104,6 +104,7 @@ public partial class MainWindow : Window
         PerformanceList.ItemsSource = workflow.PerformanceEntries;
         workflow.WorkflowChanged += (_, _) => { RefreshWorkflowPanel(); RefreshRunSummary(); };
         ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
+        ((App)Application.Current).Services.PartyCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshPartyLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
         workflow.CheckedChanged += (_, _) => RefreshChecked();
         uiTimer.Tick += UiTimer_Tick;
@@ -124,6 +125,7 @@ public partial class MainWindow : Window
             var workArea = SystemParameters.WorkArea;
             PositionRail(workArea);
             RefreshCatalogLabel();
+            RefreshPartyLabel();
             await workflow.RestoreAsync();
             _ = UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: false, status => StatusLabel.Text = status);
         }
@@ -241,6 +243,55 @@ public partial class MainWindow : Window
         CatalogDetail.Visibility = Visibility.Visible;
     }
 
+    private void ChooseCustomers_Click(object sender, RoutedEventArgs e) => ChooseParties(PartyRole.Customer);
+
+    private void ChooseSuppliers_Click(object sender, RoutedEventArgs e) => ChooseParties(PartyRole.Supplier);
+
+    private async void ChooseParties(PartyRole role)
+    {
+        var label = PartyCatalogStore.Label(role);
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = $"Chọn file danh sách {label} xuất từ MISA (Mã, Tên, Mã số thuế)" };
+        if (dialog.ShowDialog(this) != true) return;
+        var services = ((App)Application.Current).Services;
+        StatusLabel.Text = $"Đang đọc file mã {label}...";
+        try
+        {
+            var entries = await PartyCatalogWorkbook.ReadAsync(services.WorkbookReader, dialog.FileName, role);
+            var count = await Task.Run(() => services.PartyCatalog.Replace(role, entries, dialog.FileName));
+            RefreshPartyLabel();
+            presentationInitialized = false;
+            RefreshWorkflowPanel();
+            StatusLabel.Text = $"Đã nạp {count:N0} mã {label} từ {Path.GetFileName(dialog.FileName)}.";
+        }
+        catch (Exception error) { StatusLabel.Text = $"Không nạp được file mã {label}: " + error.Message; }
+    }
+
+    private void RefreshPartyLabel()
+    {
+        var parties = ((App)Application.Current).Services.PartyCatalog;
+        if (parties.CustomerCount + parties.SupplierCount == 0) { PartyRow.Visibility = Visibility.Collapsed; return; }
+        PartyRow.Visibility = Visibility.Visible;
+        PartyLabel.Text = $"{parties.CustomerCount:N0} mã khách hàng · {parties.SupplierCount:N0} mã nhà cung cấp";
+        PartyLabel.ToolTip = string.Join(Environment.NewLine, new[] { parties.CustomerSource, parties.SupplierSource }.OfType<string>());
+        var buyers = invoices.Select(row => row.Invoice.Buyer)
+            .Where(buyer => buyer.Code.Trim().Length == 0 && !BuyerCodes.IsConsumer(buyer.Name))
+            .GroupBy(buyer => PartyCatalogStore.NameKey(buyer.Name)).Select(group => group.First()).ToArray();
+        if (buyers.Length == 0) { PartyDetail.Visibility = Visibility.Collapsed; return; }
+        var missing = new List<string>();
+        var ambiguous = new List<string>();
+        foreach (var buyer in buyers)
+        {
+            try { if (parties.FindCode(buyer.Name, buyer.TaxCode) is null) missing.Add(buyer.Name); }
+            catch (AutomationException) { ambiguous.Add(buyer.Name); }
+        }
+        PartyDetail.Text = (missing.Count == 0 ? $"Đủ mã cho {buyers.Length} người mua chưa ghi mã trong Excel."
+                : $"{missing.Count}/{buyers.Length} người mua chưa tìm được mã: {string.Join("; ", missing.Take(3))}{(missing.Count > 3 ? "…" : "")}")
+            + (ambiguous.Count == 0 ? "" : $" Trùng tên nhiều mã: {string.Join("; ", ambiguous)}.");
+        PartyDetail.ToolTip = string.Join(Environment.NewLine, missing.Concat(ambiguous));
+        PartyDetail.Visibility = Visibility.Visible;
+    }
+
     private void RefreshChecked()
     {
         foreach (var row in invoices) row.RefreshChecked();
@@ -272,8 +323,10 @@ public partial class MainWindow : Window
         RunDot.Fill = fg;
         RunBadgeText.Foreground = fg;
         RunBadgeText.Text = state.Label;
+        RunBadge.ToolTip = string.Join(Environment.NewLine, new[] { state.Label, state.Detail, state.Hint }.Where(text => text.Length > 0));
         Motion.Pulse(RunDot, state.IsBusy);
-        if (state.Hint.Length == 0) { HintPanel.Visibility = Visibility.Collapsed; return; }
+        // A lost connection is already shown by the footer badge (details in its tooltip).
+        if (state.Hint.Length == 0 || state.Kind == ToolStateKind.Disconnected) { HintPanel.Visibility = Visibility.Collapsed; return; }
         HintPanel.Background = bg;
         HintPanel.BorderBrush = fg;
         HintTitle.Foreground = fg;
@@ -404,7 +457,9 @@ public partial class MainWindow : Window
             workflow.KeepCheckedIn(ordered.Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal));
             RefreshChecked();
             if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
+            FitInvoiceList();
             RefreshCatalogLabel();
+            RefreshPartyLabel();
             RefreshRunSummary();
             ShowWorkbookIssues();
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
@@ -425,6 +480,14 @@ public partial class MainWindow : Window
         ClearImportResult();
         return importModel.BeginWork();
     }
+
+    // Exactly four invoice cards are visible; the rest scroll. Measured after layout so font/DPI changes keep it exact.
+    private void FitInvoiceList()
+        => Dispatcher.BeginInvoke(() =>
+        {
+            if (InvoiceList.ItemContainerGenerator.ContainerFromIndex(0) is not FrameworkElement first || first.ActualHeight <= 0) return;
+            InvoiceList.MaxHeight = 4 * (first.ActualHeight + first.Margin.Top + first.Margin.Bottom) + 2;
+        }, DispatcherPriority.Loaded);
     private bool IsCurrent(CancellationTokenSource work) => importModel.IsCurrent(work);
     private void EndImport(CancellationTokenSource work) => importModel.EndWork(work);
 
@@ -534,7 +597,6 @@ public partial class MainWindow : Window
                 var response = await workflow.ReconcileAsync();
                 StatusLabel.Text = response.Message;
                 RefreshWorkflowPanel();
-                WorkspaceTabs.SelectedIndex = 0;
                 UpdateComparisonPopup();
             }
             catch (Exception error) { StatusLabel.Text = error.Message; }
@@ -617,8 +679,6 @@ public partial class MainWindow : Window
         ErrorPopup.Visibility = Visibility.Visible;
         Motion.FadeIn(ErrorPopup, fromY: -6);
     }
-
-    private void Add_Click(object sender, RoutedEventArgs e) => WorkspaceTabs.SelectedIndex = 0;
 
     private async void StopNow_Click(object sender, RoutedEventArgs e)
     {
@@ -706,12 +766,16 @@ public partial class MainWindow : Window
         var bound = IsComparisonBound() && current is not null;
         var wanted = bound && IsVisible && state.Kind != ToolStateKind.Disconnected && EntryFinished(current!)
             && (workflow.IsRunning || editorOpen == true || (editorOpen is null && comparisonWindow is not null));
-        if (!wanted || current is null)
+        // A standalone "Đối chiếu hóa đơn" result stays up until closed or another invoice is selected.
+        var check = !workflow.IsRunning && IsVisible && workflow.OpenVoucherCheck is { } latest
+            && latest.Invoice.Fingerprint == workflow.SelectedInvoice?.Fingerprint ? latest : null;
+        if (check is null && (!wanted || current is null))
         {
             CloseComparisonWindow();
             return;
         }
-        var identity = $"{current.Snapshot.RunId}:{current.Snapshot.Status}:{current.Reconciliations?.Count}:{state.Kind}:{state.Label}";
+        var identity = check is not null ? $"open:{check.At.UtcTicks}"
+            : $"{current!.Snapshot.RunId}:{current.Snapshot.Status}:{current.Reconciliations?.Count}:{state.Kind}:{state.Label}";
         if (identity == popupDismissedIdentity)
         {
             CloseComparisonWindow();
@@ -742,7 +806,7 @@ public partial class MainWindow : Window
         if (identity != popupIdentity)
         {
             popupIdentity = identity;
-            comparisonWindow.UpdateComparison(BuildComparisonModel(current, state));
+            comparisonWindow.UpdateComparison(check is not null ? BuildOpenVoucherModel(check) : BuildComparisonModel(current!, state));
         }
         comparisonWindow.SetReconcileEnabled(!workflow.IsRunning);
     }
@@ -775,6 +839,24 @@ public partial class MainWindow : Window
             : $"{mismatched} trường lệch giữa Excel và MISA. Dòng đỏ là chỗ cần kiểm tra.";
         var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("vi-VN")) ?? "?"} {invoice.Currency}";
         var observed = latest?.Result is { } result ? "đọc lúc " + result.ObservedAt.ToLocalTime().ToString("HH:mm:ss") : "";
+        return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, rows, !workflow.IsRunning);
+    }
+
+    private ComparisonModel BuildOpenVoucherModel(OpenVoucherCheck check)
+    {
+        var invoice = check.Invoice;
+        var result = check.Comparison?.Result;
+        var rows = BuildComparisonRows(invoice, result);
+        var mismatched = rows.Count(row => row.Kind == "mismatch");
+        var voucher = check.Comparison is { VoucherNumber.Length: > 0 } read ? "chứng từ " + read.VoucherNumber : "chứng từ đang mở";
+        var (kind, label) = result is null ? (ToolStateKind.NeedsAction, "Chưa đọc được MISA")
+            : mismatched == 0 ? (ToolStateKind.Saved, "Khớp với MISA") : (ToolStateKind.Error, $"Có {mismatched} trường lệch");
+        var summary = result is null
+            ? check.Error + (ErrorHints.For(ErrorHints.FindCode(check.Error)) is { } hint ? " " + hint : "")
+            : mismatched == 0 ? $"Toàn bộ thông tin của {voucher} trong MISA khớp với hóa đơn Excel."
+            : $"{mismatched} trường lệch giữa Excel và {voucher}. Dòng đỏ là chỗ cần kiểm tra.";
+        var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("vi-VN")) ?? "?"} {invoice.Currency}";
+        var observed = result is null ? "" : $"{char.ToUpperInvariant(voucher[0])}{voucher[1..]} · đọc lúc {result.ObservedAt.ToLocalTime():HH:mm:ss}";
         return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, rows, !workflow.IsRunning);
     }
 

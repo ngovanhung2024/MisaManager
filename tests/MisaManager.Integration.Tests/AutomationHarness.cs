@@ -9,25 +9,37 @@ namespace MisaManager.Integration.Tests;
 /// </summary>
 public sealed class AutomationHarness : IAsyncDisposable
 {
-    public AutomationHarness(string root, IEnumerable<ItemCatalogEntry>? catalog = null)
+    public AutomationHarness(string root, IEnumerable<ItemCatalogEntry>? catalog = null, IEnumerable<PartyCatalogEntry>? customers = null)
     {
         Profile = WorkflowProfile.Load(Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json"));
         Input = new NativeInputService();
         Catalog = new ItemCatalogStore(Path.Combine(root, "item-catalog.json"));
         if (catalog is not null) Catalog.Merge(catalog, Path.Combine(root, "catalog.xlsx"));
-        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile) { ItemCatalog = Catalog };
+        Parties = new PartyCatalogStore(Path.Combine(root, "party-catalog.json"));
+        if (customers is not null) Parties.Replace(PartyRole.Customer, customers, Path.Combine(root, "Khach_hang.xlsx"));
+        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile) { ItemCatalog = Catalog, PartyCatalog = Parties };
         Runner = new WorkflowRunner(Gateway, new JsonStateStore(Path.Combine(root, "state")), new RunEventStore(Path.Combine(root, "logs")));
     }
 
     public WorkflowProfile Profile { get; }
     public NativeInputService Input { get; }
     public ItemCatalogStore Catalog { get; }
+    public PartyCatalogStore Parties { get; }
     public NativeWorkflowGateway Gateway { get; }
     public WorkflowRunner Runner { get; }
 
     public Task<LiveRunResult> RunAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token)
         => Runner.RunLiveAsync(invoice, "", misa.WindowIdentityText, token, liveValidation: true, Profile.Revision,
             allowKgToTon: true, executionMode: WorkflowExecutionMode.LiveProduction);
+
+    /// <summary>Enters every value of the invoice but stops before Cất, leaving the voucher open in the fake.</summary>
+    public async Task<WorkflowBatchResult> EnterWithoutSavingAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token)
+    {
+        var started = await Runner.StartAsync(invoice, "", misa.WindowIdentityText, token, liveValidation: true, Profile.Revision,
+            allowKgToTon: true, executionMode: WorkflowExecutionMode.LiveProduction);
+        return await Runner.RunUntilAsync(started.Snapshot.RunId, invoice.Fingerprint, WorkflowStatus.Ready,
+            WorkflowStatus.AwaitingSave, 20, token, allowKgToTon: true);
+    }
 
     public ValueTask DisposeAsync() => Input.DisposeAsync();
 }

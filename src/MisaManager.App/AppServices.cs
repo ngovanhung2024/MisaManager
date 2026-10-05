@@ -11,6 +11,7 @@ public sealed partial class AppServices : IAsyncDisposable
 {
     public WorkbookReader WorkbookReader { get; } = new();
     public ItemCatalogStore ItemCatalog { get; } = LoadItemCatalog();
+    public PartyCatalogStore PartyCatalog { get; } = LoadPartyCatalog();
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
     private readonly NativeDispatcher nativeOwner = new();
@@ -56,6 +57,7 @@ public sealed partial class AppServices : IAsyncDisposable
         workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile);
         workflowGateway.FailureObserver = CaptureFailureUiAsync;
         workflowGateway.ItemCatalog = ItemCatalog;
+        workflowGateway.PartyCatalog = PartyCatalog;
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
         Drafts = new(State);
         Profiles = new(State);
@@ -79,6 +81,18 @@ public sealed partial class AppServices : IAsyncDisposable
             // Briefly locked (antivirus/backup): retry once before giving up.
             Thread.Sleep(500);
             return new ItemCatalogStore(path);
+        }
+    }
+
+    private static PartyCatalogStore LoadPartyCatalog()
+    {
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            ProductIdentity.TechnicalName, "party-catalog.json");
+        try { return new PartyCatalogStore(path); }
+        catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
+        {
+            File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
+            return new PartyCatalogStore(path);
         }
     }
 
@@ -177,6 +191,14 @@ public sealed partial class AppServices : IAsyncDisposable
                 ? "Đã đối chiếu khách hàng, ngày, từng dòng và tổng MISA với nguồn." : "Dữ liệu MISA có sai khác với nguồn.", Data: comparison);
         }
         catch (Exception error) when (error is not OperationCanceledException) { return new("ui", OperationStatuses.Blocked, error.Message); }
+        finally { workflowGate.Release(); }
+    }
+
+    /// <summary>Read-only comparison of the voucher open in MISA with a source invoice; shares the single UIA input owner.</summary>
+    public async Task<OpenVoucherComparison> CompareOpenVoucherAsync(InvoiceDocument invoice, WindowIdentity window, CancellationToken token = default)
+    {
+        await workflowGate.WaitAsync(token);
+        try { return await workflowGateway.CompareOpenVoucherAsync(invoice, window, token); }
         finally { workflowGate.Release(); }
     }
 

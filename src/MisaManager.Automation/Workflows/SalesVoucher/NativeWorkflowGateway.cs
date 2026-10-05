@@ -13,7 +13,7 @@ public sealed record WorkflowActivity(string RunId, string Field, DateTimeOffset
 public sealed record WorkflowStepTiming(string RunId, string Kind, string Step, DateTimeOffset StartedAt,
     long DurationMilliseconds, string Outcome);
 
-public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
+public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
 {
     private readonly MisaWindowDiscovery windows;
     private readonly NativeInputService input;
@@ -91,6 +91,8 @@ public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
     public Func<WorkflowContext, string, Task>? FailureObserver { get; set; }
     /// <summary>Name → item-code database; required when a source line has no item code.</summary>
     public ItemCatalogStore? ItemCatalog { get; set; }
+    /// <summary>Customer/supplier codes; used when the source has no customer code.</summary>
+    public PartyCatalogStore? PartyCatalog { get; set; }
     private (string RunId, string Fingerprint, long ValueInputs, DateTimeOffset At, ReconciliationResult Result)? lastReconciliation;
 
     private async Task NotifyFailureAsync(WorkflowContext context, string step)
@@ -247,6 +249,8 @@ public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
             }
             if (transition.To is WorkflowStatus.PreflightPassed or WorkflowStatus.SalesSurface)
             {
+                // Fails before any input when the customer code cannot be determined.
+                _ = BuyerCode(context);
                 if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                     throw new AutomationException("EXISTING_EDITOR", "Có editor chưa gắn với run; cần xử lý trước khi nhập mới.");
                 var current = await BindSales(context, token);
@@ -280,8 +284,9 @@ public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
                     case WorkflowStatus.CustomerVerified:
                         await Tab(profile.ReceiptTab, token);
                         Entering("customer");
+                        var buyerCode = BuyerCode(context);
                         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
-                            context.Invoice.Buyer.Code, context.Invoice.Buyer.Code, NativeValueKind.Exact,
+                            buyerCode, buyerCode, NativeValueKind.Exact,
                             profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false);
                         sent = true;
                         var customer = await VerifyCustomer(context, token, selecting: true);
@@ -876,7 +881,7 @@ public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
             if (vouchers.Length > 1) throw new AutomationException("SAVE_AMBIGUOUS", "Có nhiều dòng cùng số chứng từ; không Cất lại.");
             return vouchers.Length == 1
                 && Match(context.Invoice.Identity.Number, vouchers[0][profile.SalesColumns["number"]], NativeValueKind.Exact)
-                && Match(context.Invoice.Buyer.Name, vouchers[0][profile.SalesColumns["customer"]], NativeValueKind.Text)
+                && Match(ExpectedCustomerName(context), vouchers[0][profile.SalesColumns["customer"]], NativeValueKind.Text)
                 && Match(context.Invoice.VoucherDate!.Value.ToString("yyyy-MM-dd"), vouchers[0][profile.SalesColumns["voucher_date"]], NativeValueKind.Date);
         }
         var proof = await NativeWait.UntilAsync(async () => await input.ReadTableAsync(
@@ -930,10 +935,10 @@ public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
         await WaitEditor(context, false, token);
     }
 
-    private static (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context) =>
+    private (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context) =>
     [
-        ("customer", context.NativeValues?.GetValueOrDefault("customer_reference") ?? context.Invoice.Buyer.Code, NativeValueKind.Exact),
-        ("customer_name", context.Invoice.Buyer.Name, NativeValueKind.Text)
+        ("customer", context.NativeValues?.GetValueOrDefault("customer_reference") ?? BuyerCode(context), NativeValueKind.Exact),
+        ("customer_name", ExpectedCustomerName(context), NativeValueKind.Text)
     ];
 
     private static (string Key, string Expected, NativeValueKind Kind)? CustomerTaxField(WorkflowContext context)
@@ -1098,7 +1103,9 @@ public sealed class NativeWorkflowGateway : IWorkflowNativeGateway
             await input.CaptureAsync(token), CellTarget(row, code, key), token, waitForCode: key == "code"),
             actual => Match(expected, actual.Value, kind), "READBACK_MISMATCH", $"Dòng {row + 1}, {key} khác nguồn.", token);
     }
-    private bool Match(string expected, string? actual, NativeValueKind kind) => NativeComparison.Matches(expected, actual, kind, Culture);
+    // Texts also compare by TextKey, so tone placement, look-alike letters and invisible characters never cause a mismatch.
+    private bool Match(string expected, string? actual, NativeValueKind kind) => NativeComparison.Matches(expected, actual, kind, Culture)
+        || kind == NativeValueKind.Text && actual is not null && TextKey.Canonical(expected) == TextKey.Canonical(actual);
     // Names compare ignoring case, spacing and punctuation; the item code is the authoritative identity.
     private static bool CatalogNameMatch(string expected, string? actual)
     {

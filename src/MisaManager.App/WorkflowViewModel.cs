@@ -13,6 +13,9 @@ public enum MisaConnection { Unknown, Connected, Lost }
 
 public sealed record ScreenCheckView(bool Ok, string Summary, string Details, ScreenCheckReport? Report = null);
 
+/// <summary>Latest "Đối chiếu hóa đơn" of a source invoice against the voucher open in MISA (outside a run).</summary>
+public sealed record OpenVoucherCheck(InvoiceDocument Invoice, OpenVoucherComparison? Comparison, string? Error, DateTimeOffset At);
+
 public sealed class WorkflowViewModel : INotifyPropertyChanged
 {
     private readonly AppServices services;
@@ -43,6 +46,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     }
 
     public InvoiceDocument? SelectedInvoice { get; set; }
+    public OpenVoucherCheck? OpenVoucherCheck { get; private set; }
     public ICommand AddCommand { get; }
     public ICommand ResumeCommand { get; }
     public bool IsRunning => running;
@@ -265,6 +269,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         running = true;
         stopRequested = false;
         lastError = null;
+        OpenVoucherCheck = null;
         operation = "connect";
         var saved = 0;
         var existing = 0;
@@ -562,10 +567,18 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         return $"pid={window.ProcessId};start={window.ProcessStartUtc:O};hwnd={window.WindowHandle};exe={window.ExecutablePath}";
     }
 
+    /// <summary>
+    /// Compares the selected invoice with MISA: through the run's checkpoint while that run still has its voucher open,
+    /// otherwise by reading whichever sales voucher is open in MISA right now.
+    /// </summary>
     public async Task<OperationResult> ReconcileAsync()
     {
-        if (SelectedInvoice is not { } invoice || services.Workflow.Current?.Invoice.Fingerprint != invoice.Fingerprint)
-            return new("ui", "blocked", "Chọn hóa đơn đang gắn với chứng từ MISA để đối chiếu.");
+        if (SelectedInvoice is not { } invoice)
+            return new("ui", "blocked", "Chọn hóa đơn cần đối chiếu với chứng từ đang mở trong MISA.");
+        if (services.Workflow.Current is not { } current || current.Invoice.Fingerprint != invoice.Fingerprint
+            || WorkflowRunner.IsTerminal(current.Snapshot.Status))
+            return await CompareOpenVoucherAsync(invoice);
+        OpenVoucherCheck = null;
         var owned = !running;
         if (owned) { running = true; operation = "reconcile"; NotifyWorkflowChanged(); }
         try
@@ -576,6 +589,43 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             return result;
         }
         finally { if (owned) { running = false; operation = null; NotifyWorkflowChanged(); } }
+    }
+
+    private async Task<OperationResult> CompareOpenVoucherAsync(InvoiceDocument invoice)
+    {
+        if (running) return new("ui", "blocked", "Tool đang chạy; chờ xong rồi bấm Đối chiếu hóa đơn.");
+        running = true;
+        operation = "reconcile";
+        NotifyWorkflowChanged();
+        Status = $"Đang đọc chứng từ đang mở trong MISA để đối chiếu hóa đơn {invoice.Identity.Number}…";
+        try
+        {
+            var windows = await services.Native.FindCandidatesAsync();
+            var sessions = Sessions(windows);
+            if (sessions.Count != 1)
+                throw new AutomationException("NOT_CONNECTED", sessions.Count == 0 ? NoSessionDetail(windows)
+                    : "Đang mở nhiều phiên MISA đã đăng nhập; hãy đóng bớt phiên thừa rồi thử lại.");
+            var comparison = await services.CompareOpenVoucherAsync(invoice, sessions[0]);
+            OpenVoucherCheck = new(invoice, comparison, null, DateTimeOffset.Now);
+            var mismatched = comparison.Result.Values.Count(value => !value.Matched);
+            var voucher = comparison.VoucherNumber.Length == 0 ? "đang mở" : comparison.VoucherNumber;
+            Status = mismatched == 0 ? $"Chứng từ {voucher} trong MISA khớp hóa đơn {invoice.Identity.Number}."
+                : $"Chứng từ {voucher} lệch {mismatched} trường so với hóa đơn {invoice.Identity.Number}; xem cửa sổ đối chiếu.";
+            return new("ui", mismatched == 0 ? OperationStatuses.Completed : OperationStatuses.Blocked, Status, Data: comparison.Result);
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            OpenVoucherCheck = new(invoice, null, error.Message, DateTimeOffset.Now);
+            Status = "Không đối chiếu được: " + error.Message;
+            return new("ui", OperationStatuses.Blocked, Status);
+        }
+        finally
+        {
+            running = false;
+            operation = null;
+            PropertyChanged?.Invoke(this, new(nameof(OpenVoucherCheck)));
+            NotifyWorkflowChanged();
+        }
     }
 
     /// <summary>Matches the profile selectors against the open MISA screens (read-only).</summary>

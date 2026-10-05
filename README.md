@@ -95,6 +95,8 @@ Toàn bộ selector nằm trong `profiles/misa-sme2023-r20.json`, chia theo màn
 AutomationId của MISA (WinForms) chính là tên control, nên **không phụ thuộc DPI, độ phân giải hay theme** – chạy trên
 nhiều máy vẫn nhận đúng. Trước mỗi lượt nhập, app kiểm tra selector của các màn hình đang mở; có thể chạy tay qua
 **••• → Kiểm tra giao diện MISA**.
+Element không nằm trong `scope` của màn hình (ví dụ thanh tab phân hệ `module_tab` của R20 nằm phía trên vùng Bán hàng)
+được tìm tiếp trong toàn cửa sổ MISA.
 
 Khi MISA đổi phiên bản:
 1. Mở MISA mới đến màn hình cần kiểm tra (Bán hàng, mở một chứng từ, mở từng tab), chạy **Kiểm tra giao diện MISA** hoặc
@@ -104,6 +106,23 @@ Khi MISA đổi phiên bản:
 3. Cập nhật app giả lập nếu giao diện thay đổi cấu trúc (control đọc tên từ profile nên đổi ID là tự khớp), chạy test, phát hành.
 4. `versionTitle` phải khớp đầu tiêu đề cửa sổ MISA (`MISA SME 2023 R20 Enterprise - …`).
 
+## Mã khách hàng / nhà cung cấp
+
+**••• → Thêm mã khách hàng…** / **Thêm mã nhà cung cấp…** nạp file danh sách xuất từ MISA (cột Mã, Tên, Mã số thuế; bỏ
+dòng "Ngừng theo dõi" và dòng "Số dòng = N"). Lưu tại `%LOCALAPPDATA%\MisaManager\party-catalog.json`; mỗi lần nạp thay
+toàn bộ danh sách cùng loại. Khi Excel không có mã khách hàng, tool tìm mã theo thứ tự: trùng tên → trùng mã số thuế →
+tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MTV…), khách hàng trước nhà cung cấp. Mọi so sánh dùng
+`TextKey` (cách bỏ dấu cũ/mới, chữ Đ giả, khoảng trắng, ký tự ẩn, hoa/thường). Bán cho người tiêu dùng luôn dùng `NTD`;
+mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ**
+(`CUSTOMER_CODE_MISSING` / `CUSTOMER_AMBIGUOUS`).
+
+## Đối chiếu hóa đơn
+
+Nút **Đối chiếu hóa đơn** so hóa đơn đang chọn với chứng từ bán hàng **đang mở trong MISA** (không cần tool vừa nhập):
+đọc tab Phiếu thu/Hóa đơn, toàn bộ dòng của tab Hàng tiền và Thuế, tổng tiền, rồi mở cửa sổ đối chiếu. Chỉ chuyển tab,
+không gõ/Cất/Bỏ gì. Dòng hàng ghép theo mã hàng (Excel hoặc danh mục mã hàng), rồi theo tên đã chuẩn hóa, rồi theo vị
+trí khi số dòng bằng nhau. Đang có phiên nhập dở của chính hóa đơn đó thì dùng đối chiếu theo checkpoint như trước.
+
 ## Báo cáo lỗi
 
 Khi có lỗi, bấm **Xuất báo cáo lỗi** (trong popup lỗi hoặc menu •••). App tạo
@@ -112,6 +131,9 @@ Khi có lỗi, bấm **Xuất báo cáo lỗi** (trong popup lỗi hoặc menu �
 timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**, trước khi tool Bỏ chứng từ), trạng thái
 hiện tại, kết quả kiểm tra selector và log gần nhất. Gửi nguyên file zip cho AI/lập trình viên. Ảnh có thể chứa dữ liệu
 kế toán thật – không đăng công khai.
+Tên công ty trên tiêu đề cửa sổ MISA (công ty bản quyền/dữ liệu) và dòng "Đang làm việc trên: …" được thay bằng
+`[tên công ty]` trong mọi file văn bản của báo cáo; kết quả kiểm tra giao diện chỉ ghi tên sản phẩm (`MISA SME 2023 R20
+Enterprise`). Ảnh chụp màn hình không được che.
 
 ## Mở rộng sang màn hình/tab khác
 
