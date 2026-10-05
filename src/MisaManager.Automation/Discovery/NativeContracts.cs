@@ -144,6 +144,42 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
 
     public static bool IsSessionTitle(string title) => SessionTitle.IsMatch(title);
 
+    /// <summary>
+    /// The product part of a MISA window title ("MISA SME 2023 R20 Enterprise"): the company the
+    /// licence or data belongs to is never shown or exported by the tool.
+    /// </summary>
+    public static string ProductTitle(string title)
+    {
+        var separator = title.IndexOf(" - ", StringComparison.Ordinal);
+        return separator < 0 ? title.Trim() : title[..separator].Trim();
+    }
+
+    /// <summary>Company names shown in the titles of the process's windows ("… - Tiền mặt - CÔNG TY …").</summary>
+    public static IReadOnlyList<string> CompanyNames(int processId)
+    {
+        var titles = new List<string>();
+        EnumWindows((handle, _) =>
+        {
+            if (PInvoke.GetWindowThreadProcessId((HWND)handle, out var pid) != 0 && pid == (uint)processId)
+                titles.Add(GetWindowTitle(handle));
+            return true;
+        }, nint.Zero);
+        return CompanyNames(titles);
+    }
+
+    /// <summary>
+    /// Session titles carry the company after the product ("MISA SME 2023 R20 Enterprise - X"); voucher
+    /// windows after their last separator when the title has at least three parts ("A - B - X").
+    /// </summary>
+    public static IReadOnlyList<string> CompanyNames(IEnumerable<string> titles)
+        => [.. titles.Select(title =>
+            {
+                var parts = title.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                return IsSessionTitle(title) ? string.Join(" - ", parts.Skip(1)) : parts.Length >= 3 ? parts[^1] : "";
+            })
+            .Where(name => name.Length >= 4)
+            .Distinct(StringComparer.Ordinal)];
+
     private static nint SessionWindow(int processId, nint fallback)
     {
         var windows = new List<nint>();

@@ -149,7 +149,7 @@ public partial class MainWindow
             => new(key, label, string.IsNullOrEmpty(value) ? "(trống)" : value, "", section, activity == key);
         void Add(string key, string label, string? value, bool section = false)
             => fields.Add(Create(key, label, value, section));
-        Add("customer", "Mã khách hàng", invoice.Buyer.Code);
+        Add("customer", "Mã khách hàng", BuyerCodeDisplay(invoice));
         Add("customer_name", "Tên khách hàng", invoice.Buyer.Name);
         if (!string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode)) Add("customer_tax", "Mã số thuế", invoice.Buyer.TaxCode);
         if (!string.IsNullOrWhiteSpace(invoice.Buyer.Address)) Add("customer_address", "Địa chỉ", invoice.Buyer.Address);
@@ -328,6 +328,30 @@ public partial class MainWindow
         };
     }
 
+    private static PartyCatalogStore Parties => ((App)Application.Current).Services.PartyCatalog;
+
+    private static string? ResolvedBuyerCode(InvoiceDocument invoice)
+    {
+        try { return BuyerCodes.Resolve(invoice.Buyer, Parties)?.Code; }
+        catch (AutomationException) { return null; }
+    }
+
+    // The code typed into MISA and where it came from (Excel, NTD for consumers, or the customer/supplier list).
+    private static string BuyerCodeDisplay(InvoiceDocument invoice)
+    {
+        try
+        {
+            return BuyerCodes.Resolve(invoice.Buyer, Parties) switch
+            {
+                { Source: "Excel" } code => code.Code,
+                { } code => $"{code.Code} · {code.Source}",
+                null => Parties.CustomerCount + Parties.SupplierCount == 0
+                    ? "(chưa có – nạp mã khách hàng ở menu •••)" : "(không tìm thấy trong danh mục khách hàng/nhà cung cấp)"
+            };
+        }
+        catch (AutomationException) { return "(trùng tên nhiều mã trong danh mục – ghi mã vào cột Mã khách hàng)"; }
+    }
+
     private static bool IsHiddenDisplayField(string key)
         => key is "series" or "payment" or "currency";
 
@@ -354,7 +378,7 @@ public partial class MainWindow
         var rows = new List<ComparisonRow>();
         void Add(string field, string? expected)
             => rows.Add(new(new ValueComparison(field, expected ?? "", null, false, ""), ComparisonLabel(field, invoice), SectionOf(field, invoice), true));
-        Add("customer", invoice.Buyer.Code);
+        Add("customer", ResolvedBuyerCode(invoice) ?? "");
         Add("customer_name", invoice.Buyer.Name);
         if (!string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode)) Add("customer_tax", invoice.Buyer.TaxCode);
         if (!string.IsNullOrWhiteSpace(invoice.Buyer.Address)) Add("customer_address", invoice.Buyer.Address);

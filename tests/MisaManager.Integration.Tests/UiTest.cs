@@ -13,13 +13,14 @@ public abstract class UiTest
 
     /// <summary>Runs a body against a fresh fake MISA; on failure saves a screenshot and the fake's state next to the results.</summary>
     protected static async Task WithFakeAsync(Func<FakeMisa, AutomationHarness, CancellationToken, Task> body,
-        FakeScenario? scenario = null, IEnumerable<ItemCatalogEntry>? catalog = null, [CallerMemberName] string name = "")
+        FakeScenario? scenario = null, IEnumerable<ItemCatalogEntry>? catalog = null, IEnumerable<PartyCatalogEntry>? customers = null,
+        [CallerMemberName] string name = "")
     {
         RequireDesktop();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
         using var misa = await FakeMisa.StartAsync(scenario, timeout.Token);
-        await using var harness = new AutomationHarness(misa.Root, catalog);
+        await using var harness = new AutomationHarness(misa.Root, catalog, customers);
         try { await body(misa, harness, timeout.Token); }
         catch
         {

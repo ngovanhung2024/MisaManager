@@ -150,4 +150,34 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(["1007", "1008"], vouchers.Select(voucher => voucher.InvoiceNumber));
         Assert.NotEqual(vouchers[0].VoucherNumber, vouchers[1].VoucherNumber);
     });
+
+    [Fact]
+    public Task CustomerWithoutCodeIsFoundInTheCustomerListByNormalisedName() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // The e-invoice abbreviates the legal form; the customer list has MISA's full name.
+        var buyer = new Party("Cty CP Dệt May  Huế", "3300100628", "", "", ValuePresence.Provided, PartyKind.Organization);
+        var invoice = Invoices.Build(TempDirectory(misa), "1009", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628"), (voucher.CustomerCode, voucher.CustomerName, voucher.CustomerTaxCode));
+    }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628"), new("HPL", "TRUNG TÂM DỊCH VỤ NÔNG NGHIỆP HUYỆN PHÚ LỘC", "3301638391")]);
+
+    [Fact]
+    public Task CustomerWithoutAnyKnownCodeStopsBeforeTheVoucherIsOpened() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var buyer = new Party("CÔNG TY TNHH CHƯA CÓ MÃ", "3300999999", "", "", ValuePresence.Provided, PartyKind.Organization);
+        var invoice = Invoices.Build(TempDirectory(misa), "1010", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "failed", Describe(result));
+        Assert.Equal("CUSTOMER_CODE_MISSING", result.Context.Snapshot.LastErrorCode);
+        Assert.True(result.MisaClean, Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+    }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
 }

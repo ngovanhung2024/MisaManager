@@ -43,6 +43,7 @@ public sealed class MainWindow : Window, IGridSource
         DockPanel.SetDock(navigation, Dock.Left);
         root.Children.Add(navigation);
 
+        // R20: the module tab strip is above the module panel (the profile scope), not inside it.
         var scope = new ScopePanel(profile.ScopeId("sales_list"), "Bán hàng");
         var modules = new TabControl();
         foreach (var caption in new[] { "Dashboard phân tích", "Báo giá", "Đơn đặt hàng", "Bán hàng", "Xuất hóa đơn", "Trả lại hàng bán", "Thu nợ", "Công nợ" })
@@ -90,9 +91,9 @@ public sealed class MainWindow : Window, IGridSource
         list = new FakeGrid(profile.GridId("sales_list", "vouchers"), 420);
         list.Bind([.. listKeys.Select(key => new GridColumn(key, Caption(key), ColumnWidth(key)))], this);
         content.Children.Add(list);
-        modules.Items.Cast<TabItem>().ElementAt(3).Content = content;
-        scope.Children.Add(modules);
-        root.Children.Add(scope);
+        scope.Children.Add(content);
+        modules.Items.Cast<TabItem>().ElementAt(3).Content = scope;
+        root.Children.Add(modules);
         Content = root;
     }
 

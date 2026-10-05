@@ -6,7 +6,9 @@
 - Build: `dotnet build MisaManager.sln -c Release` (Linux: thêm `-p:EnableWindowsTargeting=true`, chỉ biên dịch).
 - Unit test: `dotnet test tests/MisaManager.Core.Tests` (chạy được trên Linux với `-p:EnableWindowsTargeting=true`).
 - Integration test (Windows có desktop): `$env:MISAMANAGER_UI_TESTS="1"; dotnet test tests/MisaManager.Integration.Tests`.
-- Release local: `.\scripts\release.ps1 -Stage -Installer -Version x.y.z`.
+- Phát hành: tự động khi merge vào `master` (`.github/workflows/release.yml`); PR có artifact MSI để thử. Người dùng cài
+  MSI một lần rồi app tự cập nhật – không hướng dẫn người dùng chạy script. Script chỉ cho CI/lập trình viên
+  (`.\scripts\release.ps1 -Stage -Installer -Version x.y.z`).
 
 ## Quy tắc
 - `TreatWarningsAsErrors=true`, nullable bật, version package tập trung trong `Directory.Packages.props`, có lock file.
@@ -34,6 +36,8 @@
 | State machine, checkpoint, chống trùng | `src/MisaManager.Core/Workflow.cs` |
 | Kiểm tra dữ liệu hóa đơn | `src/MisaManager.Core/Validation.cs` |
 | Đọc Excel | `src/MisaManager.Import/InvoiceWorkbookImporter.cs` |
+| Mã khách hàng/nhà cung cấp (danh mục, tìm theo tên) | `src/MisaManager.Core/PartyCatalog.cs`, `src/MisaManager.Import/PartyCatalogWorkbook.cs` |
+| Đối chiếu chứng từ đang mở (ngoài phiên nhập) | `src/MisaManager.Automation/Workflows/SalesVoucher/OpenVoucherComparison.cs` |
 | Báo cáo lỗi (zip cho AI) | `src/MisaManager.App/Diagnostics/FailureReports.cs` |
 | Tự cập nhật từ GitHub Releases | `src/MisaManager.App/Updates/` |
 | CI / phát hành | `.github/workflows/`, `scripts/release.ps1`, `installer/` |

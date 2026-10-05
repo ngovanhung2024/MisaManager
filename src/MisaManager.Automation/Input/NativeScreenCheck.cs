@@ -23,7 +23,8 @@ public sealed partial class NativeInputService
                 token.ThrowIfCancellationRequested();
                 results.Add(CheckScreen(main, current.ProcessId, screen));
             }
-            return new ScreenCheckReport(DateTimeOffset.UtcNow, current.Title, current.Dpi, current.ClientBounds, results);
+            return new ScreenCheckReport(DateTimeOffset.UtcNow, MisaWindowDiscovery.ProductTitle(current.Title), current.Dpi,
+                current.ClientBounds, results);
         }, token);
 
     private ScreenCheckResult CheckScreen(AutomationElement main, int processId, ScreenProfile screen)
@@ -48,6 +49,11 @@ public sealed partial class NativeInputService
         foreach (var (key, element) in screen.Elements)
         {
             var matches = all.Where(item => Matches(item, element.Selector, requireVisible: false)).ToArray();
+            // R20's module tab strip sits above the module panel (the scope), so look in the whole window
+            // for elements the scope does not contain.
+            if (matches.Length == 0 && !ReferenceEquals(scope, main))
+                matches = Snapshots(main, Live(SelectorCondition(element.Selector), processId, enabled: false, onscreen: false))
+                    .Where(item => Matches(item, element.Selector, requireVisible: false)).ToArray();
             var visible = matches.Where(item => !item.Offscreen && item.HasArea).ToArray();
             var onOtherTab = element.Tab is { } tabKey && screen.Tabs.TryGetValue(tabKey, out var caption) && !tabs.Contains(caption, StringComparer.Ordinal);
             checks.Add(visible.Length switch

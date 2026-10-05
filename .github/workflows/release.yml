@@ -1,18 +1,29 @@
 name: Release
 
-# Push a tag like v0.3.0 (major.minor.build, higher than the installed version) to publish
-# a GitHub Release with the MSI and SHA256SUMS.txt that the in-app updater downloads.
+# Every merge to master publishes a GitHub Release (MSI + SHA256SUMS.txt) that the in-app updater installs;
+# no tag or local script is needed. Version = major.minor of Directory.Build.props + commit count of master.
+# Pull requests build the same MSI as a workflow artifact for testing before merge (nothing is published).
+# A tag v1.2.3 or a manual run with a version still publishes that exact version.
 on:
   push:
+    branches: [master]
     tags: ["v*.*.*"]
+    # Path filters do not apply to tag pushes.
+    paths-ignore: ["**/*.md", "licenses/**"]
+  pull_request:
+    paths-ignore: ["**/*.md", "licenses/**"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version (major.minor.build), e.g. 0.3.0"
-        required: true
+        description: "Version (major.minor.build); empty = automatic"
+        required: false
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOTNET_NOLOGO: "true"
@@ -24,8 +35,11 @@ jobs:
     timeout-minutes: 60
     env:
       HAS_SIGNING: ${{ secrets.CODE_SIGNING_PFX_BASE64 != '' }}
+      PUBLISH: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -34,16 +48,27 @@ jobs:
       - name: Resolve version
         shell: pwsh
         run: |
-          $raw = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.version }}' } else { '${{ github.ref_name }}' }
-          $version = $raw.TrimStart('v', 'V')
+          $raw = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { '${{ inputs.version }}' }
+          if ([string]::IsNullOrWhiteSpace($raw)) {
+            $base = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+            $parts = ([Version]$base)
+            # Commit count only grows along master. A PR build takes its base commit's count, so the release
+            # published after merging always has a higher version than any test build of that PR.
+            $commit = if ('${{ github.event_name }}' -eq 'pull_request') { '${{ github.event.pull_request.base.sha }}' } else { 'HEAD' }
+            $count = [int](git rev-list --count $commit)
+            $raw = "$($parts.Major).$($parts.Minor).$count"
+          }
+          $version = $raw.Trim().TrimStart('v', 'V')
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$raw' must be major.minor.build" }
           "VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "Version $version"
 
       - name: Unit tests
+        if: env.PUBLISH == 'true'
         run: dotnet test tests/MisaManager.Core.Tests -c Release
 
       - name: Import code-signing certificate
-        if: env.HAS_SIGNING == 'true'
+        if: env.HAS_SIGNING == 'true' && env.PUBLISH == 'true'
         shell: pwsh
         env:
           PFX_BASE64: ${{ secrets.CODE_SIGNING_PFX_BASE64 }}
@@ -66,7 +91,9 @@ jobs:
         run: |
           $arguments = @{ Stage = $true; Installer = $true; Version = $env:VERSION; DotnetPath = (Get-Command dotnet).Source }
           if ($env:SIGNING_PFX) { $arguments.CertificatePath = $env:SIGNING_PFX }
-          $manifest = (& .\scripts\release.ps1 @arguments | Select-Object -Last 1)
+          # Tee keeps build/WiX output in the log; the manifest path is the script's last output line.
+          & .\scripts\release.ps1 @arguments | Tee-Object -Variable releaseOutput | Out-Host
+          $manifest = $releaseOutput | Select-Object -Last 1
           $release = Split-Path -Parent $manifest
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           $msi = "dist\MisaManager-$env:VERSION.msi"
@@ -77,6 +104,7 @@ jobs:
           Get-AuthenticodeSignature $msi | Format-List Status, SignerCertificate
 
       - name: Publish GitHub Release
+        if: env.PUBLISH == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,5 +116,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ env.VERSION }}
+          name: MisaManager-${{ env.VERSION }}${{ github.event_name == 'pull_request' && format('-pr{0}', github.event.pull_request.number) || '' }}
           path: dist/**
+          retention-days: 14

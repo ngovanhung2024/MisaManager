@@ -10,13 +10,18 @@ public sealed class ScreenTests : UiTest
     {
         var list = await harness.Input.CheckScreensAsync(misa.Window, harness.Profile.Screens, token);
         Assert.True(list.Ok, list.Details);
-        Assert.True(list.Screens.Single(screen => screen.Key == WorkflowProfile.SalesList).Open, list.Details);
+        var sales = list.Screens.Single(screen => screen.Key == WorkflowProfile.SalesList);
+        Assert.True(sales.Open, list.Details);
+        // R20's module tab strip is outside the module panel the profile scopes to.
+        Assert.Contains(sales.Elements, item => item.Key == "module_tab" && item.Status == ScreenCheckStatus.Ok);
+        // The report never carries the licence/data company from the window title.
+        Assert.Equal(harness.Profile.VersionTitle, list.WindowTitle);
         Assert.False(list.Screens.Single(screen => screen.Key == WorkflowProfile.SalesVoucher).Open, list.Details);
         Assert.False(list.Screens.Single(screen => screen.Key == WorkflowProfile.ItemNew).Open, list.Details);
 
-        var sales = await MisaScreen.TryOpenAsync(harness.Input, misa.Window, harness.Profile.Screen(WorkflowProfile.SalesList), token);
-        Assert.NotNull(sales);
-        await sales.ClickAsync("add", token: token);
+        var salesScreen = await MisaScreen.TryOpenAsync(harness.Input, misa.Window, harness.Profile.Screen(WorkflowProfile.SalesList), token);
+        Assert.NotNull(salesScreen);
+        await salesScreen.ClickAsync("add", token: token);
         await MisaScreen.OpenAsync(harness.Input, misa.Window, harness.Profile.Screen(WorkflowProfile.SalesVoucher), token);
 
         var editor = await harness.Input.CheckScreensAsync(misa.Window, harness.Profile.Screens, token);

@@ -22,7 +22,7 @@
   </Style>
 
   <Style x:Key="Caption" TargetType="TextBlock">
-    <Setter Property="FontSize" Value="9.5"/>
+    <Setter Property="FontSize" Value="10.5"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Foreground" Value="{StaticResource Muted}"/>
   </Style>
@@ -42,8 +42,8 @@
   <Style x:Key="RailButton" TargetType="Button">
     <Setter Property="Padding" Value="8,2"/>
     <Setter Property="Margin" Value="0"/>
-    <Setter Property="MinHeight" Value="22"/>
-    <Setter Property="FontSize" Value="10.5"/>
+    <Setter Property="MinHeight" Value="24"/>
+    <Setter Property="FontSize" Value="11.5"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Background" Value="White"/>
     <Setter Property="Foreground" Value="#1F2937"/>
@@ -93,8 +93,8 @@
     <Setter Property="Background" Value="{StaticResource Primary}"/>
     <Setter Property="Foreground" Value="White"/>
     <Setter Property="BorderBrush" Value="{StaticResource Primary}"/>
-    <Setter Property="FontSize" Value="11"/>
-    <Setter Property="MinHeight" Value="26"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="MinHeight" Value="30"/>
   </Style>
   <Style x:Key="WarnButton" TargetType="Button" BasedOn="{StaticResource RailButton}">
     <Setter Property="Background" Value="#FEF3C7"/>
@@ -112,11 +112,11 @@
     <Setter Property="Padding" Value="0"/>
     <Setter Property="Width" Value="26"/>
     <Setter Property="MinHeight" Value="26"/>
-    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="FontSize" Value="13"/>
   </Style>
   <Style x:Key="ToggleChip" TargetType="ToggleButton">
-    <Setter Property="Padding" Value="7,1"/>
-    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="Padding" Value="8,2"/>
+    <Setter Property="FontSize" Value="11"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Foreground" Value="#4B5563"/>
     <Setter Property="Cursor" Value="Hand"/>
@@ -142,22 +142,22 @@
 
   <!-- Shared Excel-vs-MISA row (comparison window and profile tab): green when matched, red when mismatched. -->
   <DataTemplate x:Key="ComparisonRowTemplate">
-    <Border x:Name="RowBorder" Padding="5,2,5,2" Margin="0,0,0,1" BorderThickness="3,0,0,0" BorderBrush="#D1D5DB" Background="#F3F4F6" ToolTip="{Binding Evidence}">
+    <Border x:Name="RowBorder" Padding="6,3,6,3" Margin="0,0,0,1" BorderThickness="3,0,0,0" BorderBrush="#D1D5DB" Background="#F3F4F6" ToolTip="{Binding Evidence}">
       <Grid>
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="76"/>
+          <ColumnDefinition Width="92"/>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="22"/>
         </Grid.ColumnDefinitions>
-        <TextBlock x:Name="LabelText" Text="{Binding ShortLabel}" ToolTip="{Binding Value.Field}" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,6,0"/>
+        <TextBlock x:Name="LabelText" Text="{Binding ShortLabel}" ToolTip="{Binding Value.Field}" FontSize="11.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,6,0"/>
         <Border x:Name="ExpectedCell" Grid.Column="1" Margin="0,0,3,0" Padding="4,2" CornerRadius="3" Background="#B3FFFFFF" ToolTip="{Binding ExpectedText}">
-          <TextBlock x:Name="ExpectedText" Text="{Binding ExpectedValue}" FontSize="11" TextWrapping="Wrap" Foreground="#111827"/>
+          <TextBlock x:Name="ExpectedText" Text="{Binding ExpectedValue}" FontSize="12.5" LineHeight="17" TextWrapping="Wrap" Foreground="#111827"/>
         </Border>
         <Border x:Name="ActualCell" Grid.Column="2" Padding="4,2" CornerRadius="3" Background="#B3FFFFFF" ToolTip="{Binding ActualText}">
-          <TextBlock x:Name="ActualText" Text="{Binding ActualValue}" FontSize="11" TextWrapping="Wrap" Foreground="#111827"/>
+          <TextBlock x:Name="ActualText" Text="{Binding ActualValue}" FontSize="12.5" LineHeight="17" TextWrapping="Wrap" Foreground="#111827"/>
         </Border>
-        <TextBlock x:Name="MarkText" Grid.Column="3" Text="{Binding ResultIcon}" ToolTip="{Binding ResultTip}" FontSize="13" FontWeight="Bold" Foreground="#9CA3AF"
+        <TextBlock x:Name="MarkText" Grid.Column="3" Text="{Binding ResultIcon}" ToolTip="{Binding ResultTip}" FontSize="14" FontWeight="Bold" Foreground="#9CA3AF"
                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,0,0"/>
       </Grid>
     </Border>
