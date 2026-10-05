@@ -51,6 +51,18 @@ public sealed record WorkflowObservation(
     // Null means unknown: fall back to InputMayHaveBeenSent. Tab selection alone is not value input.
     bool? ValueInputMayHaveBeenSent = null);
 
+/// <summary>
+/// "Dừng ngay": the native gateway checks it between whole actions (a typed and committed field, a click,
+/// a tab switch), never in the middle of one, so a stop never leaves input half-sent.
+/// </summary>
+public sealed class WorkflowStopSignal
+{
+    private volatile bool requested;
+    public bool IsRequested => requested;
+    public void Request() => requested = true;
+    public void Reset() => requested = false;
+}
+
 public sealed record WorkflowBatchResult(WorkflowContext Context, int AttemptedSteps, int CompletedSteps,
     string StopReason, bool InputMayHaveBeenSent, InputDisposition InputDisposition,
     string? Error = null);
@@ -99,6 +111,13 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     private WorkflowContext? context;
 
     public WorkflowContext? Current { get { lock (gate) return context; } }
+
+    /// <summary>Observation code of a step that stopped at an action boundary because of <see cref="StopSignal"/>.</summary>
+    public const string StopRequestedCode = "STOP_REQUESTED";
+    /// <summary>A voucher half-entered before Dừng ngay, Bỏ when the user started again.</summary>
+    public const string StoppedByUserCode = "STOPPED_BY_USER";
+    private const string StopMessage = "Đã tạm dừng theo yêu cầu (Dừng ngay) sau thao tác vừa hoàn tất; chứng từ chưa Cất.";
+    public WorkflowStopSignal StopSignal { get; } = new();
 
     public async Task<IReadOnlyList<WorkflowContext>> ReadHistoryAsync(CancellationToken token = default)
     {
@@ -448,6 +467,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 lock (gate)
                     if (pauseRequested || cancelRequested || token.IsCancellationRequested)
                         return new(current, attempted, completed, "interrupted", sent, disposition);
+                if (StopSignal.IsRequested)
+                    return new(await PauseForStopAsync(current), attempted, completed, "stopped", sent, disposition);
                 var mayInput = policy.Next(current.Snapshot.Status).Action is
                     "open_voucher" or "select_customer" or "set_dates" or "set_invoice" or "set_items";
                 attempted++;
@@ -470,6 +491,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 sent |= current.Snapshot.InputMayHaveBeenSent;
                 if (current.Snapshot.LastInputDisposition != InputDisposition.NotSent)
                     disposition = current.Snapshot.LastInputDisposition;
+                if (current.Snapshot.Status == WorkflowStatus.Paused)
+                    return new(current, attempted, completed, "stopped", sent, disposition);
                 if (current.Snapshot.Status < WorkflowStatus.Ready || current.Snapshot.Status > WorkflowStatus.AwaitingSave)
                     return new(current, attempted, completed, "checkpoint_failed", sent, disposition);
                 completed++;
@@ -509,6 +532,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             var batch = await RunUntilAsync(current.Snapshot.RunId, invoice.Fingerprint, WorkflowStatus.Ready,
                 WorkflowStatus.AwaitingSave, 20, token, allowKgToTon);
             current = batch.Context;
+            if (batch.StopReason == "stopped")
+                return await CompletePausedAsync(current, startedAt, null, token);
             if (batch.StopReason != "target_reached" || current.Snapshot.Status != WorkflowStatus.AwaitingSave)
             {
                 var message = batch.Error ?? current.Snapshot.LastMessage
@@ -529,9 +554,13 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, rerunSafe, clean);
             }
 
+            if (StopSignal.IsRequested)
+                return await CompletePausedAsync(await PauseForStopAsync(token), startedAt, null, token);
             comparison = await ReconcileWithRetryAsync(token);
             if (comparison.Matched)
             {
+                if (StopSignal.IsRequested)
+                    return await CompletePausedAsync(await PauseForStopAsync(token), startedAt, comparison, token);
                 current = await FinishAsync(save: true, token: token);
                 if (current.Snapshot.Status == WorkflowStatus.Saved)
                     return await CompleteLiveRecordAsync(current, startedAt, "saved", true, true, comparison, null, token);
@@ -590,6 +619,54 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             return await CompleteLiveRecordAsync(current, startedAt, "failed", comparison is not null,
                 comparison?.Matched == true, comparison, error.Message, CancellationToken.None, rerunSafe, clean);
         }
+    }
+
+    private async Task<WorkflowContext> PauseForStopAsync(CancellationToken token)
+    {
+        await transitionGate.WaitAsync(token);
+        try { return await PauseForStopAsync(Current ?? throw new InvalidOperationException("Chưa có workflow active.")); }
+        finally { transitionGate.Release(); }
+    }
+
+    // Caller holds transitionGate. Paused (not Failed): Hồ sơ shows "Tạm dừng" and no error is raised.
+    private async Task<WorkflowContext> PauseForStopAsync(WorkflowContext current, string? message = null)
+    {
+        var paused = Replace(current, WorkflowStatus.Paused, null, current.Snapshot.Status, message ?? StopMessage);
+        paused = paused with { Snapshot = paused.Snapshot with { LastErrorCode = null, ErrorChain = null,
+            InputPending = false, PendingAction = null } };
+        lock (gate) context = paused;
+        await PersistAsync(paused, CancellationToken.None);
+        return paused;
+    }
+
+    private Task<LiveRunResult> CompletePausedAsync(WorkflowContext current, DateTimeOffset startedAt,
+        ReconciliationResult? comparison, CancellationToken token)
+        => CompleteLiveRecordAsync(current, startedAt, "paused", comparison is not null, comparison?.Matched == true, comparison,
+            null, token, misaClean: !VoucherWasOpened(current));
+
+    /// <summary>True when a run paused by Dừng ngay may have left its voucher open in MISA.</summary>
+    public static bool StoppedWithOpenVoucher(WorkflowContext value)
+        => value.Snapshot.Status == WorkflowStatus.Paused && VoucherWasOpened(value);
+
+    /// <summary>
+    /// Bỏ the voucher Dừng ngay left half-entered (the gateway proves it is still this run's voucher), so the
+    /// invoice can be entered again from scratch. Returns the run with its outcome; nothing else is replayed.
+    /// </summary>
+    public async Task<WorkflowContext?> DiscardStoppedVoucherAsync(CancellationToken token = default)
+    {
+        if (Current is not { } stopped || !StoppedWithOpenVoucher(stopped)) return Current;
+        var discarded = await FinishAsync(save: false, token: token);
+        if (discarded.Snapshot.Status != WorkflowStatus.Discarded) return discarded;
+        await transitionGate.WaitAsync(token);
+        try
+        {
+            discarded = discarded with { Snapshot = discarded.Snapshot with { LastErrorCode = StoppedByUserCode,
+                LastMessage = "Đã tạm dừng (Dừng ngay); chứng từ dở đã được Bỏ khi chạy lại để nhập lại từ đầu." } };
+            lock (gate) context = discarded;
+            await PersistAsync(discarded, CancellationToken.None);
+            return discarded;
+        }
+        finally { transitionGate.Release(); }
     }
 
     // The local copy can be stale after a failed step (e.g. Save clicked, then persisting failed and the
@@ -789,6 +866,16 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     InputMayHaveBeenSent = observation.InputMayHaveBeenSent,
                     LastInputDisposition = observation.InputDisposition, LastErrorCode = observation.ErrorCode,
                     ErrorChain = observation.ErrorChain } };
+                if (!observation.Confirmed && observation.ErrorCode == StopRequestedCode)
+                {
+                    // Every action sent so far completed; the checkpoint stays at the last verified status.
+                    var stopped = await PauseForStopAsync(current, observation.Message);
+                    stopped = stopped with { Snapshot = stopped.Snapshot with { InputMayHaveBeenSent = observation.InputMayHaveBeenSent,
+                        LastInputDisposition = observation.InputDisposition } };
+                    lock (gate) context = stopped;
+                    await PersistAsync(stopped, CancellationToken.None);
+                    return stopped;
+                }
                 if (!observation.Confirmed)
                 {
                     var uncertain = Replace(current, observation.InputMayHaveBeenSent ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,

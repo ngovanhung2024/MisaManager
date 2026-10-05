@@ -94,14 +94,16 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Graceful stop: the invoice in progress is finished (Cất/Bỏ as usual), so no voucher is left half-entered and
-    /// nothing fails; the batch stops before the next invoice and Tiếp tục runs the rest.
+    /// Dừng ngay: the action in progress (typing a field, a click, a tab switch) completes, then the invoice stops
+    /// there as "Tạm dừng" (not an error). Cất, Bỏ and creating an item are never interrupted. On the next start the
+    /// half-entered voucher is Bỏ and that invoice is entered again from scratch.
     /// </summary>
     public void RequestStop()
     {
         if (!running || stopRequested) return;
         stopRequested = true;
-        Status = "Đang dừng: tool làm xong hóa đơn hiện tại rồi bỏ checkpoint. Sau đó có thể bắt đầu phiên Thêm vào MISA mới.";
+        services.Workflow.StopSignal.Request();
+        Status = "Đang dừng: tool dừng ngay sau thao tác đang làm (nhập ô, click, chuyển tab) và lưu hồ sơ là Tạm dừng.";
         NotifyWorkflowChanged();
     }
 
@@ -265,6 +267,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var first = queue[0];
         running = true;
         stopRequested = false;
+        services.Workflow.StopSignal.Reset();
         lastError = null;
         OpenVoucherCheck = null;
         operation = "connect";
@@ -293,7 +296,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             await services.Initialization;
             if (!resume)
             {
-                if (services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused)
+                // A voucher left open by Dừng ngay is Bỏ once the MISA session is known (below), not abandoned here.
+                if (services.Workflow.Current is { Snapshot.Status: WorkflowStatus.Paused } stoppedRun
+                    && !WorkflowRunner.StoppedWithOpenVoucher(stoppedRun))
                 {
                     var abandoned = await services.AbandonStoppedSessionAsync();
                     if (abandoned.Status != OperationStatuses.Completed)
@@ -313,6 +318,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             identity = await WaitForSessionAsync();
             FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
             if (identity is null) return;
+            if (!await SettleStoppedVoucherAsync(identity)) return;
             var precheck = BeginTrace("Kiểm tra giao diện MISA", "Đối chiếu ID control của profile với MISA đang mở");
             var screens = await CheckScreensAsync();
             // Only a concrete selector mismatch blocks; an unreadable tree is left to the workflow's own guards.
@@ -385,6 +391,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (stopRequested) break;
                 }
                 RestoreMisaWindow(identity);
+                if (stopRequested && services.Workflow.LastLiveRun is { Outcome: "paused" } paused
+                    && paused.Context.Invoice.Fingerprint == fingerprint)
+                {
+                    Status = response.Message;
+                    History = [paused.Context, .. History.Where(run => run.Snapshot.RunId != paused.Context.Snapshot.RunId)];
+                    NotifyWorkflowChanged();
+                    break;
+                }
                 // Stopped while an interference rerun was due: the voucher was already discarded safely, so this is
                 // not an error; Tiếp tục enters the invoice again from scratch.
                 if (response.Status != "completed" && stopRequested
@@ -469,7 +483,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         }
         finally
         {
-            if (stopRequested)
+            // A run paused with its voucher open stays active so the next start can Bỏ that voucher safely.
+            var keptStopped = services.Workflow.Current is { } open && WorkflowRunner.StoppedWithOpenVoucher(open) ? open : null;
+            if (stopRequested && keptStopped is null)
             {
                 var stopped = services.Workflow.Current;
                 var abandoned = await services.AbandonStoppedSessionAsync();
@@ -494,7 +510,10 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             FinishTrace(wholeRun, performanceOutcome);
             var left = InvoiceQueue.Count(invoice => checkedFingerprints.Contains(invoice.Fingerprint) && !handledInBatch.Contains(invoice.Fingerprint));
             batchStopped = stopRequested && left > 0 && performanceOutcome != "Lỗi";
-            if (batchStopped) Status = $"Đã dừng và bỏ checkpoint cũ. Còn {left} hóa đơn đã tick; bấm Thêm vào MISA để chạy phiên mới hoặc Tiếp tục để chạy phần còn lại.";
+            if (batchStopped && keptStopped is not null)
+                Status = $"Đã tạm dừng hóa đơn {keptStopped.Invoice.Identity.Number} (chưa Cất, chứng từ vẫn mở trong MISA). Còn {left} hóa đơn đã tick; "
+                    + "bấm Tiếp tục hoặc Thêm vào MISA: tool sẽ Bỏ chứng từ dở đó rồi nhập lại hóa đơn từ đầu.";
+            else if (batchStopped) Status = $"Đã dừng và bỏ checkpoint cũ. Còn {left} hóa đơn đã tick; bấm Thêm vào MISA để chạy phiên mới hoặc Tiếp tục để chạy phần còn lại.";
             else if (stopRequested && performanceOutcome == "Đã dừng") Status = "Đã dừng; không còn hóa đơn đã tick nào cần chạy.";
             stopRequested = false;
             running = false;
@@ -505,6 +524,39 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             NotifyWorkflowChanged();
             RestoreMisaWindow(identity);
         }
+    }
+
+    /// <summary>
+    /// Bỏ the voucher a Dừng ngay left half-entered in this MISA session (its identity is verified first), then
+    /// releases that run. A voucher from an earlier MISA session no longer exists, so that run is only released.
+    /// </summary>
+    private async Task<bool> SettleStoppedVoucherAsync(string identity)
+    {
+        if (services.Workflow.Current is not { } stopped || !WorkflowRunner.StoppedWithOpenVoucher(stopped)) return true;
+        var trace = BeginTrace("Bỏ chứng từ dở", $"Hóa đơn {stopped.Invoice.Identity.Number} còn mở từ lần Dừng ngay trước");
+        if (stopped.WindowIdentity == identity)
+        {
+            var discarded = await services.DiscardStoppedVoucherAsync();
+            if (discarded.Status != OperationStatuses.Completed)
+            {
+                FinishTrace(trace, "Không hoàn tất", discarded.Message);
+                Status = discarded.Message;
+                RaiseError(discarded.Message, Serialize(discarded.Data));
+                return false;
+            }
+        }
+        var released = services.Workflow.Current ?? stopped;
+        var abandoned = await services.AbandonStoppedSessionAsync();
+        if (abandoned.Status != OperationStatuses.Completed)
+        {
+            FinishTrace(trace, "Không hoàn tất", abandoned.Message);
+            Status = abandoned.Message;
+            RaiseError(abandoned.Message, Serialize(abandoned.Data));
+            return false;
+        }
+        History = [released with { SessionDetached = true }, .. History.Where(run => run.Snapshot.RunId != released.Snapshot.RunId)];
+        FinishTrace(trace, "Hoàn tất");
+        return true;
     }
 
     private TimeSpan PerformanceTotal()
@@ -858,12 +910,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (window is null) return (false, null);
         try
         {
-            var observation = await services.Native.ObserveAsync(window.WindowHandle, null, token,
-                services.WorkflowProfile.EditorId);
-            var open = observation.Elements.Any(element =>
-                element.AutomationId == services.WorkflowProfile.EditorId
-                && element.ControlType == "Window" && element.Enabled && !element.Offscreen);
-            return (open, observation.Frame.Window);
+            // Existence only: walking the editor's subtree here every probe kept MISA's UI thread busy.
+            return await services.Native.ScopeWindowOpenAsync(window.WindowHandle, services.WorkflowProfile.EditorId, token);
         }
         catch (Exception error) when (error is AutomationException or ArgumentException
             or InvalidOperationException or System.ComponentModel.Win32Exception)

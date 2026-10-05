@@ -55,6 +55,17 @@ public sealed class NativeObservationService : IAsyncDisposable
             return new NativeObservation(frame, elements, readback.LastVisitedCount, readback.LastObservationTruncated, query, scopeAutomationId);
         }, token);
 
+    /// <summary>Existence check for one MISA window (e.g. the voucher editor); used by idle UI probes.</summary>
+    public Task<(bool Open, WindowIdentity Window)> ScopeWindowOpenAsync(nint handle, string scopeAutomationId,
+        CancellationToken token = default)
+        => dispatcher.RunAsync(() =>
+        {
+            var window = discovery.Bind(handle);
+            readback.Bind(window);
+            var frame = readback.CaptureFrame();
+            return (readback.ScopeWindowOpen(frame, scopeAutomationId), frame.Window);
+        }, token);
+
     public Task<NativeTabExport> ExportTabAsync(nint handle, string scopeAutomationId, CancellationToken token = default)
         => dispatcher.RunAsync(() =>
         {

@@ -47,6 +47,23 @@ public sealed partial class UiaReadbackProvider : INativeReadback, IDisposable
     public IReadOnlyList<ElementIdentity> Observe(NativeFrame frame, string? query = null)
         => Observe(frame, query, null);
 
+    /// <summary>
+    /// True when an enabled, onscreen window with this AutomationId exists. Stops at the first match and reads
+    /// nothing below it, unlike <see cref="Observe(NativeFrame, string?, string?, int, int)"/>.
+    /// </summary>
+    public bool ScopeWindowOpen(NativeFrame frame, string scopeAutomationId)
+    {
+        observeCalls++;
+        EnsureFrame(frame);
+        var properties = automation.PropertyLibrary.Element;
+        var condition = automation.ConditionFactory.ByAutomationId(scopeAutomationId)
+            .And(automation.ConditionFactory.ByProcessId(frame.Window.ProcessId))
+            .And(automation.ConditionFactory.ByControlType(ControlType.Window))
+            .And(new PropertyCondition(properties.IsEnabled, true))
+            .And(new PropertyCondition(properties.IsOffscreen, false));
+        return root!.FindFirstDescendant(condition) is not null;
+    }
+
     public IReadOnlyList<ElementIdentity> Observe(NativeFrame frame, string? query, string? scopeAutomationId,
         int maxElements = 500, int maxVisited = 5000)
     {
