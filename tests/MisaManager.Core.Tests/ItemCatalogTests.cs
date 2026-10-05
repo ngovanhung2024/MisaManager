@@ -105,6 +105,18 @@ public sealed class ItemCatalogTests : IDisposable
     }
 
     [Fact]
+    public void RetainedCodeWithoutExportOrCreationEvidenceIsNeverSelected()
+    {
+        var store = NewStore(Item("HH_341", "Fu-army 40EC 100ml (ĐN)", "Chai"));
+        store.Merge([Item("HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai")], temp.Combine("export.xlsx"));
+
+        var reopened = new ItemCatalogStore(CatalogPath);
+        Assert.Null(reopened.Find("Fu-army 40EC 100ml (ĐN)", "Chai"));
+        Assert.NotNull(reopened.FindByCode("HH_341"));
+        Assert.Equal("HH_342", reopened.NextCode());
+    }
+
+    [Fact]
     public void NewStoreOnAMissingFileIsEmpty()
     {
         var store = new ItemCatalogStore(CatalogPath);

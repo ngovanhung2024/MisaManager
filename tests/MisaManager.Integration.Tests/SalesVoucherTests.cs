@@ -152,6 +152,36 @@ public sealed class SalesVoucherTests : UiTest
         Assert.DoesNotContain("F3 item lookup", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(ItemLookupUsesVoucherColumns: true), catalog: Catalog);
 
+    [Fact]
+    public Task Invoice1667IgnoresUnverifiedCacheAndCreatesFuArmyOnce() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        const string name = "Fu-army 40EC 100ml (ĐN)";
+        harness.Catalog.Add(new("HH_341", name, "Chai"));
+        var invoice = Invoices.Build(TempDirectory(misa), "1667", Invoices.Consumer,
+            Invoices.Line(0, "HH_01", "Chery 15g", "Gói", 1, 10_000, "5%"),
+            Invoices.Line(1, "HH_02", "Phân NPK 16.16.8.13S QN", "kg", 1, 10_000, "5%"),
+            Invoices.Line(2, "HH_03", "Phân kali", "kg", 1, 10_000, "5%"),
+            Invoices.Line(3, "HH_04", "Phân ĐT Lót thúc 17.12.5", "kg", 1, 10_000, "5%"),
+            Invoices.Line(4, "HH_05", "Phân NPK 16.16.8.6S", "kg", 1, 10_000, "5%"),
+            Invoices.Line(5, "", name, "Chai", 19, 67_857.14m, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var item = Assert.Single(misa.State().CreatedItems);
+        Assert.Equal(("HH_342", name, "Chai"), (item.Code, item.Name, item.Unit));
+        Assert.Equal("HH_342", Assert.Single(misa.State().Vouchers).Lines[5].Code);
+        Assert.Equal("HH_342", new ItemCatalogStore(harness.Catalog.FilePath).Find(name, "Chai")!.Code);
+        var second = Invoices.Build(TempDirectory(misa), "1668", Invoices.Consumer,
+            Invoices.Line(0, "", name, "Chai", 1, 67_857.14m, "5%"));
+        Assert.Equal("saved", (await harness.RunAsync(second, misa, token)).Outcome);
+        Assert.Single(misa.State().CreatedItems);
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.DoesNotContain("code <- 'HH_341'", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F3 item lookup", events, StringComparison.Ordinal);
+        Assert.Equal(1, events.Split("F9 new item", StringSplitOptions.None).Length - 1);
+    }, new FakeScenario(AdditionalItems: [new("HH_341", "COMPASS 60OD-100CC PET", "Chai", "5%")]), catalog: Catalog);
+
     [Theory]
     [InlineData("1665", 4, "HH_340", "Sông Gianh HC-15 bột (25kg)", "kg")]
     [InlineData("1667", 6, "HH_341", "Fu-army 40EC 100ml (ĐN)", "Chai")]
@@ -169,6 +199,8 @@ public sealed class SalesVoucherTests : UiTest
 
         Assert.NotEqual("saved", result.Outcome);
         Assert.Equal("ITEM_CATALOG_STALE", result.Context.Snapshot.LastErrorCode);
+        Assert.Contains("NativeWorkflowGateway.EnterLines", result.Context.Snapshot.ErrorChain);
+        Assert.Equal(result.Context.Snapshot.ErrorChain, result.Verification.ErrorChain);
         Assert.Empty(misa.State().CreatedItems);
         Assert.Empty(misa.State().Vouchers);
         Assert.DoesNotContain("catalog query", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);

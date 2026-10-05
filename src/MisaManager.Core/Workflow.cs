@@ -514,13 +514,18 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 var message = batch.Error ?? current.Snapshot.LastMessage
                     ?? $"Live run stopped at {current.Snapshot.Status}: {batch.StopReason}.";
                 var failureCode = current.Snapshot.LastErrorCode;
+                var failureChain = current.Snapshot.ErrorChain ?? batch.Error;
                 var nothingOpened = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current);
                 if (batch.StopReason is not "interrupted")
                     current = await TryDiscardFailedVoucherAsync(current);
                 var clean = batch.StopReason is not "interrupted"
                     && (current.Snapshot.Status == WorkflowStatus.Discarded || nothingOpened);
                 var rerunSafe = batch.StopReason == "checkpoint_failed" && InterferenceRetry.IsTransient(failureCode) && clean;
-                current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED", token);
+                // Confirmed discard clears checkpoint errors; preserve the original exception as diagnostic evidence.
+                var chain = string.Join(Environment.NewLine, new[] { failureChain, current.Snapshot.ErrorChain }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal));
+                current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED", token,
+                    chain.Length > 0 ? chain : null);
                 return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, rerunSafe, clean);
             }
 

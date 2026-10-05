@@ -12,7 +12,7 @@ public sealed record PendingItemCreation(string Code, string Name, string Unit, 
 
 public sealed record ItemCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? SourceFile,
     IReadOnlyList<ItemCatalogEntry> Items, IReadOnlyList<PendingItemCreation>? Pending = null,
-    IReadOnlyList<string>? ImportedCodes = null);
+    IReadOnlyList<string>? ImportedCodes = null, IReadOnlyList<string>? VerifiedCodes = null);
 
 /// <summary>
 /// Local item-code database: MISA catalog export plus codes created by the tool.
@@ -26,6 +26,7 @@ public sealed partial class ItemCatalogStore
     private List<ItemCatalogEntry> items = [];
     private List<PendingItemCreation> pending = [];
     private HashSet<string>? importedCodes;
+    private HashSet<string> verifiedCodes = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, ItemCatalogEntry[]> byName = new(StringComparer.Ordinal);
 
     public ItemCatalogStore(string path)
@@ -38,6 +39,7 @@ public sealed partial class ItemCatalogStore
         UpdatedAt = file.UpdatedAt;
         pending = (file.Pending ?? []).Where(item => !string.IsNullOrWhiteSpace(item.Code)).ToList();
         importedCodes = file.ImportedCodes?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        verifiedCodes = (file.VerifiedCodes ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Replace(file.Items);
     }
 
@@ -61,7 +63,8 @@ public sealed partial class ItemCatalogStore
     public string CodeOrigin(string code)
     {
         lock (gate)
-            return importedCodes is null ? "legacy_unknown" : importedCodes.Contains(code) ? "catalog_excel" : "local_cache";
+            return importedCodes?.Contains(code) == true ? "catalog_excel" : verifiedCodes.Contains(code) ? "verified_creation"
+                : importedCodes is null ? "legacy_unknown" : "local_cache";
     }
 
     /// <summary>
@@ -76,6 +79,8 @@ public sealed partial class ItemCatalogStore
             candidates = byName.GetValueOrDefault(ItemNameKey(name)) ?? [];
             var exported = candidates.Where(item => importedCodes?.Contains(item.Code) == true).ToArray();
             if (exported.Length > 0) candidates = exported;
+            // Retained legacy rows reserve codes, but cannot prove that MISA still maps them to these names.
+            else if (importedCodes is not null) candidates = candidates.Where(item => verifiedCodes.Contains(item.Code)).ToArray();
         }
         if (candidates.Length == 0) return null;
         var unitKey = NameKey(unit);
@@ -187,6 +192,7 @@ public sealed partial class ItemCatalogStore
                 pending.Remove(entry);
                 if (!items.Any(item => string.Equals(item.Code, code, StringComparison.Ordinal)))
                     Replace([.. items, new ItemCatalogEntry(entry.Code, entry.Name, entry.Unit)]);
+                verifiedCodes = new HashSet<string>(verifiedCodes, StringComparer.OrdinalIgnoreCase) { code };
             });
         }
         Changed?.Invoke(this, EventArgs.Empty);
@@ -243,7 +249,11 @@ public sealed partial class ItemCatalogStore
     /// <summary>Replaces cached rows only after a complete live MISA catalog read; unresolved saves stay pending.</summary>
     public void RefreshNative(IEnumerable<ItemCatalogEntry> verified)
     {
-        lock (gate) Transact(() => Replace(verified));
+        lock (gate) Transact(() =>
+        {
+            Replace(verified);
+            importedCodes = items.Select(item => item.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        });
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -289,7 +299,8 @@ public sealed partial class ItemCatalogStore
     // leave a pending code recorded in memory but not on disk.
     private void Transact(Action change)
     {
-        var (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported) = (items, byName, pending.ToList(), SourceFile, UpdatedAt, importedCodes);
+        var (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported, oldVerified) =
+            (items, byName, pending.ToList(), SourceFile, UpdatedAt, importedCodes, verifiedCodes);
         try
         {
             change();
@@ -297,7 +308,8 @@ public sealed partial class ItemCatalogStore
         }
         catch
         {
-            (items, byName, pending, SourceFile, UpdatedAt, importedCodes) = (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported);
+            (items, byName, pending, SourceFile, UpdatedAt, importedCodes, verifiedCodes) =
+                (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported, oldVerified);
             throw;
         }
     }
@@ -312,7 +324,7 @@ public sealed partial class ItemCatalogStore
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending,
-                    importedCodes?.Order(StringComparer.Ordinal).ToArray()), Json);
+                    importedCodes?.Order(StringComparer.Ordinal).ToArray(), verifiedCodes.Order(StringComparer.Ordinal).ToArray()), Json);
                 stream.Flush(flushToDisk: true);
             }
             StateFiles.Commit(temporary, FilePath);

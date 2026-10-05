@@ -127,7 +127,10 @@ Khi MISA đổi phiên bản:
 
 ## Mã khách hàng / nhà cung cấp
 
-Danh mục mã hàng ưu tiên mã từ file Excel đã nạp hơn mã phát sinh còn giữ trong database cục bộ. Tên hàng trong
+Danh mục mã hàng ưu tiên mã từ file Excel đã nạp hơn mã phát sinh còn giữ trong database cục bộ. Khi đã có bằng chứng
+nguồn từ file Excel, dòng không có mã chỉ được tra bằng các mã hiện có trong lần xuất đó; mã cache cũ không được tự chọn
+vì MISA có thể đã đổi tên hoặc cấp lại mã. Mã do tool tạo chỉ được tái sử dụng sau khi lần Cất đã xác nhận và ghi bằng chứng.
+Tên hàng trong
 hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng trắng và chữ "bao" trong quy cách dạng `(bao 25kg)`;
 vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg hoặc HC-15/HC-16 không bị ghép chung. Database cũ tự đọc lại file
 danh mục gốc một lần để ghi nguồn mã; nếu file mất thì cần nạp lại. Mã đã tạo và bằng chứng Cất chưa rõ vẫn được giữ.
