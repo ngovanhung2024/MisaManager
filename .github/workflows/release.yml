@@ -1,18 +1,8 @@
 name: Release
 
-# Every merge to master publishes a GitHub Release (MSI + SHA256SUMS.txt) that the in-app updater installs;
-# no tag or local script is needed. Version = major.minor of Directory.Build.props + commit count of master.
-# Pull requests build the same MSI as a workflow artifact for testing before merge (nothing is published).
-# A tag v1.2.3 or a manual run with a version still publishes that exact version.
-# Tests run independently in CI; publishing does not wait for their results.
+# Manual fallback for developers; normal releases are built and published locally.
+# Version = major.minor of Directory.Build.props + commit count of master.
 on:
-  push:
-    branches: [master]
-    tags: ["v*.*.*"]
-    # Path filters do not apply to tag pushes.
-    paths-ignore: ["**/*.md", "licenses/**"]
-  pull_request:
-    paths-ignore: ["**/*.md", "licenses/**"]
   workflow_dispatch:
     inputs:
       version:
@@ -24,7 +14,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   DOTNET_NOLOGO: "true"
@@ -53,10 +43,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($raw)) {
             $base = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
             $parts = ([Version]$base)
-            # Commit count only grows along master. A PR build takes its base commit's count, so the release
-            # published after merging always has a higher version than any test build of that PR.
-            $commit = if ('${{ github.event_name }}' -eq 'pull_request') { '${{ github.event.pull_request.base.sha }}' } else { 'HEAD' }
-            $count = [int](git rev-list --count $commit)
+            $count = [int](git rev-list --count HEAD)
             $raw = "$($parts.Major).$($parts.Minor).$count"
           }
           $version = $raw.Trim().TrimStart('v', 'V')
@@ -113,6 +100,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MisaManager-${{ env.VERSION }}${{ github.event_name == 'pull_request' && format('-pr{0}', github.event.pull_request.number) || '' }}
+          name: MisaManager-${{ env.VERSION }}
           path: dist/**
           retention-days: 14

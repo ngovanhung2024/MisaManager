@@ -27,7 +27,7 @@ tests/
   MisaManager.Integration.Tests/ Chạy luồng nhập thật (Automation + WorkflowRunner) trên MISA giả lập
 installer/                 WiX 4 MSI per-user (%LOCALAPPDATA%\Programs\MisaManager)
 scripts/                   release.ps1 (build/publish/MSI/ký số), install/rollback, chứng chỉ ký số
-.github/workflows/         ci.yml (mỗi PR), release.yml (tag v*.*.*)
+.github/workflows/         ci.yml và release.yml (chạy thủ công khi cần)
 ```
 
 Luồng một hóa đơn (`src/MisaManager.Core/Workflow.cs`): `Ready → PreflightPassed → SalesSurface → VoucherCreated →
@@ -43,11 +43,9 @@ không bao giờ được gửi lại tự động.
 3. Repo đang private: lần đầu vào **••• → Cài đặt cập nhật…** và dán GitHub token (xem mục Phát hành). Từ đó mỗi lần mở
    app sẽ tự hỏi khi có bản mới → bấm cài → app tự đóng, cài và mở lại.
 
-Mỗi lần merge PR vào `master`, GitHub Actions tự tạo bản phát hành mới (không cần tag hay chạy script). Muốn thử một PR
-trước khi merge: mở tab **Checks** của PR → workflow **Release** → tải artifact `MisaManager-<version>-pr<số>` (file zip
-chứa MSI). Bản thử của PR luôn có version thấp hơn bản phát hành sau khi merge, nên app vẫn tự cập nhật lên bản chính
-thức. Dữ liệu (lịch sử chống nhập trùng, danh mục mã hàng/khách hàng, cài đặt) nằm ở `%LOCALAPPDATA%\MisaManager` và
-được giữ nguyên qua mọi lần cập nhật.
+Sau khi lập trình viên merge và phát hành lên GitHub Releases, app tự tìm thấy bản mới; người dùng chỉ cần bấm cập nhật.
+GitHub không build lại khi push hay merge. Dữ liệu (lịch sử chống nhập trùng, danh mục mã hàng/khách hàng, cài đặt) nằm ở
+`%LOCALAPPDATA%\MisaManager` và được giữ nguyên qua mọi lần cập nhật.
 
 Thư mục `scripts/` chỉ dùng cho CI và lập trình viên; người dùng không cần chạy script nào.
 
@@ -77,18 +75,21 @@ Integration test khởi động `MISA.SME.exe` giả lập (tests/MisaManager.Fa
 (`NativeWorkflowGateway` + `WorkflowRunner`) rồi kiểm tra cả kết quả workflow lẫn dữ liệu chứng từ mà app giả lập đã lưu.
 Không còn chế độ "live test" trên MISA thật. Khi đổi hành vi automation, hãy thêm kịch bản vào app giả lập trước.
 
-CI (`.github/workflows/ci.yml`) chạy build + unit test + integration test trên `windows-latest` cho mỗi PR.
+CI (`.github/workflows/ci.yml`) chỉ chạy thủ công qua **Actions → CI → Run workflow** khi cần;
+push và PR không tự chạy test trên GitHub.
 
 ## Phát hành & tự cập nhật
 
-1. Mỗi push/merge vào `master` (trừ thay đổi chỉ ở `*.md`), `release.yml` tự phát hành bản
-   `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `<Version>` trong `Directory.Build.props` (đổi ở đó để
-   lên 0.3, 1.0…). Vẫn có thể phát hành version cụ thể bằng tag `v1.2.3` hoặc chạy tay workflow với ô version.
-2. `release.yml` chạy ngay sau merge, không chạy test và không chờ kết quả CI. Workflow chạy
-   `scripts/release.ps1 -Stage -Installer` (build self-contained, health-check, MSI có
-   shortcut Start menu/Desktop), ký số (nếu có secret), rồi tạo GitHub Release gồm `MisaManager-<version>.msi`,
-   `SHA256SUMS.txt`, `release-manifest.json`. Build và đóng gói vẫn cần thời gian trước khi app thấy bản cập nhật.
-   CI chạy build và test độc lập; lỗi test không chặn phát hành. Với PR, workflow chỉ build MSI và đính kèm làm artifact.
+1. Lập trình viên merge vào `master`, đồng bộ checkout local rồi chạy `scripts/publish-local.ps1 -Publish` trên
+   Windows có desktop và GitHub CLI đã đăng nhập với quyền phát hành. Script chạy build, unit test và integration test
+   trên MISA giả lập, rồi dùng `release.ps1` để build self-contained, health-check, ký số (nếu được cấu hình) và tạo MSI.
+   Nếu test hoặc build lỗi, script dừng trước khi phát hành. Không có `-Publish` thì chỉ tạo bộ file ở local để kiểm tra.
+2. Version vẫn là `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `Directory.Build.props`. Script chỉ
+   phát hành đúng commit đã merge trên `origin/master`, từ checkout sạch và với version lớn hơn các release hiện có.
+   Ba file `MisaManager-<version>.msi`, `SHA256SUMS.txt`, `release-manifest.json` được upload vào draft Release trước,
+   rồi mới công bố để app không thấy bản thiếu file. GitHub chỉ lưu file, không chạy lại build/test.
+   `release.yml` là phương án dự phòng chạy thủ công qua **Actions → Release → Run workflow**; không tự chạy khi merge
+   hay tạo tag. Không chạy đồng thời phát hành local và workflow dự phòng cho cùng một version.
 3. App tự kiểm tra khi mở (tắt được) hoặc qua **••• → Kiểm tra cập nhật…**: tải MSI, kiểm tra SHA-256, đóng app, chạy
    `msiexec /passive` (per-user, không cần quyền admin) rồi mở lại app. App từ chối cập nhật khi đang có hóa đơn dở.
 
