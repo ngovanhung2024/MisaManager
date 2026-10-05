@@ -38,6 +38,13 @@ internal sealed class WindowPairing : IDisposable
     public bool PopupOnRight => popupOnRight;
     public bool CanShowPopup => ToolShown();
 
+    /// <summary>True while Windows has the window minimized, even before WPF updates WindowState.</summary>
+    public static bool IsMinimized(Window window)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        return handle != 0 && IsIconic(handle);
+    }
+
     public void Dispose()
     {
         tool.LocationChanged -= ToolChanged;
