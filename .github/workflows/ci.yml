@@ -1,11 +1,8 @@
 name: CI
 
-# Runs on every pull request; release.yml calls it so nothing is published unless these tests pass.
+# Optional tests; release builds do not call this workflow.
 on:
-  pull_request:
-    paths-ignore: ["**/*.md", "licenses/**"]
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
