@@ -116,7 +116,9 @@ public static class FileDigest
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
             1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var hash = await SHA256.HashDataAsync(stream, token);
+        // Generation upgrades call this synchronously while the WPF dispatcher is starting;
+        // never capture that dispatcher or the upgrade can deadlock before the first window.
+        var hash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }
