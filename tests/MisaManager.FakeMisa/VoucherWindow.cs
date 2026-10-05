@@ -33,6 +33,9 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly List<(TextBox Box, string Key)> bound = [];
     private readonly FakeGrid grid;
     private readonly TabControl detailTabs = new();
+    private readonly TabControl headerTabs;
+    private bool userSwitchedTabs;
+    private bool closeSwallowed;
     private readonly TextBox subtotal, discount, taxTotal, grandTotal;
     private readonly Button save;
     private readonly List<Button> readOnlyCommands = [];
@@ -101,7 +104,7 @@ public sealed class VoucherWindow : Window, IGridSource
         DockPanel.SetDock(titleRow, Dock.Top);
         root.Children.Add(titleRow);
 
-        var headerTabs = new TabControl { Height = 205, Margin = new Thickness(4, 4, 4, 0) };
+        headerTabs = new TabControl { Height = 205, Margin = new Thickness(4, 4, 4, 0) };
         headerTabs.Items.Add(new TabItem { Header = profile.Tab("sales_voucher", "receipt"), Content = ReceiptTab() });
         headerTabs.Items.Add(new TabItem { Header = "Phiếu xuất", Content = IssueTab() });
         headerTabs.Items.Add(new TabItem { Header = profile.Tab("sales_voucher", "invoice"), Content = InvoiceTab() });
@@ -350,6 +353,17 @@ public sealed class VoucherWindow : Window, IGridSource
         grid.Refresh(force: true);
         RefreshTotals();
         if (grid.NextEditableKey(e.Key) is { } next) grid.FocusCell(focusRow, next);
+        if (e.Key == "code" && scenario.UserSwitchesTabs && !userSwitchedTabs)
+        {
+            userSwitchedTabs = true;
+            // Right after the first item code, as a user clicking around would.
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Send, () =>
+            {
+                FakeLog.Write("user switched tabs: Phiếu xuất + Thuế");
+                headerTabs.SelectedIndex = 1;
+                detailTabs.SelectedIndex = 1;
+            });
+        }
         else grid.FocusCell(null, "code");
     }
 
@@ -430,6 +444,7 @@ public sealed class VoucherWindow : Window, IGridSource
             header["customer_tax"], header["posted_date"], header["voucher_date"], header["issued_date"], header["payment"],
             savedLines, amount, tax, amount + tax));
         saved = true;
+        UserMouse.Saved = true;
         dirty = false;
         main.RefreshList();
         if (scenario.SaveClosesEditor) { Close(); return; }
@@ -443,6 +458,12 @@ public sealed class VoucherWindow : Window, IGridSource
     private void CloseVoucher()
     {
         FakeLog.Write($"Đóng (dirty={dirty}, saved={saved})");
+        if (saved && scenario.CloseSwallowedOnceAfterSave && !closeSwallowed)
+        {
+            closeSwallowed = true;
+            FakeLog.Write("Đóng bị nuốt bởi click nhầm của người dùng");
+            return;
+        }
         if (dirty && !saved)
         {
             var answer = MessageBox.Show(this, "Dữ liệu đã bị thay đổi. Bạn có muốn cất không?", Prompt,
