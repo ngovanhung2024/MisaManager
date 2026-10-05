@@ -11,11 +11,12 @@ public sealed record ItemCatalogEntry(string Code, string Name, string Unit, str
 public sealed record PendingItemCreation(string Code, string Name, string Unit, DateTimeOffset StartedAt, string? RunId = null);
 
 public sealed record ItemCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? SourceFile,
-    IReadOnlyList<ItemCatalogEntry> Items, IReadOnlyList<PendingItemCreation>? Pending = null);
+    IReadOnlyList<ItemCatalogEntry> Items, IReadOnlyList<PendingItemCreation>? Pending = null,
+    IReadOnlyList<string>? ImportedCodes = null);
 
 /// <summary>
 /// Local item-code database: MISA catalog export plus codes created by the tool.
-/// Name lookups use <see cref="TextKey.Compact"/>: case, whitespace, invisible characters, look-alike
+/// Name lookups use <see cref="ItemNameKey"/>: case, whitespace, invisible characters, look-alike
 /// punctuation, full-width forms and Vietnamese tone placement do not affect a match.
 /// </summary>
 public sealed partial class ItemCatalogStore
@@ -24,6 +25,7 @@ public sealed partial class ItemCatalogStore
     private readonly object gate = new();
     private List<ItemCatalogEntry> items = [];
     private List<PendingItemCreation> pending = [];
+    private HashSet<string>? importedCodes;
     private Dictionary<string, ItemCatalogEntry[]> byName = new(StringComparer.Ordinal);
 
     public ItemCatalogStore(string path)
@@ -35,6 +37,7 @@ public sealed partial class ItemCatalogStore
         SourceFile = file.SourceFile;
         UpdatedAt = file.UpdatedAt;
         pending = (file.Pending ?? []).Where(item => !string.IsNullOrWhiteSpace(item.Code)).ToList();
+        importedCodes = file.ImportedCodes?.ToHashSet(StringComparer.OrdinalIgnoreCase);
         Replace(file.Items);
     }
 
@@ -44,11 +47,22 @@ public sealed partial class ItemCatalogStore
     public int Count { get { lock (gate) return items.Count; } }
     public int PendingCount { get { lock (gate) return pending.Count; } }
     public event EventHandler? Changed;
+    public bool HasImportedProvenance { get { lock (gate) return importedCodes is not null; } }
 
     public static string NameKey(string? value) => TextKey.Compact(value);
 
+    // Only the packaging word inside a measured kg parenthesis is optional; keep the weight and product variant.
+    public static string ItemNameKey(string? value) => TextKey.LettersAndDigits(
+        Regex.Replace(TextKey.Canonical(value), @"(?<=\()\s*BAO\s*(?=\d+(?:\.\d+)?\s*KG\s*\))", "", RegexOptions.CultureInvariant));
+
     public IReadOnlyList<ItemCatalogEntry> Snapshot() { lock (gate) return items.ToArray(); }
     public IReadOnlyList<PendingItemCreation> PendingSnapshot() { lock (gate) return pending.ToArray(); }
+
+    public string CodeOrigin(string code)
+    {
+        lock (gate)
+            return importedCodes is null ? "legacy_unknown" : importedCodes.Contains(code) ? "catalog_excel" : "local_cache";
+    }
 
     /// <summary>
     /// Returns null when the name is unknown. Throws when the name exists only with
@@ -57,7 +71,12 @@ public sealed partial class ItemCatalogStore
     public ItemCatalogEntry? Find(string name, string unit, bool allowKgToTon = false)
     {
         ItemCatalogEntry[] candidates;
-        lock (gate) candidates = byName.GetValueOrDefault(NameKey(name)) ?? [];
+        lock (gate)
+        {
+            candidates = byName.GetValueOrDefault(ItemNameKey(name)) ?? [];
+            var exported = candidates.Where(item => importedCodes?.Contains(item.Code) == true).ToArray();
+            if (exported.Length > 0) candidates = exported;
+        }
         if (candidates.Length == 0) return null;
         var unitKey = NameKey(unit);
         bool HasUnit(ItemCatalogEntry item, string key) => NameKey(item.Unit) == key || NameKey(item.ConversionUnit) == key;
@@ -130,11 +149,11 @@ public sealed partial class ItemCatalogStore
 
     public PendingItemCreation? FindPending(string name, string unit)
     {
-        var nameKey = NameKey(name);
+        var nameKey = ItemNameKey(name);
         var unitKey = NameKey(unit);
         lock (gate)
         {
-            var matches = pending.Where(item => NameKey(item.Name) == nameKey && NameKey(item.Unit) == unitKey).ToArray();
+            var matches = pending.Where(item => ItemNameKey(item.Name) == nameKey && NameKey(item.Unit) == unitKey).ToArray();
             if (matches.Length > 1)
                 throw new AutomationException("ITEM_CREATE_UNCERTAIN",
                     $"Có {matches.Length} lần tạo mã chưa xác nhận cho '{name}' ({string.Join(", ", matches.Select(item => item.Code))}). "
@@ -189,17 +208,20 @@ public sealed partial class ItemCatalogStore
     /// A fresh MISA export also settles pending creations: present codes are known,
     /// absent ones started before the export was written were never created.
     /// </summary>
-    public int Merge(IEnumerable<ItemCatalogEntry> imported, string sourceFile)
+    public int Merge(IEnumerable<ItemCatalogEntry> imported, string sourceFile, bool reconcilePending = true)
     {
         DateTimeOffset? exportedAt = File.Exists(sourceFile) ? new DateTimeOffset(File.GetLastWriteTimeUtc(sourceFile), TimeSpan.Zero) : null;
         lock (gate)
         {
-            var incoming = imported.GroupBy(item => item.Code, StringComparer.Ordinal).Select(group => group.First()).ToList();
+            var incoming = imported.Select(item => item with { Code = item.Code.Trim() })
+                .GroupBy(item => item.Code, StringComparer.Ordinal).Select(group => group.First()).ToList();
             var codes = incoming.Select(item => item.Code.Trim()).ToHashSet(StringComparer.Ordinal);
             Transact(() =>
             {
-                pending.RemoveAll(item => codes.Contains(item.Code) || exportedAt is { } at && at > item.StartedAt);
+                if (reconcilePending)
+                    pending.RemoveAll(item => codes.Contains(item.Code) || exportedAt is { } at && at > item.StartedAt);
                 Replace([.. incoming, .. items.Where(item => !codes.Contains(item.Code))]);
+                importedCodes = codes.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 SourceFile = sourceFile;
             });
         }
@@ -259,7 +281,7 @@ public sealed partial class ItemCatalogStore
             .Select(item => item with { Code = item.Code.Trim(), Name = item.Name.Trim(), Unit = (item.Unit ?? "").Trim(),
                 ConversionUnit = (item.ConversionUnit ?? "").Trim() })
             .ToList();
-        byName = items.GroupBy(item => NameKey(item.Name), StringComparer.Ordinal)
+        byName = items.GroupBy(item => ItemNameKey(item.Name), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
     }
 
@@ -267,7 +289,7 @@ public sealed partial class ItemCatalogStore
     // leave a pending code recorded in memory but not on disk.
     private void Transact(Action change)
     {
-        var (oldItems, oldByName, oldPending, oldSource, oldUpdated) = (items, byName, pending.ToList(), SourceFile, UpdatedAt);
+        var (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported) = (items, byName, pending.ToList(), SourceFile, UpdatedAt, importedCodes);
         try
         {
             change();
@@ -275,7 +297,7 @@ public sealed partial class ItemCatalogStore
         }
         catch
         {
-            (items, byName, pending, SourceFile, UpdatedAt) = (oldItems, oldByName, oldPending, oldSource, oldUpdated);
+            (items, byName, pending, SourceFile, UpdatedAt, importedCodes) = (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported);
             throw;
         }
     }
@@ -289,7 +311,8 @@ public sealed partial class ItemCatalogStore
         {
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
-                JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending), Json);
+                JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending,
+                    importedCodes?.Order(StringComparer.Ordinal).ToArray()), Json);
                 stream.Flush(flushToDisk: true);
             }
             StateFiles.Commit(temporary, FilePath);

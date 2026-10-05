@@ -64,6 +64,47 @@ public sealed class ItemCatalogTests : IDisposable
     // ---- lookup by name and unit ----
 
     [Fact]
+    public void ImportedPackagingNameWinsOverRetainedGeneratedMappingAfterRestart()
+    {
+        var store = NewStore(Item("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg"));
+        store.Merge([Item("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg")], temp.Combine("export.xlsx"));
+
+        Assert.Equal("HH_177", new ItemCatalogStore(CatalogPath).Find("Sông Gianh HC-15 bột (25kg)", "Kg")!.Code);
+    }
+
+    [Fact]
+    public void PackagingWeightAndProductVariantStayDistinct()
+    {
+        var store = NewStore(Item("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg"),
+            Item("HH_306", "Sông Gianh HC-15 bột (bao 10kg)", "Tấn", "kg"));
+
+        Assert.Equal("HH_177", store.Find("Sông Gianh HC-15 bột (25kg)", "kg")!.Code);
+        Assert.Equal("HH_306", store.Find("Sông Gianh HC-15 bột (10kg)", "kg")!.Code);
+        Assert.Null(store.Find("Sông Gianh HC-16 bột (25kg)", "kg"));
+    }
+
+    [Fact]
+    public void TwoExportedPackagingMatchesStayAmbiguous()
+    {
+        var store = NewStore(Item("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg"));
+        store.Merge([Item("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg"),
+            Item("HH_178", "Sông Gianh HC-15 bột (25kg)", "kg")], temp.Combine("export.xlsx"));
+
+        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Sông Gianh HC-15 bột (25kg)", "kg")).Code);
+    }
+
+    [Fact]
+    public void GeneratedItemWithoutAnExportedMatchIsStillUsable()
+    {
+        var store = NewStore();
+        store.Merge([Item("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg")], temp.Combine("export.xlsx"));
+        store.BeginPending(new("HH_340", "Hàng mới", "Gói", DateTimeOffset.UtcNow));
+        store.ConfirmPending("HH_340");
+
+        Assert.Equal("HH_340", new ItemCatalogStore(CatalogPath).Find("Hàng mới", "Gói")!.Code);
+    }
+
+    [Fact]
     public void NewStoreOnAMissingFileIsEmpty()
     {
         var store = new ItemCatalogStore(CatalogPath);

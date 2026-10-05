@@ -13,6 +13,24 @@ public static class ItemCatalogWorkbook
     private static readonly string[] UnitHeaders = ["dvt chinh", "dvt", "don vi tinh", "don vi tinh chinh"];
     private static readonly string[] ConversionHeaders = ["don vi chuyen doi", "dvt chuyen doi"];
 
+    public static async Task EnsureImportedProvenanceAsync(WorkbookReader reader, ItemCatalogStore catalog,
+        CancellationToken token = default)
+    {
+        if (catalog.HasImportedProvenance || catalog.SourceFile is not { Length: > 0 } source) return;
+        try
+        {
+            // Older databases mixed export rows and generated codes without recording their source.
+            var exported = await ReadAsync(reader, source, token).ConfigureAwait(false);
+            catalog.Merge(exported, source, reconcilePending: false);
+        }
+        catch (Exception error) when (error is WorkbookImportException or IOException or UnauthorizedAccessException)
+        {
+            throw new AutomationException("ITEM_CATALOG_SOURCE_UNAVAILABLE",
+                "Chưa xác định được mã nào thuộc file danh mục gốc. Nạp lại file mã hàng trước khi nhập; không dùng mã giữ lại trong cache. "
+                + error.Message, false, error);
+        }
+    }
+
     public static async Task<IReadOnlyList<ItemCatalogEntry>> ReadAsync(WorkbookReader reader, string path, CancellationToken token = default)
     {
         var workbook = await reader.ReadAsync(path, token);

@@ -732,15 +732,14 @@ public partial class MainWindow : Window
     private void Workflow_ErrorRaised(object? sender, WorkflowErrorEventArgs error)
     {
         lastWorkflowError = error;
-        var code = ErrorHints.FindCode(error.Message, error.Details);
+        var code = ErrorPrompt.Code(error.Message, error.Details);
         var hint = ErrorHints.For(code);
         ErrorPopupTitle.Text = code is null ? "Lỗi khi thêm vào MISA" : "Lỗi khi thêm vào MISA · " + code;
         ErrorPopupMessage.Text = error.Message;
         ErrorPopupHint.Text = hint ?? "";
         ErrorPopupHintBox.Visibility = hint is null ? Visibility.Collapsed : Visibility.Visible;
-        var causes = ErrorPrompt.Causes(error.Message, error.Details);
-        ErrorPopupDetails.Text = string.Join(Environment.NewLine, causes.Select(cause => "• " + cause));
-        ErrorPopupDetailsBox.Visibility = causes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        ErrorPopupDetails.Text = ErrorPrompt.DiagnosticSummary(error.Message, error.Details, workflow.PerformanceEntries);
+        ErrorPopupDetailsBox.Visibility = Visibility.Visible;
         ErrorPopup.Visibility = Visibility.Visible;
         Motion.FadeIn(ErrorPopup, fromY: -6);
     }
@@ -761,6 +760,23 @@ public partial class MainWindow : Window
         if (lastWorkflowError is null) return;
         var text = workflow.ExportLastError(lastWorkflowError.Message, lastWorkflowError.Details, lastWorkflowError.OccurredAt);
         StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy lỗi; dán vào AI để được hỗ trợ sửa.";
+    }
+
+    private async void ExportErrorReport_Click(object sender, RoutedEventArgs e)
+    {
+        if (lastWorkflowError is not { } error || sender is not Button button) return;
+        button.IsEnabled = false;
+        try
+        {
+            var path = await ((App)Application.Current).Services.ExportFailureReportAsync(
+                error.Message, error.Details, workflow.ExportPerformance());
+            StatusLabel.Text = TryCopy(path, "bao-cao") ?? "Đã lưu báo cáo ZIP và copy đường dẫn: " + path;
+        }
+        catch (Exception failure)
+        {
+            StatusLabel.Text = "Không xuất được báo cáo: " + failure.Message;
+        }
+        finally { button.IsEnabled = true; }
     }
 
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e)

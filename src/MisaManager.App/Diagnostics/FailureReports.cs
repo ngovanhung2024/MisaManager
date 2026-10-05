@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using MisaManager.Automation;
 using MisaManager.Core;
 
@@ -17,7 +18,8 @@ public sealed record UiErrorRecord(string Message, string Details, DateTimeOffse
 public sealed partial class AppServices
 {
     private sealed record FailureCapture(string RunId, string Step, DateTimeOffset At, UiFailureSnapshot Ui,
-        byte[]? Screenshot, IReadOnlyList<WorkflowStepTiming> Steps);
+        byte[]? Screenshot, IReadOnlyList<WorkflowStepTiming> Steps, WorkflowContext Context,
+        ItemResolutionDiagnostic? ItemResolution);
 
     private static readonly JsonSerializerOptions ReportJson = new(ContractJson.Options) { WriteIndented = true };
     private readonly object reportGate = new();
@@ -39,7 +41,7 @@ public sealed partial class AppServices
 
     public void RecordUiError(string message, string details)
     {
-        lock (reportGate) lastUiError = new(message, Clip(details, 20000), DateTimeOffset.UtcNow);
+        lock (reportGate) lastUiError = new(message, details, DateTimeOffset.UtcNow);
     }
 
     // Runs before the runner discards the voucher, while the failing dialog/focus is still on screen.
@@ -56,7 +58,90 @@ public sealed partial class AppServices
             catch (Exception error) { ui = new(handle, "", [], [], [], DateTimeOffset.UtcNow, error.Message); }
         }
         var steps = workflowGateway.Timeline().Steps;
-        lock (reportGate) lastFailure = new(context.Snapshot.RunId, step, DateTimeOffset.UtcNow, ui, screenshot, steps);
+        var current = Workflow.Current is { } latest && latest.Snapshot.RunId == context.Snapshot.RunId ? latest : context;
+        var item = workflowGateway.LastItemResolution is { } resolution && resolution.RunId == context.Snapshot.RunId
+            ? resolution : null;
+        lock (reportGate) lastFailure = new(context.Snapshot.RunId, step, DateTimeOffset.UtcNow, ui, screenshot, steps, current, item);
+    }
+
+    private object FailureData(WorkflowContext context, LiveVerificationRecord? verification = null, string? message = null)
+    {
+        FailureCapture? failure;
+        lock (reportGate) failure = lastFailure?.RunId == context.Snapshot.RunId ? lastFailure : null;
+        var snapshot = context.Snapshot;
+        var item = failure?.ItemResolution;
+        var lineIndex = item?.LineIndex ?? failure?.Context.Snapshot.ActiveLine ?? snapshot.ActiveLine;
+        var line = lineIndex is >= 0 && lineIndex < context.Invoice.Lines.Length ? context.Invoice.Lines[lineIndex.Value] : null;
+        var nameKey = line is null ? null : ItemCatalogStore.ItemNameKey(line.Name);
+        var candidates = ItemCatalog.Snapshot().Where(entry => nameKey is not null && ItemCatalogStore.ItemNameKey(entry.Name) == nameKey)
+            .Select(entry => new { entry.Code, entry.Name, entry.Unit, entry.ConversionUnit, origin = ItemCatalog.CodeOrigin(entry.Code) }).ToArray();
+        var chain = JoinErrorChains(snapshot.ErrorChain, verification?.ErrorChain);
+        return new
+        {
+            outcome = verification?.Outcome,
+            runId = snapshot.RunId,
+            invoiceId = context.Invoice.InvoiceId,
+            checkpoint = snapshot.Status,
+            snapshot,
+            verification,
+            error = new { code = snapshot.LastErrorCode ?? verification?.ErrorCode, message = snapshot.LastMessage ?? message,
+                chain, failedStep = failure?.Step, failedAt = failure?.At },
+            expected = new { context.Invoice.Identity, context.Invoice.Source, context.Invoice.Buyer,
+                context.Invoice.Fingerprint, context.Invoice.Lines, context.Invoice.VoucherDate, context.Invoice.PostedDate,
+                context.Invoice.Subtotal, context.Invoice.TaxTotal, context.Invoice.GrandTotal, activeLineIndex = lineIndex, activeLine = line },
+            nativeValues = context.NativeValues,
+            diagnostics = new
+            {
+                checkpointAtFailure = failure?.Context.Snapshot.Status.ToString(),
+                activeLine = lineIndex is null ? (int?)null : lineIndex.Value + 1,
+                itemResolution = item,
+                catalog = new { ItemCatalog.SourceFile, ItemCatalog.UpdatedAt, ItemCatalog.HasImportedProvenance,
+                    matchKey = nameKey, candidates, pending = ItemCatalog.PendingSnapshot() },
+                sourceFrames = ErrorPrompt.SourceFrames(chain),
+                guard = new { snapshot.InputPending, snapshot.InputMayHaveBeenSent, snapshot.PendingAction,
+                    disposition = snapshot.LastInputDisposition.ToString(),
+                    noAutomaticReplay = snapshot.Status is WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain
+                        || snapshot.LastInputDisposition == InputDisposition.Uncertain },
+                runtime = snapshot.RuntimeIdentity,
+                windowIdentity = snapshot.WindowIdentity,
+                uiAtFailure = failure?.Ui
+            },
+            steps = failure?.Steps
+        };
+    }
+
+    private static string JoinErrorChains(params string?[] chains)
+        => string.Join(Environment.NewLine, chains.Where(chain => !string.IsNullOrWhiteSpace(chain)).Distinct(StringComparer.Ordinal));
+
+    internal string ErrorDetails(WorkflowContext context)
+    {
+        var path = DiagnosticPath(context.Snapshot.RunId);
+        try
+        {
+            if (File.Exists(path))
+            {
+                var details = File.ReadAllText(path, Encoding.UTF8);
+                if (JsonNode.Parse(details) is JsonObject) return details;
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
+        return JsonSerializer.Serialize(FailureData(context), ReportJson);
+    }
+
+    private string DiagnosticPath(string runId) => StateFiles.UnderRoot(LogRoot, Path.Combine("diagnostics", runId + ".json"));
+
+    private async Task SaveFailureDataAsync(string runId, object data)
+    {
+        try
+        {
+            var path = DiagnosticPath(runId);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(data, ReportJson), new UTF8Encoding(false));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Cannot persist failure diagnostics: " + error.Message);
+        }
     }
 
     private string[] FailureTargets(string? step)
@@ -80,7 +165,6 @@ public sealed partial class AppServices
     {
         var createdAt = DateTimeOffset.Now;
         var current = Workflow.Current;
-        var snapshot = current?.Snapshot;
         FailureCapture? failure;
         UiErrorRecord? uiError;
         lock (reportGate)
@@ -88,6 +172,18 @@ public sealed partial class AppServices
             failure = lastFailure;
             uiError = uiMessage is null ? lastUiError : new(uiMessage, uiDetails ?? "", createdAt);
         }
+        JsonObject? evidence = null;
+        try { evidence = JsonNode.Parse(uiError?.Details ?? "{}") as JsonObject; }
+        catch (JsonException) { }
+        var snapshotEvidence = evidence?["snapshot"] as JsonObject;
+        var requestedRun = snapshotEvidence?["runId"]?.GetValue<string>() ?? snapshotEvidence?["RunId"]?.GetValue<string>();
+        if (requestedRun is not null && requestedRun != current?.Snapshot.RunId)
+            current = (await Workflow.ReadHistoryAsync(token)).FirstOrDefault(run => run.Snapshot.RunId == requestedRun);
+        else if (uiError is not null && requestedRun is null)
+            current = null;
+        var snapshot = current?.Snapshot;
+        if (failure?.RunId != snapshot?.RunId) failure = null;
+        evidence ??= current is null ? null : JsonNode.Parse(ErrorDetails(current)) as JsonObject;
         var live = Workflow.LastLiveRun is { } last && last.Context.Snapshot.RunId == snapshot?.RunId ? last : null;
         LiveVerificationRecord? verification = live?.Verification;
         if (verification is null && snapshot is not null)
@@ -120,9 +216,13 @@ public sealed partial class AppServices
         }
         else uiNowError = "Không tìm thấy phiên MISA đang mở.";
 
-        var lineIndex = snapshot?.ActiveLine;
+        var lineIndex = failure?.ItemResolution?.LineIndex ?? failure?.Context.Snapshot.ActiveLine ?? snapshot?.ActiveLine;
         var activeLine = lineIndex is >= 0 && current is not null && lineIndex < current.Invoice.Lines.Length
             ? current.Invoice.Lines[lineIndex.Value] : null;
+        var errorChain = live?.Error is { } liveError && liveError != snapshot?.ErrorChain
+            ? liveError + Environment.NewLine + snapshot?.ErrorChain : snapshot?.ErrorChain ?? verification?.ErrorChain ?? uiError?.Details;
+        var errorMessage = snapshot?.LastMessage ?? verification?.Error ?? uiError?.Message;
+        var errorCode = snapshot?.LastErrorCode ?? verification?.ErrorCode ?? ErrorHints.FindCode(errorMessage, errorChain);
         var summary = new
         {
             documentType = "MisaManager.FailureReport",
@@ -141,14 +241,15 @@ public sealed partial class AppServices
             batch = new { invoice = batchInvoice, startedAt = batchStartedAt, outcome = batchOutcome },
             error = new
             {
-                code = snapshot?.LastErrorCode ?? verification?.ErrorCode,
-                message = snapshot?.LastMessage ?? verification?.Error ?? uiError?.Message,
-                chain = live?.Error is { } liveError && liveError != snapshot?.ErrorChain
-                    ? liveError + Environment.NewLine + snapshot?.ErrorChain : snapshot?.ErrorChain ?? verification?.ErrorChain,
-                failedStep = failure?.RunId == snapshot?.RunId ? failure?.Step : null,
+                code = errorCode,
+                message = errorMessage,
+                chain = errorChain,
+                failedStep = failure?.Step ?? evidence?["error"]?["failedStep"]?.GetValue<string>(),
                 failedAt = failure?.At,
                 ui = uiError
             },
+            diagnostics = evidence?["diagnostics"],
+            capturedEvidence = evidence,
             workflow = snapshot,
             outcome = live?.Outcome,
             expected = current is null ? null : new
@@ -160,7 +261,7 @@ public sealed partial class AppServices
             },
             nativeValues = current?.NativeValues,
             comparison = verification,
-            steps = (failure?.RunId == snapshot?.RunId ? failure?.Steps : null) ?? workflowGateway.Timeline().Steps,
+            steps = failure?.Steps,
             metrics = workflowGateway.Metrics,
             misaWindows = windows?.Select(window => window with { Title = MisaWindowDiscovery.ProductTitle(window.Title) }).ToArray()
         };
@@ -173,6 +274,9 @@ public sealed partial class AppServices
             using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
             Text(zip, "README-AI.md", Clean(AiReadme(summary.error.code, summary.error.message)));
             Text(zip, "summary.json", Clean(JsonSerializer.Serialize(summary, ReportJson)));
+            if (uiError is not null)
+                Text(zip, "diagnostic.txt", Clean(ErrorPrompt.Build(uiError.Message, uiError.Details, uiError.OccurredAt,
+                    current?.Invoice.Identity.Number ?? "không xác định", [])));
             if (failure is not null)
             {
                 Text(zip, "ui-at-failure.json", Clean(JsonSerializer.Serialize(new { failure.RunId, failure.Step, failure.At, failure.Ui }, ReportJson)));
@@ -213,7 +317,7 @@ public sealed partial class AppServices
     private static string AiReadme(string? code, string? message) => $$"""
         # Báo cáo lỗi MisaManager
 
-        Gói này được tạo bởi nút **Xuất báo cáo lỗi** trong MisaManager (tool nhập hóa đơn Excel vào MISA SME 2023 R20 bằng UI Automation).
+        Gói này được tạo bởi nút **Xuất báo cáo** trong popup lỗi của MisaManager (tool nhập hóa đơn Excel vào MISA SME 2023 R20 bằng UI Automation).
         Hãy gửi cả file zip này cho AI/lập trình viên kèm mô tả ngắn bạn đang làm gì.
 
         - Mã lỗi: `{{code ?? "không có"}}`
@@ -223,6 +327,7 @@ public sealed partial class AppServices
         | File | Nội dung |
         |---|---|
         | `summary.json` | Phiên bản app/profile, lỗi + chuỗi exception, bước đang chạy (`error.failedStep`), checkpoint workflow, dữ liệu hóa đơn mong đợi, dòng hàng đang nhập, giá trị đã đọc từ MISA, kết quả đối chiếu, timeline từng bước. |
+        | `diagnostic.txt` | Báo cáo bằng văn bản như Copy lỗi: mã lỗi, file:dòng, nguồn mã hàng, mã ứng viên, readback và trạng thái an toàn. |
         | `ui-at-failure.json` | Cây UIA rút gọn **ngay lúc lỗi** (trước khi tool Bỏ chứng từ): hộp thoại đang mở, đường focus, control đích. |
         | `screen-at-failure.png` | Ảnh chụp toàn màn hình ngay lúc lỗi. |
         | `ui-now.json`, `screen-now.png` | Trạng thái hiện tại khi xuất báo cáo. |
@@ -230,7 +335,7 @@ public sealed partial class AppServices
         | `logs/` | Nhật ký checkpoint (JSONL) và crash log gần nhất. |
 
         ## Gợi ý cho AI
-        1. Đọc `summary.json` → `error` và `steps` để biết bước nào lỗi; đối chiếu `expected` với `nativeValues`.
+        1. Đọc `diagnostic.txt` và `summary.json` → `error`, `diagnostics` và `capturedEvidence.steps`: checkpoint lúc lỗi, dòng/source, mã được chọn + nguồn, danh sách mã khớp, giá trị MISA đọc lại, guard input và file:dòng. Đối chiếu `expected` với `nativeValues`.
         2. Nếu `screen-check.json` báo selector thiếu → MISA đã đổi giao diện: sửa `profiles/misa-sme2023-r20.json` (xem AGENTS.md mục "Cập nhật profile").
         3. Mã nguồn liên quan: `src/MisaManager.Automation/Workflows/SalesVoucher/*` (luồng nhập), `src/MisaManager.Automation/Screens/*` (thao tác control), `src/MisaManager.Core/Workflow.cs` (state machine).
         4. Ảnh chụp có thể chứa dữ liệu kế toán thật — không đăng công khai.

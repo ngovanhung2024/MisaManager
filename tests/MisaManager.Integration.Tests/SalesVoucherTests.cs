@@ -72,6 +72,70 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(ItemLookupUsesVoucherColumns: true), catalog: Catalog);
 
     [Fact]
+    public Task Invoice1657UsesImportedCodeInsteadOfRetainedGeneratedMapping() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Catalog.Add(new("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg"));
+        var invoice = Invoices.Build(TempDirectory(misa), "1657", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"),
+            Invoices.Line(2, "", "Sông Gianh HC-15 bột (25kg)", "Kg", 350, 3_047.619m, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(misa.State().Vouchers).Lines[2];
+        Assert.Equal(("HH_177", "kg", 350m), (line.Code, line.Unit, line.Quantity));
+        Assert.Empty(misa.State().CreatedItems);
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.DoesNotContain("code <- 'HH_340'", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F3 item lookup", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F9 new item", events, StringComparison.Ordinal);
+    }, new FakeScenario(ItemLookupUsesVoucherColumns: true, AdditionalItems:
+        [new("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "kg", "5%"),
+         new("HH_340", "Hàng khác trong MISA", "kg", "5%")]),
+        catalog: [new("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg")]);
+
+    [Fact]
+    public Task Invoice1665UsesImportedPunctuationVariantWithoutCacheAmbiguity() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        const string name = "Phân NPK 16-16-8+13S HCQN (BM-BV)";
+        harness.Catalog.Add(new("HH_342", name, "kg"));
+        var invoice = Invoices.Build(TempDirectory(misa), "1665", Invoices.Consumer,
+            Invoices.Line(0, "", name, "Kg", 150, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("HH_94", Assert.Single(Assert.Single(misa.State().Vouchers).Lines).Code);
+        Assert.Empty(misa.State().CreatedItems);
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.DoesNotContain("code <- 'HH_342'", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F3 item lookup", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F9 new item", events, StringComparison.Ordinal);
+    }, new FakeScenario(AdditionalItems: [new("HH_94", "Phân NPK16.16.8 + 13S HCQN (BM-BV)", "kg", "5%")]),
+        catalog: [new("HH_94", "Phân NPK16.16.8 + 13S HCQN (BM-BV)", "kg")]);
+
+    [Fact]
+    public Task MultipleExportedCodesRemainAmbiguousBeforeEnteringItemCode() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        const string name = "Phân NPK 16-16-8+13S HCQN (BM-BV)";
+        var invoice = Invoices.Build(TempDirectory(misa), "1666", Invoices.Consumer,
+            Invoices.Line(0, "", name, "Kg", 150, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.Equal("ITEM_AMBIGUOUS", result.Context.Snapshot.LastErrorCode);
+        Assert.Contains("HH_94", result.Context.Snapshot.LastMessage);
+        Assert.Contains("HH_342", result.Context.Snapshot.LastMessage);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Empty(misa.State().CreatedItems);
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.DoesNotContain("code <-", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F9 new item", events, StringComparison.Ordinal);
+    }, catalog: [new("HH_94", "Phân NPK16.16.8 + 13S HCQN (BM-BV)", "kg"),
+        new("HH_342", "Phân NPK 16-16-8+13S HCQN (BM-BV)", "kg")]);
+
+    [Fact]
     public Task UnknownItemIsCreatedThroughTheF9DialogThenSaved() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1003", Invoices.AV,

@@ -127,6 +127,12 @@ Khi MISA đổi phiên bản:
 
 ## Mã khách hàng / nhà cung cấp
 
+Danh mục mã hàng ưu tiên mã từ file Excel đã nạp hơn mã phát sinh còn giữ trong database cục bộ. Tên hàng trong
+hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng trắng và chữ "bao" trong quy cách dạng `(bao 25kg)`;
+vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg hoặc HC-15/HC-16 không bị ghép chung. Database cũ tự đọc lại file
+danh mục gốc một lần để ghi nguồn mã; nếu file mất thì cần nạp lại. Mã đã tạo và bằng chứng Cất chưa rõ vẫn được giữ.
+Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.
+
 **••• → Thêm mã khách hàng…** / **Thêm mã nhà cung cấp…** nạp file danh sách xuất từ MISA (cột Mã, Tên, Mã số thuế; bỏ
 dòng "Ngừng theo dõi" và dòng "Số dòng = N"). Lưu tại `%LOCALAPPDATA%\MisaManager\party-catalog.json`; mỗi lần nạp thay
 toàn bộ danh sách cùng loại. Khi Excel không có mã khách hàng, tool tìm mã theo thứ tự: trùng tên → trùng mã số thuế →
@@ -176,13 +182,14 @@ chứng `ItemCatalog:<mã>:[các ĐVT]` được lưu vào checkpoint. Danh mụ
 
 ## Báo cáo lỗi
 
-Popup lỗi chỉ hiện lỗi, nguyên nhân (exception bên trong, trường lệch) và gợi ý xử lý. Nút **Copy lỗi** copy một prompt
-ngắn cho AI: mã lỗi, nguyên nhân, yêu cầu sửa, stack trace, các bước trước lỗi và dữ liệu kỹ thuật rút gọn (bỏ các trường
-đã khớp). Lỗi không còn hiện dưới nút **Thêm vào MISA**. Tab **Hồ sơ** lưu chi tiết lỗi của từng lần xử lý (thời điểm, mã
-lỗi, thông báo, nguyên nhân từ exception, gợi ý) kèm nút **Copy lỗi** để xem lại sau.
+Popup lỗi hiển thị báo cáo chẩn đoán theo từng mục: mã lỗi, checkpoint sau và lúc lỗi, bước/dòng hàng, chuỗi exception,
+file:dòng trong stack trace, input disposition và guard không replay, runtime/profile/window, nguồn mã hàng, các mã ứng viên,
+giá trị MISA đọc lại, đối chiếu lệch, timeline và cách xử lý. Nút **Copy lỗi** copy toàn bộ prompt cho AI; nút **Xuất báo cáo**
+tạo ZIP có `summary.json`, `diagnostic.txt`, snapshot UI trước khi Bỏ, ảnh màn hình, kiểm tra selector và log. Lỗi không còn
+hiện dưới nút **Thêm vào MISA**. Tab **Hồ sơ** lưu cùng chẩn đoán của từng lần xử lý, kèm nút **Copy lỗi** để xem lại sau.
 Menu ••• không còn mục **Xuất báo cáo lỗi**, **Kiểm tra giao diện MISA** và **Trang tính & cột dữ liệu** (bảng chọn trang
-tính/cột vẫn tự mở khi file có nhiều trang tính hoặc thiếu cột). Mã tạo gói báo cáo bên dưới vẫn còn trong
-`FailureReports` nhưng không có lối vào từ giao diện. Gói đó tạo
+tính/cột vẫn tự mở khi file có nhiều trang tính hoặc thiếu cột). Nút **Xuất báo cáo** trong popup gọi
+`FailureReports` để tạo
 `%LOCALAPPDATA%\MisaManager\logs\reports\misa-report-*.zip` gồm: `README-AI.md` (hướng dẫn cho AI), `summary.json`
 (phiên bản, mã lỗi + exception, bước lỗi, checkpoint, dữ liệu hóa đơn mong đợi, giá trị đọc từ MISA, kết quả đối chiếu,
 timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**, trước khi tool Bỏ chứng từ), trạng thái

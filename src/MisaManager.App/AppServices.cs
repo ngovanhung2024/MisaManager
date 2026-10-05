@@ -127,6 +127,7 @@ public sealed partial class AppServices : IAsyncDisposable
         await workflowGate.WaitAsync(token);
         try
         {
+            await ItemCatalogWorkbook.EnsureImportedProvenanceAsync(WorkbookReader, ItemCatalog, token);
             await EnsureInitializedAsync(token);
             var result = await Workflow.RunLiveAsync(invoice, "", windowIdentity, token, liveValidation: true,
                 WorkflowProfile.Revision, allowKgToTon: true, requestId, requestId, WorkflowExecutionMode.LiveProduction);
@@ -138,16 +139,10 @@ public sealed partial class AppServices : IAsyncDisposable
                 "existing" => "Hóa đơn đã tồn tại trong MISA: đã chọn Không, đóng chứng từ và chuyển sang hóa đơn tiếp theo.",
                 _ => "Nhập hóa đơn bị lỗi; đã cố gắng Bỏ chứng từ dở. Bấm \"Copy lỗi\" để gửi cho AI."
             };
-            return new(requestId, status, message, result.Context.Snapshot.InputMayHaveBeenSent, new
-            {
-                outcome = result.Outcome,
-                runId = result.Context.Snapshot.RunId,
-                invoiceId = result.Context.Invoice.InvoiceId,
-                checkpoint = result.Context.Snapshot.Status,
-                snapshot = result.Context.Snapshot,
-                verification = result.Verification,
-                error = result.Error ?? result.Context.Snapshot.ErrorChain
-            });
+            var data = FailureData(result.Context, result.Verification, result.Error);
+            if (status != OperationStatuses.Completed)
+                await SaveFailureDataAsync(result.Context.Snapshot.RunId, data);
+            return new(requestId, status, message, result.Context.Snapshot.InputMayHaveBeenSent, data);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception error)

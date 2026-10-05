@@ -321,12 +321,12 @@ public partial class MainWindow
         ProfileErrorBox.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
         if (!failed) return;
         var message = snapshot!.LastMessage ?? "Không có mô tả lỗi.";
-        var code = ErrorHints.FindCode(snapshot.ErrorChain, message, snapshot.LastErrorCode);
+        var code = snapshot.LastErrorCode ?? ErrorHints.FindCode(snapshot.ErrorChain, message);
         ProfileErrorTitle.Text = $"Lỗi lúc {snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss}" + (code is null ? "" : " · " + code);
         ProfileErrorMessage.Text = message;
-        var causes = ErrorPrompt.Causes(message, snapshot.ErrorChain ?? "");
-        ProfileErrorDetails.Text = string.Join(Environment.NewLine, causes.Select(cause => "• " + cause));
-        ProfileErrorDetails.Visibility = causes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        var details = ((App)Application.Current).Services.ErrorDetails(context!);
+        ProfileErrorDetails.Text = ErrorPrompt.DiagnosticSummary(message, details, []);
+        ProfileErrorDetails.Visibility = Visibility.Visible;
         ProfileErrorHint.Text = ErrorHints.For(code) ?? ErrorHints.ForStatus(snapshot.Status);
         ProfileErrorHint.Visibility = ProfileErrorHint.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -335,7 +335,7 @@ public partial class MainWindow
     {
         if (profileErrorContext is not { } context) return;
         var snapshot = context.Snapshot;
-        var text = ErrorPrompt.Build(snapshot.LastMessage ?? "", snapshot.ErrorChain ?? "", snapshot.UpdatedAt.ToLocalTime(),
+        var text = ErrorPrompt.Build(snapshot.LastMessage ?? "", ((App)Application.Current).Services.ErrorDetails(context), snapshot.UpdatedAt.ToLocalTime(),
             context.Invoice.Identity.Number, []);
         StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy chi tiết lỗi từ hồ sơ; dán vào AI để được hỗ trợ sửa.";
     }

@@ -210,4 +210,41 @@ public sealed class ItemCatalogWorkbookTests : IDisposable
 
         Assert.Equal(5, again);
     }
+
+    [Fact]
+    public async Task LegacyCatalogRecoversExportProvenanceWithoutLosingPendingCreations()
+    {
+        var export = MisaExport().Save(temp.Combine("vat-tu.xlsx"));
+        var path = temp.Combine("state", "item-catalog.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var pending = new PendingItemCreation("HH_999", "Chưa xác nhận", "kg", DateTimeOffset.UtcNow.AddMinutes(-1));
+        var legacy = new ItemCatalogFile(1, DateTimeOffset.UtcNow, export,
+            [new("HH_01", "Chery 15g", "Gói"), new("HH_340", "CHERY 15G", "Gói")], [pending]);
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(legacy), Token);
+        var store = new ItemCatalogStore(path);
+
+        await ItemCatalogWorkbook.EnsureImportedProvenanceAsync(reader, store, Token);
+
+        Assert.True(store.HasImportedProvenance);
+        var reopened = new ItemCatalogStore(path);
+        Assert.Equal("HH_01", reopened.Find("Chery 15g", "Gói")!.Code);
+        Assert.Equal(pending, Assert.Single(reopened.PendingSnapshot()));
+        Assert.NotNull(reopened.FindByCode("HH_340"));
+    }
+
+    [Fact]
+    public async Task LegacyCatalogWithMissingSourceStopsBeforeUsingGeneratedCodes()
+    {
+        var path = temp.Combine("state", "item-catalog.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var legacy = new ItemCatalogFile(1, DateTimeOffset.UtcNow, temp.Combine("missing.xlsx"),
+            [new("HH_340", "Hàng cũ", "kg")]);
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(legacy), Token);
+
+        var error = await Assert.ThrowsAsync<AutomationException>(() =>
+            ItemCatalogWorkbook.EnsureImportedProvenanceAsync(reader, new ItemCatalogStore(path), Token));
+
+        Assert.Equal("ITEM_CATALOG_SOURCE_UNAVAILABLE", error.Code);
+        Assert.False(error.InputMayHaveBeenSent);
+    }
 }

@@ -12,6 +12,9 @@ namespace MisaManager.Automation;
 public sealed record WorkflowActivity(string RunId, string Field, DateTimeOffset StartedAt);
 public sealed record WorkflowStepTiming(string RunId, string Kind, string Step, DateTimeOffset StartedAt,
     long DurationMilliseconds, string Outcome);
+public sealed record ItemResolutionDiagnostic(string RunId, int LineIndex, string LineId, string SourceCode,
+    string SourceName, string SourceUnit, string CodeSource, string? ResolvedCode = null,
+    string? NativeCode = null, string? NativeName = null, string? NativeUnit = null);
 
 public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
 {
@@ -91,6 +94,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     public Func<WorkflowContext, string, Task>? FailureObserver { get; set; }
     /// <summary>Name → item-code database; required when a source line has no item code.</summary>
     public ItemCatalogStore? ItemCatalog { get; set; }
+    public ItemResolutionDiagnostic? LastItemResolution { get; private set; }
     /// <summary>Customer/supplier codes; used when the source has no customer code.</summary>
     public PartyCatalogStore? PartyCatalog { get; set; }
     private (string RunId, string Fingerprint, long ValueInputs, DateTimeOffset At, ReconciliationResult Result)? lastReconciliation;
@@ -590,13 +594,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             || evidence.StartsWith("ItemCatalog:", StringComparison.Ordinal));
 
     private static string? ResolveCatalogName(ItemCatalogStore catalog, InvoiceLine line, bool allowKgToTon)
-    {
-        var names = catalog.Snapshot().Where(entry => CatalogNameMatch(line.Name, entry.Name))
-            .Select(entry => entry.Name).Distinct(StringComparer.Ordinal).ToArray();
-        if (names.Length > 1)
-            throw new AutomationException("ITEM_AMBIGUOUS", $"Danh mục MISA có nhiều tên khớp '{line.Name}'; không tạo hàng mới.");
-        return names.Length == 0 ? null : catalog.Find(names[0], line.Unit, allowKgToTon)?.Code;
-    }
+        => catalog.Find(line.Name, line.Unit, allowKgToTon)?.Code;
 
     private async Task EnterLines(WorkflowContext context, Func<WorkflowProgress, CancellationToken, Task> progress, CancellationToken token)
     {
@@ -605,10 +603,15 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         for (var row = 0; row < context.Invoice.Lines.Length; row++)
         {
             var line = context.Invoice.Lines[row];
+            LastItemResolution = new(context.Snapshot.RunId, row, line.LineId, line.ItemCode, line.Name, line.Unit,
+                line.ItemCode.Trim().Length > 0 ? "invoice_excel" : "unresolved");
             Entering("line:" + line.LineId + ":code");
             var code = line.ItemCode.Trim();
             if (code.Length == 0)
+            {
                 code = context.NativeValues?.GetValueOrDefault("line:" + line.LineId)?.Trim() ?? "";
+                if (code.Length > 0) LastItemResolution = LastItemResolution with { CodeSource = "checkpoint_readback" };
+            }
             var codeCell = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], "");
             var existingCode = (await NativeWait.UntilAsync(async () => await input.ReadCellAsync(
                 await input.CaptureAsync(token), codeCell, token, waitForCode: false),
@@ -620,12 +623,22 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 var catalog = RequireCatalog();
                 // A previous run may have clicked "Cất" without learning the result: reuse that code, never create another.
                 if (catalog.FindPending(line.Name, line.Unit) is { } found)
+                {
                     (pending, code) = (found, found.Code);
+                    LastItemResolution = LastItemResolution with { CodeSource = "pending_creation" };
+                }
                 // Use the imported mapping; F3 columns vary across MISA builds.
                 if (pending is null)
+                {
                     code = ResolveCatalogName(catalog, line, context.AllowKgToTon) ?? "";
+                    LastItemResolution = LastItemResolution with
+                    {
+                        CodeSource = code.Length > 0 ? catalog.CodeOrigin(code) : "not_found_create_F9"
+                    };
+                }
                 resolvedFromCatalog = pending is null && code.Length > 0 && existingCode.Length == 0;
             }
+            LastItemResolution = LastItemResolution with { ResolvedCode = code.Length > 0 ? code : null, NativeCode = existingCode };
             if (existingCode.Length > 0)
             {
                 if (!Match(code, existingCode, NativeValueKind.Exact))
@@ -636,7 +649,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             {
                 var created = code.Length == 0;
                 if (created)
+                {
                     code = await CreateMissingItemAsync(context, line, row, codeCell, token);
+                    LastItemResolution = LastItemResolution with { ResolvedCode = code };
+                }
                 Entering("line:" + line.LineId + ":code");
                 try { await SelectItemCodeAsync(row, code, created, token); }
                 catch (Exception error) when (pending is not null && error is not OperationCanceledException)
@@ -644,13 +660,22 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     throw PendingUnresolved(row, pending, error);
                 }
             }
+            LastItemResolution = LastItemResolution with { NativeCode = code };
             var boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
             NativeFields metadata;
             try
             {
-                metadata = await NativeWait.UntilAsync(async () => await input.ReadRowAsync(
-                    await input.CaptureAsync(token), boundRow,
-                    [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token),
+                metadata = await NativeWait.UntilAsync(async () =>
+                    {
+                        var read = await input.ReadRowAsync(await input.CaptureAsync(token), boundRow,
+                            [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token);
+                        LastItemResolution = LastItemResolution with
+                        {
+                            NativeName = read.Values[profile.Columns["name"]].Value,
+                            NativeUnit = read.Values[profile.Columns["unit"]].Value
+                        };
+                        return read;
+                    },
                     actual => CatalogNameMatch(line.Name, actual.Values[profile.Columns["name"]].Value),
                     "READBACK_MISMATCH", $"Dòng {row + 1}: tên hàng MISA khác tên trong file.", token,
                     returnLastMismatch: resolvedFromCatalog);
@@ -662,7 +687,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             if (resolvedFromCatalog && !CatalogNameMatch(line.Name, metadata.Values[profile.Columns["name"]].Value))
             {
                 throw new AutomationException("ITEM_CATALOG_STALE",
-                    $"Dòng {row + 1}: mã '{code}' trong file danh mục đang trỏ tới tên hàng khác trong MISA. "
+                    $"Dòng {row + 1}: mã '{code}' được tra từ danh mục cục bộ cho '{line.Name}', "
+                    + $"nhưng MISA đọc lại tên '{metadata.Values[profile.Columns["name"]].Value}'. "
                     + "Hãy xuất lại danh mục vật tư từ MISA và nạp lại file mã hàng; tool không mở Tìm nhanh/kính lúp và không tự đổi mã.", true);
             }
             var expectedAccount = metadata.Values[profile.Columns["debit_account"]].Value;
@@ -1184,7 +1210,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private static bool CatalogNameMatch(string expected, string? actual)
     {
         if (actual is null) return false;
-        return TextKey.LettersAndDigits(expected) == TextKey.LettersAndDigits(actual);
+        return ItemCatalogStore.ItemNameKey(expected) == ItemCatalogStore.ItemNameKey(actual);
     }
     private static string Decimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? throw new InvalidDataException("Thiếu số nguồn.");
     private static string Saved(WorkflowContext context, string key) => context.NativeValues?.GetValueOrDefault(key)

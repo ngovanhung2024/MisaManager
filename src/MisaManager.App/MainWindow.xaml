@@ -528,19 +528,20 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel>
           <Button DockPanel.Dock="Right" Content="×" AutomationProperties.Name="Đóng thông báo lỗi" Click="CloseErrorPopup_Click" Width="24" Height="22" Padding="0" FontSize="14" Style="{StaticResource RailButton}" ToolTip="Đóng thông báo lỗi"/>
-          <TextBlock x:Name="ErrorPopupTitle" Text="Lỗi khi thêm vào MISA" FontWeight="SemiBold" FontSize="13.5" Foreground="#991B1B" VerticalAlignment="Center"/>
+          <TextBlock x:Name="ErrorPopupTitle" Text="Lỗi khi thêm vào MISA" FontWeight="SemiBold" FontSize="13.5" Foreground="#991B1B" VerticalAlignment="Center" TextWrapping="Wrap"/>
         </DockPanel>
         <TextBlock Grid.Row="1" x:Name="ErrorPopupMessage" TextWrapping="Wrap" Foreground="#450A0A" Margin="0,6,0,4"/>
         <Border Grid.Row="2" x:Name="ErrorPopupHintBox" Visibility="Collapsed" Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" CornerRadius="5" Padding="6,4" Margin="0,0,0,4">
           <TextBlock x:Name="ErrorPopupHint" TextWrapping="Wrap" Foreground="#78350F" FontSize="12"/>
         </Border>
         <Border Grid.Row="3" x:Name="ErrorPopupDetailsBox" Background="#FEF2F2" BorderBrush="#FECACA" BorderThickness="1" CornerRadius="5" Padding="6,4">
-          <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-            <TextBlock x:Name="ErrorPopupDetails" TextWrapping="Wrap" Foreground="#450A0A" FontSize="12"/>
+          <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+            <TextBox x:Name="ErrorPopupDetails" TextWrapping="Wrap" Foreground="#450A0A" FontSize="12" IsReadOnly="True" BorderThickness="0" Background="Transparent"/>
           </ScrollViewer>
         </Border>
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
-          <Button Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}" ToolTip="Copy lỗi kèm dữ liệu kỹ thuật để dán cho AI"/>
+          <Button Content="Xuất báo cáo" Click="ExportErrorReport_Click" Style="{StaticResource RailButton}" ToolTip="Lưu ZIP gồm chẩn đoán, ảnh lúc lỗi, UIA và log" Margin="0,0,6,0"/>
+          <Button Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}" ToolTip="Copy đầy đủ exception, vị trí mã nguồn, nguồn mã hàng, readback và timeline"/>
         </StackPanel>
       </Grid>
     </Border>
