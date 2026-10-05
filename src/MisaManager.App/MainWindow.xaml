@@ -132,7 +132,7 @@
       <Button x:Name="ReconcileButton" Grid.Column="1" Style="{StaticResource MiniButton}" Content="Đối chiếu hóa đơn" Margin="4,0,0,0" Click="Reconcile_Click"
               ToolTip="Đối chiếu hóa đơn hiện tại với chứng từ đang mở trong MISA"/>
       <Button x:Name="StopButton" Grid.Column="2" Style="{StaticResource WarnButton}" Content="Dừng ngay" Margin="4,0,0,0" Click="StopNow_Click" IsEnabled="False"
-              ToolTip="Làm xong thao tác hiện tại (hóa đơn đang nhập được Cất/Bỏ như bình thường) rồi dừng; sau đó bấm Tiếp tục để chạy tiếp."/>
+              ToolTip="Làm xong hóa đơn hiện tại rồi dừng và bỏ checkpoint của phiên cũ. Bấm Thêm vào MISA để bắt đầu phiên mới, hoặc Tiếp tục để chạy các hóa đơn còn lại."/>
       <Button x:Name="ResumeButton" Grid.Column="2" Style="{StaticResource SuccessButton}" Content="Tiếp tục" Margin="4,0,0,0" Command="{Binding ResumeCommand}" Visibility="Collapsed"
               ToolTip="Chạy tiếp các hóa đơn đã tick còn lại"/>
       <Button x:Name="MoreButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">

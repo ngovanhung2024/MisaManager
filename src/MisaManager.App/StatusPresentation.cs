@@ -86,6 +86,7 @@ public static partial class ErrorHints
         ["GRID_COMPLETENESS_UNAVAILABLE"] = "Chưa đọc đủ các dòng của bảng hàng tiền (đang cuộn hoặc có dòng ẩn). Đưa bảng về đầu rồi bấm Đọc lại.",
         ["SAVE_UNCERTAIN"] = "Chưa rõ chứng từ đã được Cất hay chưa. KHÔNG nhập tay lại; kiểm tra chứng từ trong MISA, đóng nó rồi bấm Thêm vào MISA: tool tự đọc danh sách MISA để biết đã Cất hay chưa.",
         ["INPUT_UNCERTAIN"] = "Chưa rõ thao tác nhập đã vào MISA hay chưa. Kiểm tra chứng từ đang mở, đóng nó rồi bấm Thêm vào MISA: tool tự đọc danh sách MISA để biết đã Cất hay chưa.",
+        ["DETACHED_INVOICE_UNCERTAIN"] = "Chính hóa đơn này còn kết quả chưa rõ trong hồ sơ. Kiểm tra và đóng chứng từ trong đúng phiên MISA đã nhập rồi chạy lại; tool chỉ đọc danh sách để xác nhận, không tự gửi lại input.",
         ["EXISTING_EDITOR"] = "Đang có chứng từ bán hàng mở trong MISA. Kiểm tra, Cất hoặc đóng chứng từ đó rồi bấm Thêm vào MISA.",
         ["RECONCILIATION_FAILED"] = "Không đọc/đối chiếu được dữ liệu MISA. Giữ chứng từ đang mở, bấm Đọc lại; nếu vẫn lỗi hãy kiểm tra tay trên MISA.",
         ["NOT_CONNECTED"] = "Chưa kết nối được MISA. Mở MISA SME 2023 R20 và đăng nhập vào dữ liệu kế toán; tool tự kết nối lại.",

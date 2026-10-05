@@ -152,14 +152,16 @@ với tool, để không che chứng từ MISA (nút Đóng/Cất) ở giữa. T
 
 ## Chạy hóa đơn & lần chạy dở
 
-**Thêm vào MISA** chỉ chạy các hóa đơn đã tick; chưa tick hóa đơn nào thì không chạy. Một lần chạy kết thúc ở trạng thái
-chưa rõ/bị chặn/tạm dừng sẽ chặn lần chạy mới cho tới khi xác định được kết quả: khi chứng từ đó đã được đóng trong MISA
-(cùng phiên MISA), bấm **Thêm vào MISA** là tool tự đọc toàn bộ danh sách chứng từ bán hàng — có số chứng từ + số hóa đơn
-→ ghi nhận đã Cất (không nhập lại), không có → ghi nhận chưa Cất. Bước này chỉ đọc, không gõ/bấm gì trong MISA.
+**Thêm vào MISA** chỉ chạy các hóa đơn đã tick; chưa tick hóa đơn nào thì không chạy. Sau khi **Dừng**, bấm Thêm bắt đầu
+một phiên mới, không tiếp tục checkpoint cũ. Hồ sơ đã Cất và bằng chứng thao tác chưa rõ được giữ để chống nhập trùng. Khi chạy lại
+chính hóa đơn còn kết quả chưa rõ, tool chỉ đọc toàn bộ danh sách trong đúng phiên MISA đã nhập sau khi chứng từ được
+đóng: có số chứng từ + số hóa đơn → bỏ qua, không nhập lại; không có → cho phép chạy từ đầu. Hóa đơn khác dùng guard
+riêng của phiên mới; checkpoint cũ không chặn. Nếu vẫn có chứng từ đang mở thì guard báo cần xử lý editor đó.
 
 **Dừng ngay** không hủy giữa chừng: tool làm xong thao tác hiện tại (hóa đơn đang nhập vẫn được đối chiếu rồi Cất/Bỏ như
-bình thường, nên không để chứng từ dở và không báo lỗi), dừng trước hóa đơn kế tiếp và đồng hồ hiệu năng dừng theo. Nút
-chuyển thành **Tiếp tục** để chạy các hóa đơn đã tick còn lại; thời gian hiệu năng cộng dồn các đoạn đã chạy.
+bình thường, nên không để chứng từ dở và không báo lỗi), dừng trước hóa đơn kế tiếp, bỏ liên kết checkpoint và đồng hồ
+hiệu năng dừng theo. Các chức năng khác không còn dùng workflow đã dừng. **Thêm vào MISA** chạy một phiên mới;
+**Tiếp tục** chỉ chạy phần danh sách đã tick còn lại, không replay checkpoint; thời gian hiệu năng cộng dồn các đoạn đã chạy.
 Sau mỗi hóa đơn và khi kết thúc, nếu cửa sổ MISA bị thu nhỏ thì tool mở lại (giữ kích thước phóng to); tool luôn nằm trên
 cùng ở mép phải nên MISA không che tool.
 

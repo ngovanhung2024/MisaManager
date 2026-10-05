@@ -32,6 +32,15 @@ public sealed class AutomationHarness : IAsyncDisposable
         => Runner.RunLiveAsync(invoice, "", misa.WindowIdentityText, token, liveValidation: true, Profile.Revision,
             allowKgToTon: true, executionMode: WorkflowExecutionMode.LiveProduction);
 
+    public async Task<LiveRunResult> RunNewSessionAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token)
+    {
+        var abandoned = await Runner.AbandonStoppedSessionAsync(token);
+        Assert.True(abandoned is null || abandoned.SessionDetached,
+            "Checkpoint cũ không được bỏ trước khi bắt đầu phiên mới.");
+        Assert.Null(Runner.Current);
+        return await RunAsync(invoice, misa, token);
+    }
+
     /// <summary>Enters every value of the invoice but stops before Cất, leaving the voucher open in the fake.</summary>
     public async Task<WorkflowBatchResult> EnterWithoutSavingAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token)
     {

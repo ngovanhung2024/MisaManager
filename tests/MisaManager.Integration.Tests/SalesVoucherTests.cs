@@ -378,6 +378,97 @@ public sealed class SalesVoucherTests : UiTest
     });
 
     [Fact]
+    public Task StoppedCheckpointDoesNotBlockANewSessionAfterMisaChanges() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var first = Invoices.Build(TempDirectory(misa), "1040", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+        var started = await harness.Runner.StartAsync(first, "", misa.WindowIdentityText, token);
+        await harness.Runner.PauseAsync(token);
+        using var nextMisa = await FakeMisa.StartAsync(token: token);
+        var second = Invoices.Build(TempDirectory(nextMisa), "1041", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+
+        var result = await harness.RunNewSessionAsync(second, nextMisa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.NotEqual(started.Snapshot.RunId, result.Context.Snapshot.RunId);
+        Assert.Equal("1041", Assert.Single(nextMisa.State().Vouchers).InvoiceNumber);
+        Assert.Empty(misa.State().Vouchers);
+    });
+
+    [Fact]
+    public Task NewSessionChecksTheOpenEditorWithoutUsingTheStoppedCheckpoint() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var first = Invoices.Build(TempDirectory(misa), "1042", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+        var second = Invoices.Build(TempDirectory(misa), "1043", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+        var entered = await harness.EnterWithoutSavingAsync(first, misa, token);
+        var sequence = harness.Input.WorkflowInputSequence;
+
+        var blocked = await harness.RunNewSessionAsync(second, misa, token);
+
+        Assert.Equal("1043", blocked.Context.Invoice.Identity.Number);
+        Assert.NotEqual(entered.Context.Snapshot.RunId, blocked.Context.Snapshot.RunId);
+        Assert.Equal("EXISTING_EDITOR", blocked.Context.Snapshot.LastErrorCode);
+        Assert.Equal(sequence, harness.Input.WorkflowInputSequence);
+        Assert.Empty(misa.State().Vouchers);
+        await misa.CloseVoucherAsUserAsync(token);
+
+        var result = await harness.RunNewSessionAsync(second, misa, token);
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("1043", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+    });
+
+    [Fact]
+    public Task DetachedSaveUncertaintyIsResolvedWithoutEnteringOrSavingTheInvoiceAgain() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1044", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+        var saved = await harness.RunAsync(invoice, misa, token);
+        Assert.True(saved.Outcome == "saved", Describe(saved));
+        var uncertain = saved.Context with
+        {
+            Snapshot = saved.Context.Snapshot with
+            {
+                Status = WorkflowStatus.SaveUncertain,
+                InputMayHaveBeenSent = true,
+                LastInputDisposition = InputDisposition.Uncertain
+            }
+        };
+        var state = new JsonStateStore(Path.Combine(misa.Root, "state"));
+        await state.WriteAsync("workflow-session", "session.json", uncertain, token);
+        await using var reopened = new AutomationHarness(misa.Root);
+
+        var result = await reopened.RunNewSessionAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "existing", Describe(result));
+        Assert.NotEqual(uncertain.Snapshot.RunId, result.Context.Snapshot.RunId);
+        Assert.Equal(0, reopened.Input.WorkflowInputSequence);
+        Assert.Single(misa.State().Vouchers);
+        var history = await reopened.Runner.ReadHistoryAsync(token);
+        Assert.Equal(WorkflowStatus.Saved, history.Single(run => run.Snapshot.RunId == uncertain.Snapshot.RunId).Snapshot.Status);
+    });
+
+    [Fact]
+    public Task DetachedUnsavedInvoiceCanStartFromReadyOnceTheRegisterProvesItAbsent() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1045", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+        var entered = await harness.EnterWithoutSavingAsync(invoice, misa, token);
+        await harness.Runner.AbandonStoppedSessionAsync(token);
+        await misa.CloseVoucherAsUserAsync(token);
+
+        var result = await harness.RunNewSessionAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.NotEqual(entered.Context.Snapshot.RunId, result.Context.Snapshot.RunId);
+        Assert.Equal("1045", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+        var history = await harness.Runner.ReadHistoryAsync(token);
+        Assert.Equal(WorkflowStatus.Discarded, history.Single(run => run.Snapshot.RunId == entered.Context.Snapshot.RunId).Snapshot.Status);
+    });
+
+    [Fact]
     public Task KgLineOfATonOnlyItemIsConvertedWithoutOpeningTheUnitList() => WithFakeAsync(async (misa, harness, token) =>
     {
         // The fake's unit list does contain "kg": a saved Tấn line proves the list was never opened.

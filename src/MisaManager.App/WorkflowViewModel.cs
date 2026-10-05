@@ -68,6 +68,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? WorkflowChanged;
     public event EventHandler<WorkflowErrorEventArgs>? ErrorRaised;
+    public event EventHandler? SessionReset;
 
     private void NotifyWorkflowChanged()
     {
@@ -100,7 +101,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     {
         if (!running || stopRequested) return;
         stopRequested = true;
-        Status = "Đang dừng: tool làm xong thao tác hiện tại rồi dừng. Sau đó bấm Tiếp tục để chạy tiếp.";
+        Status = "Đang dừng: tool làm xong hóa đơn hiện tại rồi bỏ checkpoint. Sau đó có thể bắt đầu phiên Thêm vào MISA mới.";
         NotifyWorkflowChanged();
     }
 
@@ -290,6 +291,16 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         {
             var initialize = BeginTrace("Khởi tạo phiên", "Đọc state và lịch sử workflow");
             await services.Initialization;
+            if (!resume)
+            {
+                if (services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused)
+                {
+                    var abandoned = await services.AbandonStoppedSessionAsync();
+                    if (abandoned.Status != OperationStatuses.Completed)
+                        throw new InvalidOperationException(abandoned.Message);
+                }
+                SessionReset?.Invoke(this, EventArgs.Empty);
+            }
             await LoadHistoryAsync();
             FinishTrace(initialize, "Hoàn tất");
             if (services.ItemCatalog.Count == 0 && queue.Any(invoice => invoice.Lines.Any(line => line.ItemCode.Trim().Length == 0)))
@@ -387,7 +398,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 if (response.Status != "completed")
                 {
                     performanceOutcome = response.Status;
-                    RaiseError(response.Message, Serialize(response.Data));
+                    if (!stopRequested) RaiseError(response.Message, Serialize(response.Data));
                 }
                 // Update history in memory instead of re-reading every run file from disk.
                 if (services.Workflow.Current is { } finished)
@@ -453,19 +464,37 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         {
             Status = error.Message;
             performanceOutcome = "Lỗi";
-            RaiseError(error.Message, error.ToString());
+            if (!stopRequested) RaiseError(error.Message, error.ToString());
             FinishActiveTrace("Lỗi", error.Message);
         }
         finally
         {
+            if (stopRequested)
+            {
+                var stopped = services.Workflow.Current;
+                var abandoned = await services.AbandonStoppedSessionAsync();
+                if (abandoned.Status == OperationStatuses.Completed)
+                {
+                    lastError = null;
+                    if (stopped is not null)
+                        History = [stopped with { SessionDetached = true }, .. History.Where(run => run.Snapshot.RunId != stopped.Snapshot.RunId)];
+                    SessionReset?.Invoke(this, EventArgs.Empty);
+                }
+                else
+                {
+                    Status = abandoned.Message;
+                    RaiseError(abandoned.Message, Serialize(abandoned.Data));
+                    performanceOutcome = "Lỗi";
+                }
+            }
             if (stopRequested && performanceOutcome == "Hoàn tất") performanceOutcome = "Đã dừng";
             performanceEndedAt = DateTimeOffset.UtcNow;
             FinishActiveTrace(performanceOutcome);
             FinishAllRunning(performanceOutcome);
             FinishTrace(wholeRun, performanceOutcome);
             var left = InvoiceQueue.Count(invoice => checkedFingerprints.Contains(invoice.Fingerprint) && !handledInBatch.Contains(invoice.Fingerprint));
-            batchStopped = stopRequested && left > 0;
-            if (batchStopped) Status = $"Đã dừng. Còn {left} hóa đơn đã tick chưa chạy; bấm Tiếp tục để chạy tiếp.";
+            batchStopped = stopRequested && left > 0 && performanceOutcome != "Lỗi";
+            if (batchStopped) Status = $"Đã dừng và bỏ checkpoint cũ. Còn {left} hóa đơn đã tick; bấm Thêm vào MISA để chạy phiên mới hoặc Tiếp tục để chạy phần còn lại.";
             else if (stopRequested && performanceOutcome == "Đã dừng") Status = "Đã dừng; không còn hóa đơn đã tick nào cần chạy.";
             stopRequested = false;
             running = false;
