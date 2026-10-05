@@ -97,6 +97,18 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     public ItemResolutionDiagnostic? LastItemResolution { get; private set; }
     /// <summary>Customer/supplier codes; used when the source has no customer code.</summary>
     public PartyCatalogStore? PartyCatalog { get; set; }
+    /// <summary>Dừng ngay; shared with <see cref="WorkflowRunner.StopSignal"/>.</summary>
+    public WorkflowStopSignal? StopSignal { get; set; }
+    // Only entry steps stop mid-checkpoint; opening the voucher, creating an item, Cất and Bỏ always finish.
+    private volatile bool stopPointsEnabled;
+
+    // Called between whole actions only: the previous field/click/tab switch has fully completed.
+    private void StopPoint()
+    {
+        if (stopPointsEnabled && StopSignal?.IsRequested == true)
+            throw new AutomationException(WorkflowRunner.StopRequestedCode,
+                "Đã tạm dừng theo yêu cầu (Dừng ngay) sau thao tác vừa hoàn tất; chứng từ chưa Cất.");
+    }
     private (string RunId, string Fingerprint, long ValueInputs, DateTimeOffset At, ReconciliationResult Result)? lastReconciliation;
 
     private async Task NotifyFailureAsync(WorkflowContext context, string step)
@@ -224,6 +236,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         {
             var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction));
             ValidateDocument(context);
+            stopPointsEnabled = transition.Action != "verify_only"
+                && transition.To is >= WorkflowStatus.CustomerVerified and <= WorkflowStatus.AwaitingSave;
             if (transition.Action == WorkflowRunner.ResolveStaleAction)
                 return await ResolveStaleAsync(context, window, token);
             if (transition.Action == "verify_only")
@@ -289,6 +303,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 {
                     case WorkflowStatus.CustomerVerified:
                         await Tab(profile.ReceiptTab, token);
+                        StopPoint();
                         Entering("customer");
                         var buyerCode = BuyerCode(context);
                         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
@@ -338,18 +353,29 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         catch (AutomationException error) { saveSent = error.InputMayHaveBeenSent; throw; }
                         finally { saveSent |= input.WorkflowInputSequence != beforeSaveInput; }
                         sent = true;
-                        string? duplicate;
-                        try
+                        string? duplicate = null;
+                        var taxPromptAnswered = false;
+                        for (var attempt = 0; ; attempt++)
                         {
-                            duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 800, token);
-                            if (duplicate is null) await VerifySavedAndCloseEditor(context, token, afterSave: true);
-                        }
-                        catch (Exception error) when (error is not OperationCanceledException && !token.IsCancellationRequested)
-                        {
-                            // A slow prompt makes the editor modal, so the saved-proof reads fail first
-                            // (as AutomationException or a raw UIA/COM error); look for it before failing.
-                            duplicate = await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 3000, token);
-                            if (duplicate is null) throw;
+                            try
+                            {
+                                var prompts = await AnswerSavePromptsAsync(editorHandle, attempt == 0 ? 800 : 0, token);
+                                taxPromptAnswered |= prompts.TaxAnswered;
+                                duplicate = prompts.Duplicate;
+                                if (duplicate is null)
+                                    await VerifySavedAndCloseEditor(context, token, afterSave: true, taxPromptAnswered, editorHandle);
+                                break;
+                            }
+                            catch (Exception error) when (error is not OperationCanceledException && !token.IsCancellationRequested)
+                            {
+                                // A slow prompt makes the editor modal, so the saved-proof reads fail first
+                                // (as AutomationException or a raw UIA/COM error); look for it before failing.
+                                var late = await AnswerSavePromptsAsync(editorHandle, 3000, token);
+                                taxPromptAnswered |= late.TaxAnswered;
+                                duplicate = late.Duplicate;
+                                if (duplicate is not null) break;
+                                if (!late.TaxAnswered || attempt > 0) throw;
+                            }
                         }
                         if (duplicate is not null)
                         {
@@ -388,6 +414,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         }
                         if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                         {
+                            // A voucher left open by Dừng ngay may have been replaced by the user meanwhile.
+                            if (context.Snapshot.Status == WorkflowStatus.Paused
+                                && context.NativeValues?.GetValueOrDefault("voucher_number") is { Length: > 0 })
+                                await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
                             await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token,
                                 leavesScope: true, discardChanges: true); sent = true;
                             await WaitEditor(context, false, token);
@@ -401,6 +431,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             return new(true, transition.To, finalFrame,
                 transition.To == WorkflowStatus.AwaitingSave ? "Đã đối chiếu; chứng từ chưa Cất." : "Đã xác minh checkpoint " + transition.Checkpoint,
                 sent ? InputDisposition.Verified : InputDisposition.NotSent, sent, Comparison: comparison);
+        }
+        catch (AutomationException error) when (error.Code == WorkflowRunner.StopRequestedCode)
+        {
+            sent |= input.WorkflowInputSequence != inputSequence;
+            SetActivity(null, "stopped");
+            return new(false, WorkflowStatus.Paused, "", error.Message, sent ? InputDisposition.Verified : InputDisposition.NotSent,
+                sent, WorkflowRunner.StopRequestedCode, ValueInputMayHaveBeenSent: input.ValueInputSequence != valueSequence);
         }
         catch (Exception error)
         {
@@ -419,6 +456,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         }
         finally
         {
+            stopPointsEnabled = false;
             SetActivity(null, checkpointFailed ? "failed" : "ok");
             AddTiming(context.Snapshot.RunId, "checkpoint", transition.Checkpoint + " -> " + transition.To, checkpointStartedAt,
                 Elapsed(checkpointStarted), checkpointFailed ? "failed" : "ok");
@@ -603,6 +641,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         for (var row = 0; row < context.Invoice.Lines.Length; row++)
         {
             var line = context.Invoice.Lines[row];
+            StopPoint();
             LastItemResolution = new(context.Snapshot.RunId, row, line.LineId, line.ItemCode, line.Name, line.Unit,
                 line.ItemCode.Trim().Length > 0 ? "invoice_excel" : "unresolved");
             Entering("line:" + line.LineId + ":code");
@@ -706,6 +745,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 // unit list only to see that (2–3 s per line) is skipped and the line goes straight to the Tấn unit.
                 var catalogProof = kgLine && Match("T\u1ea5n", nativeUnit, NativeValueKind.Text)
                     ? ItemCatalog?.UnitAbsenceProof(code, line.Unit) : null;
+                if (catalogProof is null) StopPoint();
                 var selected = catalogProof is not null ? null : await input.SelectCellOptionAsync(await input.CaptureAsync(token),
                     CellTarget(row, code, "unit"), line.Unit, profile.Culture, token, allowMissing: kgLine);
                 if (catalogProof is not null || selected!.Status == "option_absent")
@@ -731,6 +771,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 new NativeCellWrite(profile.Columns["quantity"], expected.Quantity.ToString(Culture)),
                 new NativeCellWrite(profile.Columns["amount"], line.AmountBeforeTax!.Value.ToString(Culture))
             };
+            StopPoint();
             var verifiedRow = await input.WriteRowAsync(await input.CaptureAsync(token),
                 new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code),
                 writes, [profile.Columns["quantity"], profile.Columns["amount"]],
@@ -746,6 +787,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             await progress(new("line:" + line.LineId, code, Frame(verifiedRow.Frame), row,
                 new Dictionary<string, string> { ["account:" + line.LineId] = expectedAccount }), token);
         }
+        StopPoint();
         var taxFrame = await Tab(profile.TaxTab, token);
         // Items usually carry their VAT rate already; one grid read avoids a write per line.
         var taxGrid = await input.ReadTableAsync(taxFrame, profile.ItemGridId,
@@ -760,6 +802,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             if (row < taxGrid.Rows.Count && Match(codes[row], taxGrid.Rows[row].GetValueOrDefault(profile.Columns["code"]), NativeValueKind.Exact)
                 && Match(tax, nativeRate, NativeValueKind.TaxRate))
                 continue;
+            StopPoint();
             Entering("line:" + line.LineId + ":tax_rate");
             await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"), tax, tax,
                 NativeValueKind.TaxRate, profile.Culture, token);
@@ -803,6 +846,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var values = new List<ValueComparison>();
         async Task<NativeFrame> CompareFields(string tab, params (string Key, string Expected, NativeValueKind Kind)[] fields)
         {
+            StopPoint();
             await Tab(tab, token);
             var actual = await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(
                 await input.CaptureAsync(token),
@@ -818,6 +862,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // Tab order: tax grid (selected after entry) → item grid + totals → receipt → invoice.
         foreach (var taxTab in new[] { true, false })
         {
+            StopPoint();
             var tabFrame = await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
                 : new[] { "code", "name", "unit", "debit_account", "quantity", "amount", "unit_price" };
@@ -964,12 +1009,36 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         }
     }
 
-    private async Task VerifySavedAndCloseEditor(WorkflowContext context, CancellationToken token, bool afterSave)
+    /// <summary>
+    /// Cất can raise MISA's tax-difference prompt (always answered "Không") and then its duplicate-number
+    /// prompt (answered "No"). Polls for both until <paramref name="waitMilliseconds"/> passes without a prompt.
+    /// </summary>
+    private async Task<(bool TaxAnswered, string? Duplicate)> AnswerSavePromptsAsync(nint editorHandle, int waitMilliseconds,
+        CancellationToken token)
+    {
+        var taxAnswered = false;
+        var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * waitMilliseconds / 1000;
+        while (true)
+        {
+            if (await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is { } tax)
+            {
+                taxAnswered = true;
+                Trace.TraceInformation("Tax difference prompt answered Không: " + tax);
+                // The duplicate-number prompt, if any, follows the tax prompt.
+                deadline = Math.Max(deadline, Stopwatch.GetTimestamp() + Stopwatch.Frequency * 800 / 1000);
+            }
+            if (await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 0, token) is { } duplicate)
+                return (taxAnswered, duplicate);
+            if (Stopwatch.GetTimestamp() >= deadline) return (taxAnswered, null);
+            await Task.Delay(50, token);
+        }
+    }
+
+    private async Task VerifySavedAndCloseEditor(WorkflowContext context, CancellationToken token, bool afterSave,
+        bool taxPromptAnswered = false, nint editorHandle = 0)
     {
         var window = BindTarget(context, activate: false);
-        var preservedTax = afterSave && await input.TryPreserveSourceTaxAsync(window, profile.EditorId, null,
-            profile.Fields["voucher_number"], Saved(context, "voucher_number"), context.Invoice.TaxTotal!.Value,
-            context.Invoice.Lines.Length, token);
+        if (afterSave && await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is not null) taxPromptAnswered = true;
         // R20 closes the editor itself only after a successful Save; an unsaved editor never closes silently.
         if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
         {
@@ -978,21 +1047,28 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         }
         var savedEditor = await BindEditor(context, token);
         if (!afterSave) await VerifyVoucherIdentity(context, savedEditor, token);
-        if (preservedTax)
+        // Saved proof without reading the sales list: the voucher turns read-only (Cất disabled).
+        await NativeWait.UntilAsync(async () =>
+            {
+                // A late tax-difference prompt keeps Cất enabled until it is answered.
+                if (afterSave && await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is not null)
+                {
+                    taxPromptAnswered = true;
+                    return false;
+                }
+                try { await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token); return true; }
+                catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
+            }, disabled => disabled, "SAVE_UNCERTAIN",
+            "Nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
+        if (taxPromptAnswered)
         {
+            // "Không" must have kept the source tax; MISA's "Có" would have moved the difference into line 1.
             await Tab(profile.ItemTab, token);
             await RequireFields(token,
                 ("subtotal", Decimal(context.Invoice.Subtotal), NativeValueKind.Decimal),
                 ("tax_total", Decimal(context.Invoice.TaxTotal), NativeValueKind.Decimal),
                 ("grand_total", Decimal(context.Invoice.GrandTotal), NativeValueKind.Decimal));
         }
-        // Saved proof without reading the sales list: the voucher turns read-only (Cất disabled).
-        await NativeWait.UntilAsync(async () =>
-            {
-                try { await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token); return true; }
-                catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
-            }, disabled => disabled, "SAVE_UNCERTAIN",
-            "Nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
         await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token, leavesScope: true);
         await WaitEditor(context, false, token);
     }
@@ -1184,6 +1260,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
     private async Task Write(string field, string text, string expected, NativeValueKind kind, string commit, CancellationToken token)
     {
+        StopPoint();
         Entering(field);
         await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields[field], text, expected, kind,
             profile.Culture, commit, token, verifyAfterWrite: false);

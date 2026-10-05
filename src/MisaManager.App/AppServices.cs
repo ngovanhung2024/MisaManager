@@ -62,6 +62,7 @@ public sealed partial class AppServices : IAsyncDisposable
         workflowGateway.ItemCatalog = ItemCatalog;
         workflowGateway.PartyCatalog = PartyCatalog;
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
+        workflowGateway.StopSignal = Workflow.StopSignal;
         Drafts = new(State);
         Profiles = new(State);
         Updates = new(UpdateSettings.Load(), () => Workflow.Current is { } current && !WorkflowRunner.IsTerminal(current.Snapshot.Status));
@@ -134,13 +135,14 @@ public sealed partial class AppServices : IAsyncDisposable
             var status = result.Outcome is "saved" or "discarded" or "existing" ? OperationStatuses.Completed : OperationStatuses.Blocked;
             var message = result.Outcome switch
             {
+                "paused" => "Đã tạm dừng theo yêu cầu sau thao tác vừa hoàn tất; chứng từ chưa Cất.",
                 "saved" => "Đối chiếu khớp và đã Cất hóa đơn.",
                 "discarded" => "Đối chiếu không khớp, đã Bỏ chứng từ và lưu hồ sơ kiểm chứng.",
                 "existing" => "Hóa đơn đã tồn tại trong MISA: đã chọn Không, đóng chứng từ và chuyển sang hóa đơn tiếp theo.",
                 _ => "Nhập hóa đơn bị lỗi; đã cố gắng Bỏ chứng từ dở. Bấm \"Copy lỗi\" để gửi cho AI."
             };
             var data = FailureData(result.Context, result.Verification, result.Error);
-            if (status != OperationStatuses.Completed)
+            if (status != OperationStatuses.Completed && result.Outcome != "paused")
                 await SaveFailureDataAsync(result.Context.Snapshot.RunId, data);
             return new(requestId, status, message, result.Context.Snapshot.InputMayHaveBeenSent, data);
         }
@@ -173,6 +175,26 @@ public sealed partial class AppServices : IAsyncDisposable
             return new("ui", OperationStatuses.Completed, "Đã tiếp tục từ checkpoint đã lưu.", Data: resumed.Snapshot);
         }
         catch (Exception error) when (error is not OperationCanceledException) { return new("ui", OperationStatuses.Blocked, error.Message); }
+        finally { workflowGate.Release(); }
+    }
+
+    /// <summary>Bỏ the voucher a Dừng ngay left half-entered, so its invoice is entered again from scratch.</summary>
+    public async Task<OperationResult> DiscardStoppedVoucherAsync(CancellationToken token = default)
+    {
+        await workflowGate.WaitAsync(token);
+        try
+        {
+            await EnsureInitializedAsync(token);
+            var result = await Workflow.DiscardStoppedVoucherAsync(token);
+            return result?.Snapshot.Status is null or WorkflowStatus.Discarded
+                ? new("ui", OperationStatuses.Completed, "Đã Bỏ chứng từ dở của lần Dừng ngay trước.", Data: result?.Snapshot)
+                : new("ui", OperationStatuses.Blocked, "Không Bỏ được chứng từ dở của lần Dừng ngay trước: "
+                    + result.Snapshot.LastMessage + " Đóng (Bỏ) chứng từ đó trong MISA rồi chạy lại.", Data: result.Snapshot);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return new("ui", OperationStatuses.Blocked, "Không Bỏ được chứng từ dở của lần Dừng ngay trước: " + error.Message);
+        }
         finally { workflowGate.Release(); }
     }
 
