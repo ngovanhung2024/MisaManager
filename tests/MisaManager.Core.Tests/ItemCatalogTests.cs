@@ -19,6 +19,38 @@ public sealed class ItemCatalogTests : IDisposable
 
     private static ItemCatalogEntry Item(string code, string name, string unit, string conversion = "") => new(code, name, unit, conversion);
 
+    // ---- registered units ----
+
+    [Fact]
+    public void CatalogProvesKgAbsentForAnItemRegisteredOnlyInTons()
+    {
+        var store = NewStore(Item("HH_111", "Phân NPK Cà Mau Gold", "Tấn"), Item("HH_08", "Phân Ure", "kg", "Bao"));
+
+        var proof = store.UnitAbsenceProof("hh_111", "Kg");
+
+        Assert.Equal("ItemCatalog:HH_111:[\"T\\u1EA5n\"]", proof);
+    }
+
+    [Theory]
+    [InlineData("Tấn", "Bao, kg")]
+    [InlineData("Tấn", "KG")]
+    [InlineData("kg", "")]
+    public void CatalogGivesNoProofWhenKgIsRegistered(string unit, string conversion)
+    {
+        var store = NewStore(Item("HH_111", "Phân NPK", unit, conversion), Item("HH_08", "Phân Ure", "kg", "Bao"));
+
+        Assert.Null(store.UnitAbsenceProof("HH_111", "kg"));
+    }
+
+    [Fact]
+    public void CatalogWithoutConversionColumnGivesNoProof()
+        // No item lists a conversion unit: the export may simply lack that column.
+        => Assert.Null(NewStore(Item("HH_111", "Phân NPK", "Tấn")).UnitAbsenceProof("HH_111", "kg"));
+
+    [Fact]
+    public void UnknownCodeGivesNoProof()
+        => Assert.Null(NewStore(Item("HH_111", "Phân NPK", "Tấn"), Item("HH_08", "Phân Ure", "kg", "Bao")).UnitAbsenceProof("HH_999", "kg"));
+
     // ---- lookup by name and unit ----
 
     [Fact]

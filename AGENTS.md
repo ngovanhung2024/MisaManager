@@ -43,8 +43,8 @@
 | CI / phát hành | `.github/workflows/`, `scripts/release.ps1`, `installer/` |
 
 ## Cập nhật profile khi MISA đổi phiên bản
-1. Lấy `screen-check.json` từ **Xuất báo cáo lỗi** (hoặc **Kiểm tra giao diện MISA**) trên máy có MISA mới; mục
-   `visibleAutomationIds` liệt kê `AutomationId | ControlType | Name` đang hiển thị trên màn hình bị lỗi.
+1. Trên máy có MISA mới, bấm **Thêm vào MISA**: bước kiểm tra giao diện báo lỗi selector; **Copy lỗi** trong popup lấy
+   chi tiết, gồm `AutomationId | ControlType | Name` đang hiển thị trên màn hình bị lỗi (menu không còn mục xuất báo cáo).
 2. Sửa `profiles/misa-sme2023-r20.json`. Đổi `versionTitle` nếu tiêu đề cửa sổ đổi; tăng `revision` khi hành vi đổi.
 3. Nếu cấu trúc giao diện đổi (tab/hộp thoại mới), cập nhật app giả lập theo, thêm test, rồi phát hành bằng tag.
 

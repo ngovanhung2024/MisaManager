@@ -37,14 +37,15 @@ public static class RunOutcome
         => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode == ExistingCode;
 }
 
-public sealed record ComparisonRow(ValueComparison Value, string Label, string SectionName = "", bool Pending = false)
+/// <param name="SourceOnlyMisa">The voucher's invoice is not in the loaded Excel: only the MISA side exists, nothing is compared.</param>
+public sealed record ComparisonRow(ValueComparison Value, string Label, string SectionName = "", bool Pending = false, bool SourceOnlyMisa = false)
 {
-    public bool Matched => !Pending && Value.Matched;
-    /// <summary>match, mismatch or pending; drives the row styling.</summary>
-    public string Kind => Pending ? "pending" : Value.Matched ? "match" : "mismatch";
-    public string ResultLabel => Pending ? "…" : Matched ? "Khớp" : "Lệch";
-    public string ResultIcon => Pending ? "…" : Matched ? "✓" : "✕";
-    public string ResultTip => Pending ? "Chưa đọc từ MISA" : Matched ? "Khớp với Excel" : "Lệch so với Excel";
+    public bool Matched => !Pending && !SourceOnlyMisa && Value.Matched;
+    /// <summary>match, mismatch, pending or info (MISA only); drives the row styling.</summary>
+    public string Kind => Pending ? "pending" : SourceOnlyMisa ? "info" : Value.Matched ? "match" : "mismatch";
+    public string ResultLabel => Pending ? "…" : SourceOnlyMisa ? "" : Matched ? "Khớp" : "Lệch";
+    public string ResultIcon => Pending ? "…" : SourceOnlyMisa ? "" : Matched ? "✓" : "✕";
+    public string ResultTip => Pending ? "Chưa đọc từ MISA" : SourceOnlyMisa ? "Chỉ đọc từ MISA" : Matched ? "Khớp với Excel" : "Lệch so với Excel";
     public string Section => SectionName.Length > 0 ? SectionName
         : Value.Field.StartsWith("line:", StringComparison.Ordinal) ? Label.Split(" · ")[0]
         : Value.Field is "subtotal" or "tax_total" or "grand_total" or "item_row_count" or "tax_row_count" ? "Tổng cộng"
@@ -52,7 +53,7 @@ public sealed record ComparisonRow(ValueComparison Value, string Label, string S
     /// <summary>Short label inside a grouped section; the full label otherwise (flat lists).</summary>
     public string ShortLabel => SectionName.Length > 0 && Label.Contains(" · ", StringComparison.Ordinal)
         ? Label[(Label.IndexOf(" · ", StringComparison.Ordinal) + 3)..] : Label;
-    public string ExpectedValue => Value.Expected.Length == 0 ? "—" : Value.Expected;
+    public string ExpectedValue => SourceOnlyMisa ? "" : Value.Expected.Length == 0 ? "—" : Value.Expected;
     public string ActualValue => Pending ? "Chưa đọc" : Value.Actual is null ? "Không đọc được" : Value.Actual.Length == 0 ? "—" : Value.Actual;
     public string ExpectedText => "Nguồn: " + (Value.Expected.Length == 0 ? "(trống)" : Value.Expected);
     public string ActualText => "MISA: " + (Value.Actual is null ? "Không đọc được" : Value.Actual.Length == 0 ? "(trống)" : Value.Actual);
@@ -119,7 +120,8 @@ public partial class MainWindow
         var canResume = workflow.CanResume;
         ResumeButton.Visibility = canResume ? Visibility.Visible : Visibility.Collapsed;
         StopButton.Visibility = canResume ? Visibility.Collapsed : Visibility.Visible;
-        StopButton.IsEnabled = workflow.IsRunning;
+        StopButton.IsEnabled = workflow.IsRunning && !workflow.IsStopping;
+        StopButton.Content = workflow.IsStopping ? "Đang dừng…" : "Dừng ngay";
         ReconcileButton.IsEnabled = !workflow.IsRunning;
         var current = workflow.CurrentContext;
         var invoice = workflow.SelectedInvoice
@@ -269,6 +271,7 @@ public partial class MainWindow
             };
             ProfileEvidence.Text = $"{record.Context.Snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm} · "
                 + $"{System.IO.Path.GetFileName(record.Context.Invoice.Source.FilePath)} · bản dữ liệu {record.Context.Invoice.Revision}";
+            ShowProfileError(record.Context);
             ProfileComparisonList.ItemsSource = null;
             ProfileColumns.Visibility = Visibility.Collapsed;
             ProfileEmpty.Visibility = Visibility.Visible;
@@ -292,6 +295,7 @@ public partial class MainWindow
         };
         ProfileEvidence.Text = $"{context.Snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm} · "
             + $"{System.IO.Path.GetFileName(context.Invoice.Source.FilePath)} · bản dữ liệu {context.Invoice.Revision}";
+        ShowProfileError(context);
         ProfileComparisonList.ItemsSource = comparison?.Values.Where(value => !IsHiddenDisplayField(value.Field))
             .Select(value => new ComparisonRow(value, ComparisonLabel(value.Field, context.Invoice))).ToArray();
         var hasComparison = comparison?.Values.Any(value => !IsHiddenDisplayField(value.Field)) == true;
@@ -305,9 +309,42 @@ public partial class MainWindow
         ProfileComparisonList.ToolTip = "Bằng chứng đã lưu; không phải trạng thái MISA hiện tại.";
     }
 
-    private static string ComparisonLabel(string key, InvoiceDocument invoice)
+    private WorkflowContext? profileErrorContext;
+
+    // The run's saved error (message, code, exception chain) so a failure can be reviewed later, not only in the popup.
+    private void ShowProfileError(WorkflowContext? context)
     {
-        if (key.StartsWith("line:", StringComparison.Ordinal))
+        var snapshot = context?.Snapshot;
+        var failed = snapshot is { Status: WorkflowStatus.Failed or WorkflowStatus.Blocked or WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain }
+            && !RunOutcome.IsExisting(snapshot);
+        profileErrorContext = failed ? context : null;
+        ProfileErrorBox.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+        if (!failed) return;
+        var message = snapshot!.LastMessage ?? "Không có mô tả lỗi.";
+        var code = ErrorHints.FindCode(snapshot.ErrorChain, message, snapshot.LastErrorCode);
+        ProfileErrorTitle.Text = $"Lỗi lúc {snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss}" + (code is null ? "" : " · " + code);
+        ProfileErrorMessage.Text = message;
+        var causes = ErrorPrompt.Causes(message, snapshot.ErrorChain ?? "");
+        ProfileErrorDetails.Text = string.Join(Environment.NewLine, causes.Select(cause => "• " + cause));
+        ProfileErrorDetails.Visibility = causes.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        ProfileErrorHint.Text = ErrorHints.For(code) ?? ErrorHints.ForStatus(snapshot.Status);
+        ProfileErrorHint.Visibility = ProfileErrorHint.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ProfileCopyError_Click(object sender, RoutedEventArgs e)
+    {
+        if (profileErrorContext is not { } context) return;
+        var snapshot = context.Snapshot;
+        var text = ErrorPrompt.Build(snapshot.LastMessage ?? "", snapshot.ErrorChain ?? "", snapshot.UpdatedAt.ToLocalTime(),
+            context.Invoice.Identity.Number, []);
+        StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy chi tiết lỗi từ hồ sơ; dán vào AI để được hỗ trợ sửa.";
+    }
+
+    private static string ComparisonLabel(string key, InvoiceDocument? invoice)
+    {
+        if (MisaLineOf(key) is { } misaLine)
+            return $"Dòng MISA {misaLine.Index + 1} · {ComparisonLabel(misaLine.Field, invoice)}";
+        if (key.StartsWith("line:", StringComparison.Ordinal) && invoice is not null)
         {
             var line = invoice.Lines.Select((value, index) => (value, index))
                 .FirstOrDefault(item => key.StartsWith("line:" + item.value.LineId + ":", StringComparison.Ordinal));
@@ -355,26 +392,43 @@ public partial class MainWindow
     private static bool IsHiddenDisplayField(string key)
         => key is "series" or "payment" or "currency";
 
-    private static (int Index, InvoiceLine Line)? LineOf(string key, InvoiceDocument invoice)
+    /// <summary>Grid rows read from MISA without an Excel line: "line:unexpected:{row}:{field}" and "line:misa:{row}:{field}".</summary>
+    private static (int Index, string Field, bool Unexpected)? MisaLineOf(string key)
     {
-        if (!key.StartsWith("line:", StringComparison.Ordinal)) return null;
+        var parts = key.Split(':');
+        return parts.Length == 4 && parts[0] == "line" && parts[1] is "unexpected" or "misa"
+            && int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+            ? (index, parts[3], parts[1] == "unexpected") : null;
+    }
+
+    private static (int Index, InvoiceLine Line)? LineOf(string key, InvoiceDocument? invoice)
+    {
+        if (invoice is null || !key.StartsWith("line:", StringComparison.Ordinal)) return null;
         for (var i = 0; i < invoice.Lines.Length; i++)
             if (key.StartsWith("line:" + invoice.Lines[i].LineId + ":", StringComparison.Ordinal)) return (i, invoice.Lines[i]);
         return null;
     }
 
-    private static string SectionOf(string key, InvoiceDocument invoice)
+    private static string SectionOf(string key, InvoiceDocument? invoice, ReconciliationResult? result = null)
     {
-        if (LineOf(key, invoice) is { } line) return $"Hàng {line.Index + 1}/{invoice.Lines.Length} · {line.Line.Name}";
+        if (MisaLineOf(key) is { } misaLine)
+        {
+            var name = result?.Values.FirstOrDefault(value => value.Field == $"line:misa:{misaLine.Index}:name")?.Actual;
+            return misaLine.Unexpected ? $"Dòng MISA {misaLine.Index + 1} · không có trong Excel"
+                : $"Hàng {misaLine.Index + 1}" + (string.IsNullOrWhiteSpace(name) ? "" : " · " + name);
+        }
+        if (LineOf(key, invoice) is { } line) return $"Hàng {line.Index + 1}/{invoice!.Lines.Length} · {line.Line.Name}";
         return key is "subtotal" or "tax_total" or "grand_total" or "item_row_count" or "tax_row_count" ? "Tổng cộng" : "Thông tin chung";
     }
 
     /// <summary>Rows for the comparison window: real readback when present, otherwise the source values as "chưa đọc".</summary>
-    internal static IReadOnlyList<ComparisonRow> BuildComparisonRows(InvoiceDocument invoice, ReconciliationResult? result)
+    internal static IReadOnlyList<ComparisonRow> BuildComparisonRows(InvoiceDocument? invoice, ReconciliationResult? result)
     {
         if (result is not null)
             return [.. result.Values.Where(value => !IsHiddenDisplayField(value.Field))
-                .Select(value => new ComparisonRow(value, ComparisonLabel(value.Field, invoice), SectionOf(value.Field, invoice)))];
+                .Select(value => new ComparisonRow(value, ComparisonLabel(value.Field, invoice), SectionOf(value.Field, invoice, result),
+                    SourceOnlyMisa: invoice is null))];
+        if (invoice is null) return [];
         var rows = new List<ComparisonRow>();
         void Add(string field, string? expected)
             => rows.Add(new(new ValueComparison(field, expected ?? "", null, false, ""), ComparisonLabel(field, invoice), SectionOf(field, invoice), true));

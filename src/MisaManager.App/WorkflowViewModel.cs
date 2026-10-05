@@ -13,8 +13,12 @@ public enum MisaConnection { Unknown, Connected, Lost }
 
 public sealed record ScreenCheckView(bool Ok, string Summary, string Details, ScreenCheckReport? Report = null);
 
-/// <summary>Latest "Đối chiếu hóa đơn" of a source invoice against the voucher open in MISA (outside a run).</summary>
-public sealed record OpenVoucherCheck(InvoiceDocument Invoice, OpenVoucherComparison? Comparison, string? Error, DateTimeOffset At);
+/// <summary>
+/// Latest "Đối chiếu hóa đơn" against the voucher open in MISA (outside a run). <see cref="Invoice"/> is the Excel invoice with
+/// MISA's number (null when the workbook has none); <see cref="Selection"/> is the list selection it stays shown for.
+/// </summary>
+public sealed record OpenVoucherCheck(InvoiceDocument? Invoice, OpenVoucherComparison? Comparison, string? Error, DateTimeOffset At,
+    string? Selection);
 
 public sealed class WorkflowViewModel : INotifyPropertyChanged
 {
@@ -22,6 +26,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private string status = "Sẵn sàng. Chọn hóa đơn để tiếp tục.";
     private bool running;
     private bool stopRequested;
+    // Stopped by the user with ticked invoices left; Tiếp tục runs the rest of the batch.
+    private bool batchStopped;
     private readonly HashSet<string> checkedFingerprints = new(StringComparer.Ordinal);
     private readonly HashSet<string> handledInBatch = new(StringComparer.Ordinal);
     private int batchIndex;
@@ -31,6 +37,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     private string connectionDetail = "";
     private (string? Code, string Message)? lastError;
     private DateTimeOffset? performanceStartedAt;
+    private DateTimeOffset? performanceEndedAt;
+    // Time of earlier segments of a batch that was stopped and continued.
+    private TimeSpan performanceCarried;
     private string? performanceInvoice;
     private string performanceCurrent = "Chưa chạy";
     private string performanceElapsed = "0 ms";
@@ -83,19 +92,24 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         catch (Exception error) { Status = "Không đọc được phiên trước: " + error.Message; }
     }
 
-    /// <summary>Hard stop: cancels the step in flight; Resume continues from the paused checkpoint.</summary>
-    public async Task StopNowAsync()
+    /// <summary>
+    /// Graceful stop: the invoice in progress is finished (Cất/Bỏ as usual), so no voucher is left half-entered and
+    /// nothing fails; the batch stops before the next invoice and Tiếp tục runs the rest.
+    /// </summary>
+    public void RequestStop()
     {
-        if (!running) return;
+        if (!running || stopRequested) return;
         stopRequested = true;
-        if (services.Workflow.Current is null) return;
-        try { Status = (await services.PauseAsync()).Message; }
-        catch (Exception error) { Status = error.Message; }
+        Status = "Đang dừng: tool làm xong thao tác hiện tại rồi dừng. Sau đó bấm Tiếp tục để chạy tiếp.";
+        NotifyWorkflowChanged();
     }
+
+    public bool IsStopping => running && stopRequested;
 
     public async Task ResumeAsync()
     {
         if (running) return;
+        if (batchStopped) { await RunAsync(resume: true); return; }
         if (services.Workflow.Current?.Snapshot.Status != WorkflowStatus.Paused) return;
         stopRequested = false;
         running = true;
@@ -156,12 +170,13 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public bool HasPerformanceData => PerformanceEntries.Count > 0 || performanceStartedAt is not null;
     public bool CanEditSource => !running;
     public bool CanStart => !running;
-    public bool CanResume => !running && services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused;
+    public bool CanResume => !running && (batchStopped || services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused);
     public MisaConnection Connection => connection;
 
     public void RefreshPerformance()
     {
-        var activity = services.Activity;
+        // Native activity only counts while a run owns MISA; a stale one must not open new traces after a stop.
+        var activity = running ? services.Activity : null;
         if (activity is null)
         {
             if (activeNativeTraceId is not null)
@@ -182,9 +197,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             PerformanceEntries.Add(activeNativeTrace);
         }
 
-        if (performanceStartedAt is { } started)
+        if (performanceStartedAt is not null)
         {
-            PerformanceElapsed = FormatDuration(DateTimeOffset.UtcNow - started);
+            PerformanceElapsed = FormatDuration(PerformanceTotal());
             PerformanceCurrent = activity is null
                 ? (running ? "Đang xử lý..." : PerformanceCurrent)
                 : $"{activity.Field} · {FormatDuration(DateTimeOffset.UtcNow - activity.StartedAt)}";
@@ -240,9 +255,11 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var ticked = InvoiceQueue.Where(invoice => checkedFingerprints.Contains(invoice.Fingerprint)).ToArray();
         if (ticked.Length == 0)
         { Status = "Chưa tick hóa đơn nào. Tick ô vuông trước các hóa đơn cần nhập rồi bấm Thêm vào MISA."; return; }
+        resume &= batchStopped;
+        batchStopped = false;
         if (!resume) { handledInBatch.Clear(); batchIndex = 0; }
         InvoiceDocument[] queue = [.. ticked.Where(invoice => !handledInBatch.Contains(invoice.Fingerprint))];
-        if (queue.Length == 0) { Status = "Không còn hóa đơn nào cần chạy."; return; }
+        if (queue.Length == 0) { Status = "Không còn hóa đơn nào cần chạy."; NotifyWorkflowChanged(); return; }
         var batchTotal = batchIndex + queue.Length;
         var first = queue[0];
         running = true;
@@ -258,12 +275,15 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var failedNumbers = new List<string>();
         var consecutiveFailures = 0;
         string? stopNote = null;
+        string? identity = null;
         services.BeginUiBatch(first.Identity.Number);
-        ResetPerformance();
+        if (resume && performanceStartedAt is { } before && performanceEndedAt is { } after) performanceCarried += after - before;
+        else ResetPerformance();
         performanceStartedAt = DateTimeOffset.UtcNow;
+        performanceEndedAt = null;
         performanceInvoice = first.Identity.Number;
-        PerformanceCurrent = "Chuẩn bị phiên";
-        var wholeRun = BeginTrace("Toàn bộ function Thêm vào MISA", first.Identity.Number);
+        PerformanceCurrent = resume ? "Tiếp tục phiên" : "Chuẩn bị phiên";
+        var wholeRun = BeginTrace(resume ? "Tiếp tục function Thêm vào MISA" : "Toàn bộ function Thêm vào MISA", first.Identity.Number);
         var performanceOutcome = "Hoàn tất";
         NotifyWorkflowChanged();
         try
@@ -279,7 +299,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             }
             // One MISA session per batch: resolving it per invoice costs a UIA window scan each time.
             var findWindow = BeginTrace("Tìm cửa sổ MISA", "Xác định đúng PID/HWND phiên MISA");
-            var identity = await WaitForSessionAsync();
+            identity = await WaitForSessionAsync();
             FinishTrace(findWindow, identity is null ? "Không hoàn tất" : "Hoàn tất", identity is null ? Status : null);
             if (identity is null) return;
             var precheck = BeginTrace("Kiểm tra giao diện MISA", "Đối chiếu ID control của profile với MISA đang mở");
@@ -318,7 +338,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
                 performanceInvoice = invoice.Identity.Number;
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
-                Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để hủy bước đang chạy.";
+                Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để dừng sau thao tác hiện tại.";
                 PerformanceCurrent = "Nhập hóa đơn · đang chạy";
                 OperationResult response;
                 var windowReruns = 0;
@@ -352,6 +372,15 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     NotifyWorkflowChanged();
                     await Task.Delay(TimeSpan.FromSeconds(1.5));
                     if (stopRequested) break;
+                }
+                RestoreMisaWindow(identity);
+                // Stopped while an interference rerun was due: the voucher was already discarded safely, so this is
+                // not an error; Tiếp tục enters the invoice again from scratch.
+                if (response.Status != "completed" && stopRequested
+                    && services.Workflow.LastLiveRun is { AutoRerunSafe: true } interrupted && interrupted.Context.Invoice.Fingerprint == fingerprint)
+                {
+                    batchIndex--;
+                    break;
                 }
                 Status = response.Message;
                 NotifyWorkflowChanged();
@@ -430,15 +459,42 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         finally
         {
             if (stopRequested && performanceOutcome == "Hoàn tất") performanceOutcome = "Đã dừng";
+            performanceEndedAt = DateTimeOffset.UtcNow;
             FinishActiveTrace(performanceOutcome);
             FinishAllRunning(performanceOutcome);
             FinishTrace(wholeRun, performanceOutcome);
+            var left = InvoiceQueue.Count(invoice => checkedFingerprints.Contains(invoice.Fingerprint) && !handledInBatch.Contains(invoice.Fingerprint));
+            batchStopped = stopRequested && left > 0;
+            if (batchStopped) Status = $"Đã dừng. Còn {left} hóa đơn đã tick chưa chạy; bấm Tiếp tục để chạy tiếp.";
+            else if (stopRequested && performanceOutcome == "Đã dừng") Status = "Đã dừng; không còn hóa đơn đã tick nào cần chạy.";
+            stopRequested = false;
             running = false;
             operation = null;
             services.EndUiBatch(performanceOutcome);
-            PerformanceCurrent = "Đã kết thúc";
+            PerformanceCurrent = performanceOutcome == "Đã dừng" ? "Đã dừng" : "Đã kết thúc";
+            PerformanceElapsed = FormatDuration(PerformanceTotal());
             NotifyWorkflowChanged();
+            RestoreMisaWindow(identity);
         }
+    }
+
+    private TimeSpan PerformanceTotal()
+        => performanceStartedAt is { } started ? performanceCarried + ((performanceEndedAt ?? DateTimeOffset.UtcNow) - started) : TimeSpan.Zero;
+
+    // MISA can end up minimized after Cất closes its voucher; show it again (now and once it settles) so it stays visible
+    // behind the tool, which is topmost and therefore never covered.
+    private static void RestoreMisaWindow(string? identity)
+    {
+        if (ResolveWindow(identity) is not { } window) return;
+        MisaWindowDiscovery.RestoreIfMinimized(window.WindowHandle);
+        _ = Task.Run(async () =>
+        {
+            foreach (var delay in new[] { 400, 1200 })
+            {
+                await Task.Delay(delay);
+                MisaWindowDiscovery.RestoreIfMinimized(window.WindowHandle);
+            }
+        });
     }
 
     private void ResetPerformance()
@@ -448,6 +504,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         activeNativeTraceId = null;
         activeNativeTrace = null;
         performanceStartedAt = null;
+        performanceEndedAt = null;
+        performanceCarried = TimeSpan.Zero;
         performanceInvoice = null;
         PerformanceElapsed = "0 ms";
         PerformanceCurrent = "Chưa chạy";
@@ -477,7 +535,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (activeNativeTraceId is not null) FinishTrace(activeNativeTraceId, status, error);
         activeNativeTraceId = null;
         activeNativeTrace = null;
-        if (performanceStartedAt is { } started) PerformanceElapsed = FormatDuration(DateTimeOffset.UtcNow - started);
+        if (performanceStartedAt is not null) PerformanceElapsed = FormatDuration(PerformanceTotal());
     }
 
     private void FinishAllRunning(string status, string? error = null)
@@ -548,11 +606,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// </summary>
     public async Task<OperationResult> ReconcileAsync()
     {
-        if (SelectedInvoice is not { } invoice)
-            return new("ui", "blocked", "Chọn hóa đơn cần đối chiếu với chứng từ đang mở trong MISA.");
-        if (services.Workflow.Current is not { } current || current.Invoice.Fingerprint != invoice.Fingerprint
-            || WorkflowRunner.IsTerminal(current.Snapshot.Status))
-            return await CompareOpenVoucherAsync(invoice);
+        if (SelectedInvoice is not { } invoice || services.Workflow.Current is not { } current
+            || current.Invoice.Fingerprint != invoice.Fingerprint || WorkflowRunner.IsTerminal(current.Snapshot.Status))
+            return await CompareOpenVoucherAsync();
         OpenVoucherCheck = null;
         var owned = !running;
         if (owned) { running = true; operation = "reconcile"; NotifyWorkflowChanged(); }
@@ -566,13 +622,17 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         finally { if (owned) { running = false; operation = null; NotifyWorkflowChanged(); } }
     }
 
-    private async Task<OperationResult> CompareOpenVoucherAsync(InvoiceDocument invoice)
+    /// <summary>
+    /// Reads the voucher open in MISA and pairs it with the loaded Excel invoice carrying the same invoice number
+    /// (not the one selected in the list); without such an invoice only the MISA values are shown.
+    /// </summary>
+    private async Task<OperationResult> CompareOpenVoucherAsync()
     {
         if (running) return new("ui", "blocked", "Tool đang chạy; chờ xong rồi bấm Đối chiếu hóa đơn.");
         running = true;
         operation = "reconcile";
         NotifyWorkflowChanged();
-        Status = $"Đang đọc chứng từ đang mở trong MISA để đối chiếu hóa đơn {invoice.Identity.Number}…";
+        Status = "Đang đọc chứng từ đang mở trong MISA để đối chiếu…";
         try
         {
             var windows = await services.Native.FindCandidatesAsync();
@@ -580,17 +640,28 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             if (sessions.Count != 1)
                 throw new AutomationException("NOT_CONNECTED", sessions.Count == 0 ? NoSessionDetail(windows)
                     : "Đang mở nhiều phiên MISA đã đăng nhập; hãy đóng bớt phiên thừa rồi thử lại.");
-            var comparison = await services.CompareOpenVoucherAsync(invoice, sessions[0]);
-            OpenVoucherCheck = new(invoice, comparison, null, DateTimeOffset.Now);
-            var mismatched = comparison.Result.Values.Count(value => !value.Matched);
+            var comparison = await services.CompareOpenVoucherAsync(InvoiceQueue, sessions[0]);
+            if (comparison.Invoice is { } paired && paired.Fingerprint != SelectedInvoice?.Fingerprint)
+            {
+                SelectedInvoice = paired;
+                PropertyChanged?.Invoke(this, new(nameof(SelectedInvoice)));
+            }
+            OpenVoucherCheck = new(comparison.Invoice, comparison, null, DateTimeOffset.Now, SelectedInvoice?.Fingerprint);
             var voucher = comparison.VoucherNumber.Length == 0 ? "đang mở" : comparison.VoucherNumber;
+            if (comparison.Invoice is not { } invoice)
+            {
+                Status = $"Đã đọc chứng từ {voucher} (hóa đơn {(comparison.InvoiceNumber.Length == 0 ? "?" : comparison.InvoiceNumber)}) trong MISA; "
+                    + "Excel đang nạp không có hóa đơn này nên cột Excel để trống.";
+                return new("ui", OperationStatuses.Completed, Status, Data: comparison.Result);
+            }
+            var mismatched = comparison.Result.Values.Count(value => !value.Matched);
             Status = mismatched == 0 ? $"Chứng từ {voucher} trong MISA khớp hóa đơn {invoice.Identity.Number}."
                 : $"Chứng từ {voucher} lệch {mismatched} trường so với hóa đơn {invoice.Identity.Number}; xem cửa sổ đối chiếu.";
             return new("ui", mismatched == 0 ? OperationStatuses.Completed : OperationStatuses.Blocked, Status, Data: comparison.Result);
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            OpenVoucherCheck = new(invoice, null, error.Message, DateTimeOffset.Now);
+            OpenVoucherCheck = new(null, null, error.Message, DateTimeOffset.Now, SelectedInvoice?.Fingerprint);
             Status = "Không đối chiếu được: " + error.Message;
             return new("ui", OperationStatuses.Blocked, Status);
         }
@@ -675,6 +746,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 ? current : null;
             var number = (bound?.Invoice ?? SelectedInvoice)?.Identity.Number;
             var invoiceText = number is null ? "" : $"Hóa đơn {number}";
+            if (running && stopRequested)
+                return new(ToolStateKind.PauseRequested, ToolState.LabelOf(ToolStateKind.PauseRequested), "Làm xong thao tác hiện tại rồi dừng");
             if (running)
             {
                 var activityField = services.Activity?.Field;
@@ -688,6 +761,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     _ => new(ToolStateKind.Entering, ToolState.LabelOf(ToolStateKind.Entering), invoiceText)
                 };
             }
+            if (batchStopped)
+                return new(ToolStateKind.Paused, ToolState.LabelOf(ToolStateKind.Paused), "Bấm Tiếp tục để chạy các hóa đơn đã tick còn lại.");
             if (connection == MisaConnection.Lost)
                 return new(ToolStateKind.Disconnected, ToolState.LabelOf(ToolStateKind.Disconnected), connectionDetail,
                     ErrorHints.For("NOT_CONNECTED")!);

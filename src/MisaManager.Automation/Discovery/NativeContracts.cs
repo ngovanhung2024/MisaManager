@@ -100,6 +100,14 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
         return Bind(handle, expectedProcessId);
     }
 
+    /// <summary>Shows MISA again (keeping a maximized layout) when it ended up minimized; sends no input to it.</summary>
+    public static bool RestoreIfMinimized(nint handle)
+    {
+        if (handle == 0 || !PInvoke.IsWindow((HWND)handle) || !PInvoke.IsIconic((HWND)handle)) return false;
+        PInvoke.ShowWindow((HWND)handle, SHOW_WINDOW_CMD.SW_RESTORE);
+        return true;
+    }
+
     // Re-reads the mutable window state of an already proven binding. The
     // caller holds the process handle open, so its PID cannot be reused.
     internal static WindowIdentity? TryRefresh(WindowIdentity bound, Process process)

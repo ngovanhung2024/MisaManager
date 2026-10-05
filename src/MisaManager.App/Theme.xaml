@@ -162,6 +162,10 @@
       </Grid>
     </Border>
     <DataTemplate.Triggers>
+      <DataTrigger Binding="{Binding Kind}" Value="info">
+        <Setter TargetName="RowBorder" Property="Background" Value="#F1F5F9"/>
+        <Setter TargetName="RowBorder" Property="BorderBrush" Value="#64748B"/>
+      </DataTrigger>
       <DataTrigger Binding="{Binding Kind}" Value="pending">
         <Setter TargetName="ActualText" Property="Foreground" Value="#9CA3AF"/>
       </DataTrigger>

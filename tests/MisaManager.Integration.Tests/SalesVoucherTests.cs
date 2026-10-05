@@ -12,6 +12,13 @@ public sealed class SalesVoucherTests : UiTest
         new("HH_08", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "kg")
     ];
 
+    // Export with the "Đơn vị chuyển đổi" column: CM GOLD is registered in Tấn only.
+    private static readonly ItemCatalogEntry[] TonCatalog =
+    [
+        new("CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn"),
+        new("HH_08", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "kg", "Bao")
+    ];
+
     [Fact]
     public Task SingleLineWithItemCodeIsSavedExactly() => WithFakeAsync(async (misa, harness, token) =>
     {
@@ -232,4 +239,19 @@ public sealed class SalesVoucherTests : UiTest
         var history = await harness.Runner.ReadHistoryAsync(token);
         Assert.Equal(WorkflowStatus.Discarded, history.Single(run => run.Invoice.Identity.Number == "1013").Snapshot.Status);
     });
+
+    [Fact]
+    public Task KgLineOfATonOnlyItemIsConvertedWithoutOpeningTheUnitList() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // The fake's unit list does contain "kg": a saved Tấn line proves the list was never opened.
+        var invoice = Invoices.Build(TempDirectory(misa), "1030", Invoices.AV,
+            Invoices.Line(0, "", "Phân NPK Cà Mau Gold 20-10-10-25kg", "kg", 250, 14_400, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal(("CM GOLD 20.10.10", "Tấn", 0.25m, 3_600_000m), (line.Code, line.Unit, line.Quantity, line.Amount));
+        Assert.StartsWith("ItemCatalog:CM GOLD 20.10.10:", result.Context.NativeValues!["unit_absence:" + invoice.Lines[0].LineId]);
+    }, catalog: TonCatalog);
 }

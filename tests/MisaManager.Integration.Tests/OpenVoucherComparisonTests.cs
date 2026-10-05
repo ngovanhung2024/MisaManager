@@ -45,6 +45,35 @@ public sealed class OpenVoucherComparisonTests : UiTest
     }, catalog: Catalog);
 
     [Fact]
+    public Task OpenVoucherIsPairedWithTheExcelInvoiceCarryingItsNumber() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var entered = Invoices.Build(TempDirectory(misa), "1014", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+        Assert.Equal(WorkflowStatus.AwaitingSave, (await harness.EnterWithoutSavingAsync(entered, misa, token)).Context.Snapshot.Status);
+        var selected = Invoices.Build(TempDirectory(misa), "1015", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 20, 10_000, "5%"));
+        var inputs = harness.Input.ValueInputSequence;
+
+        // The invoice selected in the tool (1015) is not the one open in MISA (1014): the number decides.
+        var paired = await harness.Gateway.CompareOpenVoucherAsync([selected, entered], misa.Window, token);
+
+        Assert.Same(entered, paired.Invoice);
+        Assert.True(paired.Result.Matched, Mismatches(paired.Result));
+
+        // No Excel invoice with that number: every MISA value is still read, with an empty Excel side.
+        var misaOnly = await harness.Gateway.CompareOpenVoucherAsync([selected], misa.Window, token);
+
+        Assert.Null(misaOnly.Invoice);
+        Assert.Equal("1014", misaOnly.InvoiceNumber);
+        Assert.All(misaOnly.Result.Values, value => Assert.Equal("", value.Expected));
+        Assert.Contains(misaOnly.Result.Values, value => value.Field == "line:misa:0:code" && value.Actual == "HH_06");
+        Assert.Contains(misaOnly.Result.Values, value => value.Field == "line:misa:0:quantity" && value.Actual is { Length: > 0 });
+        Assert.Contains(misaOnly.Result.Values, value => value.Field == "grand_total" && value.Actual is { Length: > 0 });
+        Assert.Equal(inputs, harness.Input.ValueInputSequence);
+        Assert.Empty(misa.State().Vouchers);
+    });
+
+    [Fact]
     public Task WithoutAnOpenVoucherTheUserIsToldToOpenOne() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1013", Invoices.AV,
