@@ -4,6 +4,7 @@ name: Release
 # no tag or local script is needed. Version = major.minor of Directory.Build.props + commit count of master.
 # Pull requests build the same MSI as a workflow artifact for testing before merge (nothing is published).
 # A tag v1.2.3 or a manual run with a version still publishes that exact version.
+# Tests run independently in CI; publishing does not wait for their results.
 on:
   push:
     branches: [master]
@@ -62,10 +63,6 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$raw' must be major.minor.build" }
           "VERSION=$version" >> $env:GITHUB_ENV
           Write-Host "Version $version"
-
-      - name: Unit tests
-        if: env.PUBLISH == 'true'
-        run: dotnet test tests/MisaManager.Core.Tests -c Release
 
       - name: Import code-signing certificate
         if: env.HAS_SIGNING == 'true' && env.PUBLISH == 'true'
