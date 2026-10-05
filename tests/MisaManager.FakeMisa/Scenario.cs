@@ -19,6 +19,8 @@ public sealed record Scenario
     /// <summary>Extra rows used to model a live MISA catalog differing from a local export.</summary>
     public IReadOnlyList<CatalogItem> AdditionalItems { get; init; } = [];
     public bool IncompleteItemLookup { get; init; }
+    /// <summary>Lookup builds showing voucher-style column captions instead of Mã/Tên/ĐVT chính.</summary>
+    public bool ItemLookupUsesVoucherColumns { get; init; }
     public string? CreatedItemNameOverride { get; init; }
     /// <summary>Also opens the "MISA SME 2023" login window next to the session window.</summary>
     public bool ShowLoginWindow { get; init; }

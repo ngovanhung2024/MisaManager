@@ -589,41 +589,6 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         => evidence is not null && (evidence.StartsWith("UIA3.CompleteRegisteredUnitList:", StringComparison.Ordinal)
             || evidence.StartsWith("ItemCatalog:", StringComparison.Ordinal));
 
-    private async Task<string?> ResolveLiveItemAsync(WorkflowContext context, InvoiceLine line, NativeCell row,
-        CancellationToken token)
-    {
-        var screen = profile.Screen("item_lookup");
-        await input.OpenItemLookupAsync(await input.CaptureAsync(token), row, token);
-        var frame = await input.BindItemLookupAsync(screen, token);
-        var search = screen.Element("search").Selector;
-        frame = (await input.WriteFieldAsync(frame, search, "", "", NativeValueKind.Exact,
-            profile.Culture, "Enter", token)).Frame;
-        var grid = screen.Grid("items");
-        var table = await input.ReadCompleteTableAsync(frame, grid.AutomationId, grid.Columns.Values.ToArray(), token);
-        var catalog = RequireCatalog();
-        var entries = table.Rows.Select(values =>
-        {
-            var code = values[grid.Columns["code"]].Trim();
-            var name = values[grid.Columns["name"]].Trim();
-            var unit = values[grid.Columns["unit"]].Trim();
-            var old = catalog.FindByCode(code);
-            var sameItem = old is not null && CatalogNameMatch(old.Name, name) && Match(old.Unit, unit, NativeValueKind.Text);
-            // F3 lists the main unit only; it cannot prove a conversion unit absent.
-            return new ItemCatalogEntry(code, name, unit,
-                sameItem ? old!.ConversionUnit : "", !sameItem || old!.UnitListIncomplete);
-        }).ToArray();
-        if (entries.Any(entry => entry.Code.Length == 0 || entry.Name.Length == 0)
-            || entries.Select(entry => entry.Code).Distinct(StringComparer.OrdinalIgnoreCase).Count() != entries.Length)
-            throw new AutomationException("ITEM_LOOKUP_INVALID", "Danh mục MISA có mã/tên trống hoặc mã trùng; không tạo hàng mới.");
-        await input.CloseItemLookupAsync(table.Frame, search, token);
-        await WaitEditor(context, visible: true, token);
-        await Tab(profile.ItemTab, token);
-        catalog.RefreshNative(entries);
-        if (catalog.FindPending(line.Name, line.Unit) is not null)
-            throw new AutomationException("ITEM_CREATE_UNCERTAIN", $"'{line.Name}' có lần Cất mã hàng chưa xác nhận; không tạo thêm.");
-        return ResolveCatalogName(catalog, line, context.AllowKgToTon);
-    }
-
     private static string? ResolveCatalogName(ItemCatalogStore catalog, InvoiceLine line, bool allowKgToTon)
     {
         var names = catalog.Snapshot().Where(entry => CatalogNameMatch(line.Name, entry.Name))
@@ -636,7 +601,6 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private async Task EnterLines(WorkflowContext context, Func<WorkflowProgress, CancellationToken, Task> progress, CancellationToken token)
     {
         var codes = new List<string>();
-        var catalogRead = false;
         await Tab(profile.ItemTab, token);
         for (var row = 0; row < context.Invoice.Lines.Length; row++)
         {
@@ -657,14 +621,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 // A previous run may have clicked "Cất" without learning the result: reuse that code, never create another.
                 if (catalog.FindPending(line.Name, line.Unit) is { } found)
                     (pending, code) = (found, found.Code);
-                // Validate mappings once per invoice before selecting a cached code.
-                // A complete live catalog also proves absence before opening F9.
-                if (pending is null && existingCode.Length == 0 && !catalogRead)
-                {
-                    code = await ResolveLiveItemAsync(context, line, codeCell, token) ?? "";
-                    catalogRead = true;
-                }
-                else if (pending is null) code = ResolveCatalogName(catalog, line, context.AllowKgToTon) ?? "";
+                // Use the imported mapping; F3 columns vary across MISA builds.
+                if (pending is null)
+                    code = ResolveCatalogName(catalog, line, context.AllowKgToTon) ?? "";
                 resolvedFromCatalog = pending is null && code.Length > 0 && existingCode.Length == 0;
             }
             if (existingCode.Length > 0)
@@ -702,20 +661,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             }
             if (resolvedFromCatalog && !CatalogNameMatch(line.Name, metadata.Values[profile.Columns["name"]].Value))
             {
-                // A confirmed code with a different name is a stale mapping, not permission to
-                // repeat uncertain input. Prove presence/absence in the full native catalog first.
-                var liveCode = await ResolveLiveItemAsync(context, line, boundRow, token);
-                await input.WriteCellAsync(await input.CaptureAsync(token), boundRow, "", "", NativeValueKind.Exact,
-                    profile.Culture, token, commitKey: "Tab");
-                var created = liveCode is null;
-                code = liveCode ?? await CreateMissingItemAsync(context, line, row, codeCell, token);
-                await SelectItemCodeAsync(row, code, created, token);
-                boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
-                metadata = await NativeWait.UntilAsync(async () => await input.ReadRowAsync(
-                    await input.CaptureAsync(token), boundRow,
-                    [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token),
-                    actual => CatalogNameMatch(line.Name, actual.Values[profile.Columns["name"]].Value),
-                    "READBACK_MISMATCH", $"Dòng {row + 1}: tên hàng MISA khác tên trong file.", token);
+                throw new AutomationException("ITEM_CATALOG_STALE",
+                    $"Dòng {row + 1}: mã '{code}' trong file danh mục đang trỏ tới tên hàng khác trong MISA. "
+                    + "Hãy xuất lại danh mục vật tư từ MISA và nạp lại file mã hàng; tool không mở Tìm nhanh/kính lúp và không tự đổi mã.", true);
             }
             var expectedAccount = metadata.Values[profile.Columns["debit_account"]].Value;
             if (string.IsNullOrWhiteSpace(expectedAccount) || !expectedAccount.All(char.IsDigit))

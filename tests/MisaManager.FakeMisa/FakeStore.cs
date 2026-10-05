@@ -51,6 +51,7 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
     public IReadOnlyList<string> Stocks { get; } = ["KHH", "KVT"];
     public IReadOnlyList<string> TaxRates { get; } = ["0%", "5%", "8%", "10%", "KCT", "KKKNT"];
     public bool IncompleteItemLookup => scenario.IncompleteItemLookup;
+    public bool ItemLookupUsesVoucherColumns => scenario.ItemLookupUsesVoucherColumns;
     public string? CreatedItemNameOverride => scenario.CreatedItemNameOverride;
 
     public List<SavedVoucher> Vouchers { get; } = [.. scenario.ExistingVouchers];

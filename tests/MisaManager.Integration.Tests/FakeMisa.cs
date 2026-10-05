@@ -24,7 +24,7 @@ public sealed record FakeState(IReadOnlyList<FakeVoucher> Vouchers, IReadOnlyLis
 public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<FakeVoucher>? ExistingVouchers = null,
     bool TaxRoundingPrompt = false, decimal TaxOffset = 0, IReadOnlyList<string>? TakenItemCodes = null, bool ShowLoginWindow = false,
     bool CustomerTaxUnlisted = false, IReadOnlyList<FakeItem>? AdditionalItems = null,
-    bool IncompleteItemLookup = false, string? CreatedItemNameOverride = null);
+    bool IncompleteItemLookup = false, string? CreatedItemNameOverride = null, bool ItemLookupUsesVoucherColumns = false);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

@@ -11,6 +11,7 @@ public sealed class ItemLookupWindow : Window, IGridSource
     public ItemLookupWindow(FakeProfile profile, FakeStore store)
     {
         this.store = store;
+        FakeLog.Write("F3 item lookup opened");
         Title = "Tìm nhanh vật tư, hàng hóa";
         Ui.Id(this, profile.ScopeId("item_lookup"));
         Width = 900;
@@ -20,10 +21,12 @@ public sealed class ItemLookupWindow : Window, IGridSource
         var search = Ui.Combo(profile.Id("item_lookup", "search"), []);
         var grid = new FakeGrid(profile.GridId("item_lookup", "items"), 630)
             { FooterCountOffset = store.IncompleteItemLookup ? 1 : 0 };
+        string Column(string key) => store.ItemLookupUsesVoucherColumns
+            ? profile.Column("sales_voucher", "items", key) : profile.Column("item_lookup", "items", key);
         grid.Bind([
-            new("code", profile.Column("item_lookup", "items", "code"), 130),
-            new("name", profile.Column("item_lookup", "items", "name"), 550),
-            new("unit", profile.Column("item_lookup", "items", "unit"), 90)
+            new("code", Column("code"), 130),
+            new("name", Column("name"), 550),
+            new("unit", Column("unit"), 90)
         ], this);
         search.PreviewKeyDown += (_, e) =>
         {
