@@ -363,6 +363,66 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Single(misa.State().Vouchers);
     }, new FakeScenario(SaveClosesEditor: false));
 
+    // Invoice 1654 (0.2.61): the user moved the mouse during Cất; the Đóng click missed and the run
+    // stopped with EDITOR_STILL_OPEN although MISA had saved the voucher.
+    [Fact]
+    public Task MouseMovedAfterSaveDoesNotRedirectTheCloseClick() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1654", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 27, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Single(misa.State().Vouchers);
+        Assert.DoesNotContain("missed", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(SaveClosesEditor: false, UserMouseNudge: "after_save"));
+
+    [Fact]
+    public Task MouseMovingDuringTheWholeWorkflowDoesNotRedirectClicks() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1655", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(["HH_06", "HH_07"], Assert.Single(misa.State().Vouchers).Lines.Select(line => line.Code));
+    }, new FakeScenario(SaveClosesEditor: false, UserMouseNudge: "always"));
+
+    [Fact]
+    public Task UserSwitchingTabsMidEntryIsRestoredWithoutReplayingInput() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1656", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal([22m, 38m], voucher.Lines.Select(line => line.Quantity));
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("user switched tabs", log, StringComparison.Ordinal);
+        // Each value reached MISA exactly once.
+        Assert.Equal(2, log.Split('\n').Count(entry => entry.Contains(" quantity <- ", StringComparison.Ordinal)));
+    }, new FakeScenario(UserSwitchesTabs: true));
+
+    [Fact]
+    public Task CloseSwallowedByAStrayClickIsRetriedOnlyWhileSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1657", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Single(misa.State().Vouchers);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (saved=False", StringComparison.Ordinal)));
+    }, new FakeScenario(SaveClosesEditor: false, CloseSwallowedOnceAfterSave: true));
+
     [Fact]
     public Task TaxRoundingPromptIsAnsweredNoAndSourceTaxIsKept() => WithFakeAsync(async (misa, harness, token) =>
     {

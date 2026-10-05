@@ -28,6 +28,15 @@ public sealed record Scenario
     public bool ShowLoginWindow { get; init; }
     /// <summary>R20 builds whose "Hóa đơn" tab shows the buyer MST in a control the profile selector does not match.</summary>
     public bool CustomerTaxUnlisted { get; init; }
+    /// <summary>
+    /// User's hand on the mouse: "always" or "after_save". A click whose press is not preceded by the
+    /// tool's own move to the same point (cursor placed separately) lands where the user moved the cursor.
+    /// </summary>
+    public string UserMouseNudge { get; init; } = "";
+    /// <summary>User clicks other tabs mid-entry: header → "Phiếu xuất" after the posted date and the invoice number, detail → "Thuế" after the first item code.</summary>
+    public bool UserSwitchesTabs { get; init; }
+    /// <summary>The first "Đóng" after Cất is swallowed (a stray user click took it).</summary>
+    public bool CloseSwallowedOnceAfterSave { get; init; }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {

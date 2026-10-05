@@ -284,9 +284,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 var sales = await BindSales(context, token);
                 await input.InvokeWorkflowAsync(sales, profile.OpenVoucher, token);
                 sent = true;
+                workflowTabs.Clear();
                 await WaitEditor(context, true, token);
                 await Tab(profile.ReceiptTab, token);
-                var voucher = await Field("voucher_number", await input.CaptureAsync(token), token);
+                var voucher = await Field("voucher_number", token);
                 if (string.IsNullOrWhiteSpace(voucher.Value)) throw new AutomationException("VOUCHER_ID_MISSING", "Chưa đọc được số chứng từ mới.", true);
                 await progress(new("voucher_number", voucher.Value!, Frame(voucher.Frame)), token);
             }
@@ -306,9 +307,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         StopPoint();
                         Entering("customer");
                         var buyerCode = BuyerCode(context);
-                        await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
+                        await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
                             buyerCode, buyerCode, NativeValueKind.Exact,
-                            profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false);
+                            profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false), token);
                         sent = true;
                         var customer = await VerifyCustomer(context, token, selecting: true);
                         await progress(new("customer_reference", customer.Values["customer"].Value!, Frame(customer.Frame)), token);
@@ -604,8 +605,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             throw new AutomationException("GRID_ROW_CHANGED",
                 $"Dòng {row + 1}: ô Mã hàng đang là '{current}', khác mã '{code}'; không ghi đè.", true);
         }
-        await input.WriteCellAsync(await input.CaptureAsync(token), cell, code, code, NativeValueKind.Exact,
-            profile.Culture, token, commitKey: "Enter");
+        await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), cell, code, code, NativeValueKind.Exact,
+            profile.Culture, token, commitKey: "Enter"), token);
     }
 
     private static AutomationException PendingUnresolved(int row, PendingItemCreation pending, Exception error)
@@ -652,8 +653,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 if (code.Length > 0) LastItemResolution = LastItemResolution with { CodeSource = "checkpoint_readback" };
             }
             var codeCell = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], "");
-            var existingCode = (await NativeWait.UntilAsync(async () => await input.ReadCellAsync(
-                await input.CaptureAsync(token), codeCell, token, waitForCode: false),
+            var existingCode = (await NativeWait.UntilAsync(() => Steady(async () => await input.ReadCellAsync(
+                await input.CaptureAsync(token), codeCell, token, waitForCode: false), token),
                 read => read.Value is not null, "GRID_ROW_NOT_READY", $"Row {row + 1} is not ready.", token)).Value!.Trim();
             PendingItemCreation? pending = null;
             var resolvedFromCatalog = false;
@@ -706,8 +707,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             {
                 metadata = await NativeWait.UntilAsync(async () =>
                     {
-                        var read = await input.ReadRowAsync(await input.CaptureAsync(token), boundRow,
-                            [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token);
+                        var read = await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token), boundRow,
+                            [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token), token);
                         LastItemResolution = LastItemResolution with
                         {
                             NativeName = read.Values[profile.Columns["name"]].Value,
@@ -746,8 +747,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 var catalogProof = kgLine && Match("T\u1ea5n", nativeUnit, NativeValueKind.Text)
                     ? ItemCatalog?.UnitAbsenceProof(code, line.Unit) : null;
                 if (catalogProof is null) StopPoint();
-                var selected = catalogProof is not null ? null : await input.SelectCellOptionAsync(await input.CaptureAsync(token),
-                    CellTarget(row, code, "unit"), line.Unit, profile.Culture, token, allowMissing: kgLine);
+                var selected = catalogProof is not null ? null : await Steady(async () => await input.SelectCellOptionAsync(
+                    await input.CaptureAsync(token), CellTarget(row, code, "unit"), line.Unit, profile.Culture, token,
+                    allowMissing: kgLine), token);
                 if (catalogProof is not null || selected!.Status == "option_absent")
                 {
                     if (!kgLine || !Match(selected?.Value ?? nativeUnit ?? "", "T\u1ea5n", NativeValueKind.Text))
@@ -772,13 +774,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 new NativeCellWrite(profile.Columns["amount"], line.AmountBeforeTax!.Value.ToString(Culture))
             };
             StopPoint();
-            var verifiedRow = await input.WriteRowAsync(await input.CaptureAsync(token),
+            var verifiedRow = await Steady(async () => await input.WriteRowAsync(await input.CaptureAsync(token),
                 new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code),
                 writes, [profile.Columns["quantity"], profile.Columns["amount"]],
                 values => Match(Decimal(expected.Quantity), values.Values[profile.Columns["quantity"]].Value, NativeValueKind.Decimal)
                     && Match(Decimal(line.AmountBeforeTax), values.Values[profile.Columns["amount"]].Value, NativeValueKind.Decimal),
                 token, column => Entering("line:" + line.LineId + ":"
-                    + profile.Columns.Single(pair => pair.Value == column).Key));
+                    + profile.Columns.Single(pair => pair.Value == column).Key)), token);
             if (pending is not null) RequireCatalog().ConfirmPending(pending.Code);
             else if (ItemCatalog?.FindPending(line.Name, line.Unit) is { } createdPending
                 && Match(code, createdPending.Code, NativeValueKind.Exact))
@@ -788,10 +790,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 new Dictionary<string, string> { ["account:" + line.LineId] = expectedAccount }), token);
         }
         StopPoint();
-        var taxFrame = await Tab(profile.TaxTab, token);
+        await Tab(profile.TaxTab, token);
         // Items usually carry their VAT rate already; one grid read avoids a write per line.
-        var taxGrid = await input.ReadTableAsync(taxFrame, profile.ItemGridId,
-            [profile.Columns["code"], profile.Columns["tax_rate"]], token);
+        var taxGrid = await Steady(async () => await input.ReadTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
+            [profile.Columns["code"], profile.Columns["tax_rate"]], token), token);
         for (var row = 0; row < context.Invoice.Lines.Length; row++)
         {
             var line = context.Invoice.Lines[row];
@@ -804,8 +806,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 continue;
             StopPoint();
             Entering("line:" + line.LineId + ":tax_rate");
-            await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"), tax, tax,
-                NativeValueKind.TaxRate, profile.Culture, token);
+            await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"),
+                tax, tax, NativeValueKind.TaxRate, profile.Culture, token), token);
         }
     }
 
@@ -848,9 +850,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         {
             StopPoint();
             await Tab(tab, token);
-            var actual = await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(
+            var actual = await NativeWait.UntilAsync(() => Steady(async () => await input.ReadFieldsAsync(
                 await input.CaptureAsync(token),
-                fields.ToDictionary(field => field.Key, field => profile.Fields[field.Key]), token),
+                fields.ToDictionary(field => field.Key, field => profile.Fields[field.Key]), token), token),
                 _ => true, "TARGET_NOT_FOUND", "Các trường chưa sẵn sàng sau khi chuyển tab.", token);
             foreach (var field in fields)
             {
@@ -863,11 +865,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         foreach (var taxTab in new[] { true, false })
         {
             StopPoint();
-            var tabFrame = await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
+            await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
                 : new[] { "code", "name", "unit", "debit_account", "quantity", "amount", "unit_price" };
-            var table = await input.ReadCompleteTableAsync(tabFrame, profile.ItemGridId,
-                keys.Select(key => profile.Columns[key]).ToArray(), token);
+            var table = await Steady(async () => await input.ReadCompleteTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
+                keys.Select(key => profile.Columns[key]).ToArray(), token), token);
             var expectedLines = context.Invoice.Lines
                 .Select(line => (Line: line, Code: line.ItemCode.Trim().Length > 0
                     ? line.ItemCode.Trim() : Saved(context, "line:" + line.LineId)))
@@ -1069,8 +1071,24 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 ("tax_total", Decimal(context.Invoice.TaxTotal), NativeValueKind.Decimal),
                 ("grand_total", Decimal(context.Invoice.GrandTotal), NativeValueKind.Decimal));
         }
-        await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token, leavesScope: true);
-        await WaitEditor(context, false, token);
+        for (var attempt = 0; ; attempt++)
+        {
+            await input.InvokeWorkflowAsync(await input.CaptureAsync(token), profile.DiscardVoucher, token, leavesScope: true);
+            try
+            {
+                await WaitEditor(context, false, token);
+                return;
+            }
+            catch (AutomationException error) when (error.Code == "EDITOR_STILL_OPEN" && attempt < 2)
+            {
+                // A stray user click can swallow Đóng. Closing again is not a data input, but only
+                // while the same voucher still proves saved (Cất disabled); Cất itself is never resent.
+                var editor = await BindEditor(context, token);
+                await VerifyVoucherIdentity(context, editor, token);
+                await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token);
+                Trace.TraceInformation("Đóng chưa đóng editor đã Cất; bấm lại Đóng lần " + (attempt + 2));
+            }
+        }
     }
 
     private (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context) =>
@@ -1159,8 +1177,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // and business identity readback; recovery must match the same reference.
         var expected = CustomerFields(context);
         var fields = expected.ToDictionary(field => field.Key, field => profile.Fields[field.Key]);
-        var customer = await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(
-            await input.CaptureAsync(token), fields, token),
+        var customer = await NativeWait.UntilAsync(() => Steady(async () => await input.ReadFieldsAsync(
+            await input.CaptureAsync(token), fields, token), token),
             actual => expected.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)
                 || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)),
             "READBACK_MISMATCH", "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.", token, timeoutMilliseconds: 15000);
@@ -1188,6 +1206,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
     private async Task VerifyVoucherIdentity(WorkflowContext context, NativeFrame frame, CancellationToken token)
     {
+        Remember(profile.ReceiptTab);
         await input.SelectTabAsync(frame, profile.ReceiptTab, token);
         await Require("voucher_number", Saved(context, "voucher_number"), NativeValueKind.Exact, token);
     }
@@ -1245,16 +1264,64 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 "Phiên MISA đã thay đổi (MISA mở lại, đổi dữ liệu hoặc đang ở màn hình đăng nhập). Đăng nhập/mở đúng dữ liệu rồi bấm Kết nối lại.");
         return activate ? windows.Focus((nint)handle, pid) : window;
     }
-    private Task<Readback> Field(string key, NativeFrame frame, CancellationToken token) => input.ReadFieldAsync(frame, profile.Fields[key], token);
+    private Task<Readback> Field(string key, CancellationToken token)
+        => Steady(async () => await input.ReadFieldAsync(await input.CaptureAsync(token), profile.Fields[key], token), token);
     private async Task<NativeFrame> Tab(string tab, CancellationToken token)
-        => (await input.SelectTabAsync(await input.CaptureAsync(token), tab, token)).Frame;
+    {
+        Remember(tab);
+        return (await input.SelectTabAsync(await input.CaptureAsync(token), tab, token)).Frame;
+    }
+
+    // Tabs the workflow selected, most recent last. Replaying them in order leaves every tab
+    // group (Phiếu thu/Hóa đơn, Hàng tiền/Thuế) on the tab the workflow chose last.
+    private readonly List<string> workflowTabs = [];
+    private void Remember(string tab)
+    {
+        workflowTabs.Remove(tab);
+        workflowTabs.Add(tab);
+    }
+
+    // Failures that only mean the user moved focus or switched a tab under the workflow.
+    private static readonly HashSet<string> DisplacedCodes = new(StringComparer.Ordinal)
+    {
+        "TARGET_NOT_FOUND", "FOCUS_LOST", "FOCUS_FAILED", "GRID_COLUMN_AMBIGUOUS", "GRID_COLUMN_MISSING", "GRID_OFFSCREEN"
+    };
+
+    private static bool Displaced(Exception error)
+    {
+        if (error is not AutomationException { InputMayHaveBeenSent: false }) return false;
+        for (var current = error; current is not null; current = current.InnerException)
+        {
+            if (current is AutomationException { InputMayHaveBeenSent: true }) return false;
+            if (current is AutomationException automation && DisplacedCodes.Contains(automation.Code)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Runs a read or a write again after restoring the workflow's tabs, but only when it failed
+    /// before any input was sent (user clicked another tab or window). Uncertain input is never replayed.
+    /// </summary>
+    private async Task<T> Steady<T>(Func<Task<T>> operation, CancellationToken token)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { return await operation(); }
+            catch (Exception error) when (attempt < 2 && Displaced(error))
+            {
+                Trace.TraceInformation("Khôi phục tab/focus MISA sau thao tác của người dùng: " + error.Message);
+                foreach (var tab in workflowTabs.ToArray())
+                    await input.SelectTabAsync(await input.CaptureAsync(token), tab, token);
+            }
+        }
+    }
     private async Task Require(string field, string expected, NativeValueKind kind, CancellationToken token)
         => await RequireFields(token, (field, expected, kind));
     private async Task RequireFields(CancellationToken token, params (string Key, string Expected, NativeValueKind Kind)[] fields)
     {
-        await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(
+        await NativeWait.UntilAsync(() => Steady(async () => await input.ReadFieldsAsync(
             await input.CaptureAsync(token),
-            fields.ToDictionary(field => field.Key, field => profile.Fields[field.Key]), token),
+            fields.ToDictionary(field => field.Key, field => profile.Fields[field.Key]), token), token),
             actual => fields.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)),
             "READBACK_MISMATCH", "Các trường chưa khớp nguồn: " + string.Join(", ", fields.Select(field => field.Key)), token);
     }
@@ -1262,8 +1329,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     {
         StopPoint();
         Entering(field);
-        await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields[field], text, expected, kind,
-            profile.Culture, commit, token, verifyAfterWrite: false);
+        await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields[field], text, expected, kind,
+            profile.Culture, commit, token, verifyAfterWrite: false), token);
     }
     private Task WriteDate(string field, DateOnly day, CancellationToken token)
         => Write(field, day.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture), day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
