@@ -70,7 +70,7 @@ public sealed class NewItemWindow : Window
             MessageBox.Show(this, $"ĐVT <{unit.Text}> không có trong danh mục Đơn vị tính.", Prompt, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        Created = new CatalogItem(itemCode, name.Text.Trim(), unit.Text.Trim(), Ui.TaxRate(tax.Text) ?? "");
+        Created = new CatalogItem(itemCode, store.CreatedItemNameOverride ?? name.Text.Trim(), unit.Text.Trim(), Ui.TaxRate(tax.Text) ?? "");
         store.AddItem(Created);
         DialogResult = true;
     }

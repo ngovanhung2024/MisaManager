@@ -22,6 +22,16 @@ public sealed class ItemCatalogTests : IDisposable
     // ---- registered units ----
 
     [Fact]
+    public void MainUnitOnlyReadCannotProveConversionUnitAbsent()
+    {
+        var store = NewStore(new("HH_111", "Phân NPK Cà Mau Gold", "Tấn", UnitListIncomplete: true),
+            Item("HH_08", "Phân Ure", "kg", "Bao"));
+
+        Assert.Null(store.UnitAbsenceProof("HH_111", "kg"));
+        Assert.True(new ItemCatalogStore(CatalogPath).FindByCode("HH_111")!.UnitListIncomplete);
+    }
+
+    [Fact]
     public void CatalogProvesKgAbsentForAnItemRegisteredOnlyInTons()
     {
         var store = NewStore(Item("HH_111", "Phân NPK Cà Mau Gold", "Tấn"), Item("HH_08", "Phân Ure", "kg", "Bao"));
@@ -408,6 +418,20 @@ public sealed class ItemCatalogTests : IDisposable
     }
 
     // ---- merge with a MISA export ----
+
+    [Fact]
+    public void CompleteNativeRefreshRemovesStaleMappingsButPreservesUnresolvedCreations()
+    {
+        var store = NewStore(Item("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg"));
+        store.BeginPending(new("HH_341", "Fu-army 40EC 100ml (ĐN)", "Chai", DateTimeOffset.UtcNow));
+
+        store.RefreshNative([Item("HH_340", "Hàng khác", "kg"), Item("HH_350", "Sông Gianh HC-15 bột (25kg)", "kg")]);
+
+        var reopened = new ItemCatalogStore(CatalogPath);
+        Assert.Equal("HH_350", reopened.Find("Sông Gianh HC-15 bột (25kg)", "kg")!.Code);
+        Assert.Equal("HH_340", reopened.Find("Hàng khác", "kg")!.Code);
+        Assert.Equal("HH_341", Assert.Single(reopened.PendingSnapshot()).Code);
+    }
 
     [Fact]
     public void MergeLetsFileRowsOverrideSameCodeAndKeepsToolCreatedCodes()

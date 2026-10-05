@@ -1078,7 +1078,8 @@ public sealed partial class NativeInputService
         // Some R20 builds expose the modal without a stable form name or
         // AutomationId. Its catalog contract is stable: the result grid is
         // grdData and the search editor is the visible ComboBox with id 4.
-        var grid = Snapshots(element, Live(automation.ConditionFactory.ByAutomationId("grdData"), identity!.ProcessId))
+        if (!RequireProfile().Screens.TryGetValue("item_lookup", out var lookup)) return false;
+        var grid = Snapshots(element, Live(automation.ConditionFactory.ByAutomationId(lookup.Grid("items").AutomationId), identity!.ProcessId))
             .Any(child => child.HasArea);
         return grid;
     }

@@ -135,6 +135,7 @@ public sealed class VoucherWindow : Window, IGridSource
         grid = new FakeGrid(profile.GridId("sales_voucher", "items"), 230) { ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0) };
         grid.CellCommitted += OnCellCommitted;
         grid.QuickAddRequested += (_, row) => QuickAddItem(row);
+        grid.QuickSearchRequested += (_, _) => new ItemLookupWindow(profile, store) { Owner = main }.ShowDialog();
         root.Children.Add(grid);
         Content = root;
         BuildLayouts();
@@ -295,6 +296,13 @@ public sealed class VoucherWindow : Window, IGridSource
         if (e.Key == "code")
         {
             var item = store.FindItem(text);
+            if (text.Length == 0 && e.Row is { } cleared)
+            {
+                lines[cleared] = new LineModel();
+                grid.Refresh(force: true);
+                RefreshTotals();
+                return;
+            }
             if (item is null) return;
             if (e.Row is { } existing) Apply(lines[existing], item);
             else

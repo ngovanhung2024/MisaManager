@@ -16,6 +16,10 @@ public sealed record Scenario
     public decimal TaxOffset { get; init; }
     /// <summary>Item codes the new-item dialog refuses with "đã tồn tại" (created by another user meanwhile).</summary>
     public IReadOnlyList<string> TakenItemCodes { get; init; } = [];
+    /// <summary>Extra rows used to model a live MISA catalog differing from a local export.</summary>
+    public IReadOnlyList<CatalogItem> AdditionalItems { get; init; } = [];
+    public bool IncompleteItemLookup { get; init; }
+    public string? CreatedItemNameOverride { get; init; }
     /// <summary>Also opens the "MISA SME 2023" login window next to the session window.</summary>
     public bool ShowLoginWindow { get; init; }
     /// <summary>R20 builds whose "Hóa đơn" tab shows the buyer MST in a control the profile selector does not match.</summary>
@@ -33,7 +37,8 @@ public sealed record Scenario
         return scenario is null ? new Scenario() : scenario with
         {
             ExistingVouchers = scenario.ExistingVouchers ?? [],
-            TakenItemCodes = scenario.TakenItemCodes ?? []
+            TakenItemCodes = scenario.TakenItemCodes ?? [],
+            AdditionalItems = scenario.AdditionalItems ?? []
         };
     }
 }
