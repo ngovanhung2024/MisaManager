@@ -40,7 +40,11 @@ function Get-SourceFiles {
 $folders = @('installer', 'scripts', 'docs', 'licenses') + @($components | ForEach-Object { 'src\MisaManager.' + $_ })
     if (Test-Path -LiteralPath (Join-Path $root 'profiles')) { $folders += 'profiles' }
     $pending = [Collections.Generic.Stack[string]]::new()
-    foreach ($folder in $folders) { $pending.Push((Join-Path $root $folder)) }
+    # Optional folders (docs) may not exist in every revision.
+    foreach ($folder in $folders) {
+        $path = Join-Path $root $folder
+        if (Test-Path -LiteralPath $path -PathType Container) { $pending.Push($path) }
+    }
     while ($pending.Count -gt 0) {
         $directory = Get-Item -LiteralPath $pending.Pop()
         if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ('Source reparse point is not supported: ' + $directory.FullName) }
