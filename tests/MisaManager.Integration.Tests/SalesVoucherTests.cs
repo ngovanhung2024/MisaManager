@@ -254,4 +254,30 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(("CM GOLD 20.10.10", "Tấn", 0.25m, 3_600_000m), (line.Code, line.Unit, line.Quantity, line.Amount));
         Assert.StartsWith("ItemCatalog:CM GOLD 20.10.10:", result.Context.NativeValues!["unit_absence:" + invoice.Lines[0].LineId]);
     }, catalog: TonCatalog);
+
+    // Báo lỗi 1665/1667: the tool's catalog still maps the Excel name to a code that MISA no longer has
+    // (created in an earlier session, then gone from MISA). Typing it leaves the text in "Mã hàng" with no item.
+    [Fact]
+    public Task CatalogCodeMissingFromMisaIsDroppedAndTheItemIsCreatedOnRerun() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1667", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"),
+            Invoices.Line(1, "", "Fu-army 40EC 100ml (ĐN)", "Chai", 18, 19_047.62m, "5%"));
+
+        var first = await harness.RunAsync(invoice, misa, token);
+
+        Assert.Equal("failed", first.Outcome);
+        Assert.Equal("ITEM_CODE_NOT_IN_MISA", first.Context.Snapshot.LastErrorCode);
+        Assert.True(first.AutoRerunSafe, Describe(first));
+        Assert.Contains("HH_999", first.Error);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.DoesNotContain(harness.Catalog.Snapshot(), item => item.Code == "HH_999");
+
+        var rerun = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(rerun.Outcome == "saved", Describe(rerun));
+        var created = Assert.Single(misa.State().CreatedItems);
+        Assert.Equal("Fu-army 40EC 100ml (ĐN)", created.Name);
+        Assert.Equal(created.Code, Assert.Single(misa.State().Vouchers).Lines[1].Code);
+    }, catalog: [.. Catalog, new("HH_999", "Fu-army 40EC 100ml (ĐN)", "Chai")]);
 }
