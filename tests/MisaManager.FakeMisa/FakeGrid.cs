@@ -61,9 +61,11 @@ public sealed class FakeGrid : Border
     }
 
     public bool ShowInsertionRow { get; set; }
+    public int FooterCountOffset { get; init; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
     public event EventHandler<int?>? QuickAddRequested;
+    public event EventHandler<int?>? QuickSearchRequested;
 
     internal IEnumerable<UIElement> HeaderCells => headerPanel.Children.Cast<UIElement>();
     internal IEnumerable<GridRow> Rows => rows;
@@ -86,7 +88,7 @@ public sealed class FakeGrid : Border
         var expected = source.RowCount + (ShowInsertionRow ? 1 : 0);
         if (expected != rows.Count) { Rebuild(); return; }
         foreach (var row in rows) row.Load(source, force);
-        footer.Text = $"Số dòng = {source.RowCount}";
+        footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
     }
 
     private void Rebuild()
@@ -97,7 +99,7 @@ public sealed class FakeGrid : Border
         for (var index = 0; index < source.RowCount; index++) AddRow(index);
         if (ShowInsertionRow) AddRow(null);
         foreach (var row in rows) row.Load(source, force: true);
-        footer.Text = $"Số dòng = {source.RowCount}";
+        footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
     }
 
     private void AddRow(int? index)
@@ -123,6 +125,7 @@ public sealed class FakeGrid : Border
 
     internal void RaiseCommit(int? row, string key, string text, Key trigger) => CellCommitted?.Invoke(this, new(row, key, text, trigger));
     internal void RaiseQuickAdd(int? row) => QuickAddRequested?.Invoke(this, row);
+    internal void RaiseQuickSearch(int? row) => QuickSearchRequested?.Invoke(this, row);
 
     protected override AutomationPeer OnCreateAutomationPeer() => new GridPeer(this);
 
@@ -254,6 +257,12 @@ internal sealed class GridRow : StackPanel
     private void OnKey(string key, string text, KeyEventArgs e)
     {
         var pressed = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (pressed == Key.F3 && key == columns[0].Key)
+        {
+            e.Handled = true;
+            Dispatcher.BeginInvoke(() => grid.RaiseQuickSearch(Index));
+            return;
+        }
         if (pressed == Key.F9 && key == columns[0].Key)
         {
             e.Handled = true;

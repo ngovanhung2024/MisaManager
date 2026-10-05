@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-workflow-readiness-20260926",
+  "revision": "r20-item-catalog-readback-20261005",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -62,6 +62,19 @@
             "tax_rate": "% thuế GTGT",
             "tax_amount": "Tiền thuế GTGT"
           }
+        }
+      }
+    },
+    "item_lookup": {
+      "title": "Tìm nhanh vật tư, hàng hóa (F3)",
+      "scope": { "automationId": "frmQuickSearch" },
+      "elements": {
+        "search": { "automationId": "4", "controlType": "ComboBox" }
+      },
+      "grids": {
+        "items": {
+          "automationId": "grdData",
+          "columns": { "code": "Mã", "name": "Tên", "unit": "ĐVT chính" }
         }
       }
     },

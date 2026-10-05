@@ -43,12 +43,15 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
         new("HH_07", "Hesman 60WG 18g", "Gói", "8%"),
         new("HH_08", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "kg", "5%"),
         new("HH_09", "Phân NPK 20-5-5+TE Phú Mỹ(bao 25kg)", "kg", "5%"),
-        new("HH_10", "Thuốc trừ sâu Regent 800WG", "Gói", "10%")
+        new("HH_10", "Thuốc trừ sâu Regent 800WG", "Gói", "10%"),
+        .. scenario.AdditionalItems
     ];
 
     public IReadOnlyList<string> Units { get; } = ["Bao", "Cái", "Chai", "Cốc", "Gói", "kg", "Tấn", "Thùng"];
     public IReadOnlyList<string> Stocks { get; } = ["KHH", "KVT"];
     public IReadOnlyList<string> TaxRates { get; } = ["0%", "5%", "8%", "10%", "KCT", "KKKNT"];
+    public bool IncompleteItemLookup => scenario.IncompleteItemLookup;
+    public string? CreatedItemNameOverride => scenario.CreatedItemNameOverride;
 
     public List<SavedVoucher> Vouchers { get; } = [.. scenario.ExistingVouchers];
     private readonly List<CatalogItem> created = [];

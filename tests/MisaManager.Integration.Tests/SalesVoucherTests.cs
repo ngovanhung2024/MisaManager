@@ -86,6 +86,143 @@ public sealed class SalesVoucherTests : UiTest
         Assert.NotNull(harness.Catalog.Find("Phân bón lá Siêu Kali 1kg", "Gói"));
     }, catalog: Catalog);
 
+    [Theory]
+    [InlineData("1665", 4, "HH_340", "Sông Gianh HC-15 bột (25kg)", "kg")]
+    [InlineData("1667", 6, "HH_341", "Fu-army 40EC 100ml (ĐN)", "Chai")]
+    public Task StaleCatalogNameIsResolvedBeforeCreatingAnItem(string number, int failingRow, string staleCode,
+        string name, string unit) => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var source = Enumerable.Range(0, failingRow - 1)
+            .Select(index => Invoices.Line(index, "HH_" + (index + 1).ToString("00"),
+                new[] { "Chery 15g", "Phân NPK 16.16.8.13S QN", "Phân kali", "Phân ĐT Lót thúc 17.12.5", "Phân NPK 16.16.8.6S" }[index],
+                index == 0 ? "Gói" : "kg", 1, 10_000, "5%"))
+            .Append(Invoices.Line(failingRow - 1, "", name, unit, 2, 10_000, "5%"));
+        var invoice = Invoices.Build(TempDirectory(misa), number, Invoices.Consumer, source.ToArray());
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var created = Assert.Single(misa.State().CreatedItems);
+        Assert.Equal(name, created.Name);
+        Assert.NotEqual(staleCode, created.Code);
+        Assert.Equal(created.Code, Assert.Single(misa.State().Vouchers).Lines[failingRow - 1].Code);
+        Assert.Equal(created.Code, harness.Catalog.Find(name, unit)!.Code);
+    }, new FakeScenario(AdditionalItems: [new(staleCode, "Hàng khác trong MISA", unit, "5%")]),
+        catalog: [new(staleCode, name, unit)]);
+
+    [Fact]
+    public Task CachedCodeAbsentFromMisaIsCreatedOnceThenReused() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var first = Invoices.Build(TempDirectory(misa), "1673", Invoices.Consumer,
+            Invoices.Line(0, "", "Sông Gianh HC-15 bột (25kg)", "kg", 2, 10_000, "5%"));
+        var second = Invoices.Build(TempDirectory(misa), "1674", Invoices.Consumer,
+            Invoices.Line(0, "", "Sông Gianh HC-15 bột (25kg)", "kg", 3, 10_000, "5%"));
+
+        var one = await harness.RunAsync(first, misa, token);
+        var two = await harness.RunAsync(second, misa, token);
+
+        Assert.True(one.Outcome == "saved", Describe(one));
+        Assert.True(two.Outcome == "saved", Describe(two));
+        var created = Assert.Single(misa.State().CreatedItems);
+        Assert.Equal("Sông Gianh HC-15 bột (25kg)", created.Name);
+        Assert.All(misa.State().Vouchers, voucher => Assert.Equal(created.Code, Assert.Single(voucher.Lines).Code));
+        Assert.Equal(2, misa.State().Vouchers.Count);
+        Assert.Empty(harness.Catalog.PendingSnapshot());
+    }, catalog: [new("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg")]);
+
+    [Fact]
+    public Task NativeCatalogNameResolutionUsesTheSamePunctuationRulesOnEveryLine() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1675", Invoices.Consumer,
+            Invoices.Line(0, "", "Rồng đỏ 200SL Chai 100ml", "Chai", 2, 10_000, "5%"),
+            Invoices.Line(1, "", "Hesman 60WG-18g", "Gói", 3, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.Equal(["HH_06", "HH_07"], Assert.Single(misa.State().Vouchers).Lines.Select(line => line.Code));
+    }, catalog: Catalog);
+
+    [Fact]
+    public Task StaleCatalogReusesTheLiveCodeWithoutCreatingADuplicate() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1668", Invoices.Consumer,
+            Invoices.Line(0, "", "Sông Gianh HC-15 bột (25kg)", "kg", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.Equal("HH_350", Assert.Single(Assert.Single(misa.State().Vouchers).Lines).Code);
+    }, new FakeScenario(AdditionalItems: [new("HH_340", "Hàng khác", "kg", "5%"),
+        new("HH_350", "Sông Gianh HC-15 bột (25kg)", "kg", "5%")]),
+        catalog: [new("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg")]);
+
+    [Fact]
+    public Task ExplicitWrongCodeDoesNotCreateAReplacement() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1669", Invoices.Consumer,
+            Invoices.Line(0, "HH_340", "Sông Gianh HC-15 bột (25kg)", "kg", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.Equal("READBACK_MISMATCH", result.Context.Snapshot.LastErrorCode);
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.DoesNotContain("catalog query", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(AdditionalItems: [new("HH_340", "Hàng khác", "kg", "5%")]), catalog: Catalog);
+
+    [Fact]
+    public Task UnresolvedItemSaveDoesNotCreateAnotherItem() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Catalog.BeginPending(new("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg", DateTimeOffset.UtcNow));
+        var invoice = Invoices.Build(TempDirectory(misa), "1670", Invoices.Consumer,
+            Invoices.Line(0, "", "Sông Gianh HC-15 bột (25kg)", "kg", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.Equal("ITEM_CREATE_UNCERTAIN", result.Context.Snapshot.LastErrorCode);
+        Assert.Single(harness.Catalog.PendingSnapshot());
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.DoesNotContain("F9 new item", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(AdditionalItems: [new("HH_340", "Hàng khác", "kg", "5%")]), catalog: Catalog);
+
+    [Fact]
+    public Task IncompleteCatalogCannotAuthorizeItemCreation() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1671", Invoices.Consumer,
+            Invoices.Line(0, "", "Sông Gianh HC-15 bột (25kg)", "kg", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.NotEqual("saved", result.Outcome);
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Equal("HH_340", harness.Catalog.Find("Sông Gianh HC-15 bột (25kg)", "kg")!.Code);
+        Assert.DoesNotContain("F9 new item", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(IncompleteItemLookup: true), catalog: [new("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg")]);
+
+    [Fact]
+    public Task CreatedItemIsNotConfirmedUntilTheSavedRowMatches() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1672", Invoices.Consumer,
+            Invoices.Line(0, "", "Sông Gianh HC-15 bột (25kg)", "kg", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.Equal("READBACK_MISMATCH", result.Context.Snapshot.LastErrorCode);
+        Assert.Null(harness.Catalog.Find("Sông Gianh HC-15 bột (25kg)", "kg"));
+        Assert.Single(harness.Catalog.PendingSnapshot());
+        Assert.Single(misa.State().CreatedItems);
+        var retry = await harness.RunAsync(invoice, misa, token);
+        Assert.Equal("ITEM_CREATE_UNCERTAIN", retry.Context.Snapshot.LastErrorCode);
+        Assert.Single(misa.State().CreatedItems);
+        Assert.Single(harness.Catalog.PendingSnapshot());
+        Assert.Empty(misa.State().Vouchers);
+    }, new FakeScenario(CreatedItemNameOverride: "Tên lưu khác trong MISA"), catalog: Catalog);
+
     [Fact]
     public Task ExistingInvoiceNumberIsAnsweredNoAndNothingIsSaved() => WithFakeAsync(async (misa, harness, token) =>
     {

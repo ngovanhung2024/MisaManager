@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace MisaManager.Core;
 
-public sealed record ItemCatalogEntry(string Code, string Name, string Unit, string ConversionUnit = "");
+public sealed record ItemCatalogEntry(string Code, string Name, string Unit, string ConversionUnit = "", bool UnitListIncomplete = false);
 
 /// <summary>An item whose MISA "Cất" was (or may have been) clicked but whose creation is not yet proven.</summary>
 public sealed record PendingItemCreation(string Code, string Name, string Unit, DateTimeOffset StartedAt, string? RunId = null);
@@ -118,7 +118,7 @@ public sealed partial class ItemCatalogStore
         bool knowsConversions;
         lock (gate) knowsConversions = items.Any(item => item.ConversionUnit.Trim().Length > 0);
         var entry = FindByCode(code);
-        if (!knowsConversions || entry is null || entry.Unit.Trim().Length == 0) return null;
+        if (!knowsConversions || entry is null || entry.UnitListIncomplete || entry.Unit.Trim().Length == 0) return null;
         var units = RegisteredUnits(entry);
         if (units.Any(value => NameKey(value) == unitKey)) return null;
         return $"ItemCatalog:{entry.Code}:" + JsonSerializer.Serialize(units);
@@ -215,6 +215,13 @@ public sealed partial class ItemCatalogStore
                 throw new AutomationException("ITEM_CODE_EXISTS", $"Mã hàng '{entry.Code}' đã có trong database.");
             Transact(() => Replace([.. items, entry]));
         }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Replaces cached rows only after a complete live MISA catalog read; unresolved saves stay pending.</summary>
+    public void RefreshNative(IEnumerable<ItemCatalogEntry> verified)
+    {
+        lock (gate) Transact(() => Replace(verified));
         Changed?.Invoke(this, EventArgs.Empty);
     }
 

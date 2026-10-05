@@ -23,7 +23,8 @@ public sealed record FakeState(IReadOnlyList<FakeVoucher> Vouchers, IReadOnlyLis
 /// <summary>Scenario switches understood by MISA.SME.exe (see tests/MisaManager.FakeMisa/Scenario.cs).</summary>
 public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<FakeVoucher>? ExistingVouchers = null,
     bool TaxRoundingPrompt = false, decimal TaxOffset = 0, IReadOnlyList<string>? TakenItemCodes = null, bool ShowLoginWindow = false,
-    bool CustomerTaxUnlisted = false);
+    bool CustomerTaxUnlisted = false, IReadOnlyList<FakeItem>? AdditionalItems = null,
+    bool IncompleteItemLookup = false, string? CreatedItemNameOverride = null);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

@@ -12,7 +12,7 @@ public sealed class ProfileTests
     {
         var profile = Load();
         Assert.Equal("MISA SME 2023 R20 Enterprise", profile.VersionTitle);
-        foreach (var key in new[] { WorkflowProfile.SalesList, WorkflowProfile.SalesVoucher, WorkflowProfile.ItemNew, WorkflowProfile.TaxRoundingPrompt })
+        foreach (var key in new[] { WorkflowProfile.SalesList, WorkflowProfile.SalesVoucher, WorkflowProfile.ItemNew, WorkflowProfile.TaxRoundingPrompt, "item_lookup" })
             Assert.True(profile.Screens.ContainsKey(key), key);
         Assert.Equal("KHH", profile.DefaultItemStock);
     }
