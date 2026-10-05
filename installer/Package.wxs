@@ -17,14 +17,14 @@
          Non-advertised shortcuts in a per-user package need an HKCU keypath (ICE38/ICE43). -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut" Guid="B9CAA8C7-2A96-5580-9A1C-F4D2C924F4CE">
-        <Shortcut Id="StartMenuShortcut" Name="MISA Excel Manager" Description="Nhập hóa đơn Excel vào MISA"
+        <Shortcut Id="StartMenuShortcut" Name="MISA Excel Manager" Description="Import Excel invoices into MISA"
                   Target="[APPFOLDER]MisaManager.App.exe" WorkingDirectory="APPFOLDER" />
         <RegistryValue Root="HKCU" Key="Software\MisaManager\Shortcuts" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>
     <StandardDirectory Id="DesktopFolder">
       <Component Id="DesktopShortcut" Guid="54E12BFE-C4CF-5B32-81F1-26F0D346DBDB">
-        <Shortcut Id="DesktopShortcut" Name="MISA Excel Manager" Description="Nhập hóa đơn Excel vào MISA"
+        <Shortcut Id="DesktopShortcut" Name="MISA Excel Manager" Description="Import Excel invoices into MISA"
                   Target="[APPFOLDER]MisaManager.App.exe" WorkingDirectory="APPFOLDER" />
         <RegistryValue Root="HKCU" Key="Software\MisaManager\Shortcuts" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
       </Component>
