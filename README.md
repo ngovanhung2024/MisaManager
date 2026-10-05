@@ -35,9 +35,25 @@ CustomerVerified → DatesVerified → InvoiceVerified → ItemsVerified → Tot
 Mỗi bước gửi input rồi đọc lại từ MISA; input không xác nhận được sẽ chuyển sang `InputUncertain`/`SaveUncertain` và
 không bao giờ được gửi lại tự động.
 
+## Cài đặt & cập nhật (không cần script)
+
+1. Mở GitHub → **Releases** của repo, tải `MisaManager-<version>.msi` bản mới nhất và nhấp đúp để cài (cài cho tài khoản
+   Windows hiện tại, không cần quyền admin). Windows có thể cảnh báo vì file chưa ký số: **More info → Run anyway**.
+2. Mở app từ **Start menu** hoặc biểu tượng **MISA Excel Manager** trên Desktop.
+3. Repo đang private: lần đầu vào **••• → Cài đặt cập nhật…** và dán GitHub token (xem mục Phát hành). Từ đó mỗi lần mở
+   app sẽ tự hỏi khi có bản mới → bấm cài → app tự đóng, cài và mở lại.
+
+Mỗi lần merge PR vào `master`, GitHub Actions tự tạo bản phát hành mới (không cần tag hay chạy script). Muốn thử một PR
+trước khi merge: mở tab **Checks** của PR → workflow **Release** → tải artifact `MisaManager-<version>-pr<số>` (file zip
+chứa MSI). Bản thử của PR luôn có version thấp hơn bản phát hành sau khi merge, nên app vẫn tự cập nhật lên bản chính
+thức. Dữ liệu (lịch sử chống nhập trùng, danh mục mã hàng/khách hàng, cài đặt) nằm ở `%LOCALAPPDATA%\MisaManager` và
+được giữ nguyên qua mọi lần cập nhật.
+
+Thư mục `scripts/` chỉ dùng cho CI và lập trình viên; người dùng không cần chạy script nào.
+
 ## Build & chạy
 
-Yêu cầu: Windows 10/11 x64, .NET SDK theo `global.json` (10.0.401).
+Dành cho lập trình viên. Yêu cầu: Windows 10/11 x64, .NET SDK theo `global.json` (10.0.401).
 
 ```powershell
 dotnet build MisaManager.sln -c Release
@@ -65,9 +81,12 @@ CI (`.github/workflows/ci.yml`) chạy build + unit test + integration test trê
 
 ## Phát hành & tự cập nhật
 
-1. Tăng version bằng tag: `git tag v0.3.0 && git push origin v0.3.0` (dạng `major.minor.build`, phải lớn hơn bản đang cài).
-2. `release.yml` chạy test, `scripts/release.ps1 -Stage -Installer`, ký số (nếu có secret), rồi tạo GitHub Release gồm
-   `MisaManager-<version>.msi`, `SHA256SUMS.txt`, `release-manifest.json`.
+1. Mỗi push/merge vào `master` (trừ thay đổi chỉ ở `*.md`), `release.yml` tự phát hành bản
+   `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `<Version>` trong `Directory.Build.props` (đổi ở đó để
+   lên 0.3, 1.0…). Vẫn có thể phát hành version cụ thể bằng tag `v1.2.3` hoặc chạy tay workflow với ô version.
+2. `release.yml` chạy unit test, `scripts/release.ps1 -Stage -Installer` (build self-contained, health-check, MSI có
+   shortcut Start menu/Desktop), ký số (nếu có secret), rồi tạo GitHub Release gồm `MisaManager-<version>.msi`,
+   `SHA256SUMS.txt`, `release-manifest.json`. Với PR, workflow chỉ build MSI và đính kèm làm artifact.
 3. App tự kiểm tra khi mở (tắt được) hoặc qua **••• → Kiểm tra cập nhật…**: tải MSI, kiểm tra SHA-256, đóng app, chạy
    `msiexec /passive` (per-user, không cần quyền admin) rồi mở lại app. App từ chối cập nhật khi đang có hóa đơn dở.
 

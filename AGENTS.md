@@ -6,7 +6,9 @@
 - Build: `dotnet build MisaManager.sln -c Release` (Linux: thêm `-p:EnableWindowsTargeting=true`, chỉ biên dịch).
 - Unit test: `dotnet test tests/MisaManager.Core.Tests` (chạy được trên Linux với `-p:EnableWindowsTargeting=true`).
 - Integration test (Windows có desktop): `$env:MISAMANAGER_UI_TESTS="1"; dotnet test tests/MisaManager.Integration.Tests`.
-- Release local: `.\scripts\release.ps1 -Stage -Installer -Version x.y.z`.
+- Phát hành: tự động khi merge vào `master` (`.github/workflows/release.yml`); PR có artifact MSI để thử. Người dùng cài
+  MSI một lần rồi app tự cập nhật – không hướng dẫn người dùng chạy script. Script chỉ cho CI/lập trình viên
+  (`.\scripts\release.ps1 -Stage -Installer -Version x.y.z`).
 
 ## Quy tắc
 - `TreatWarningsAsErrors=true`, nullable bật, version package tập trung trong `Directory.Packages.props`, có lock file.

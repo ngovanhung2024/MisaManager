@@ -1,9 +1,11 @@
 # MisaManager installer and rollback runbook
 
 WiX 4.0.6 consumes the captured self-contained win-x64 payload. The per-user MSI
-installs the app below `%LOCALAPPDATA%\Programs\MisaManager`. GitHub Actions
-(`.github/workflows/release.yml`) builds and publishes it for every `v*.*.*` tag; the
-in-app updater installs those releases. The steps below are the manual path.
+installs the app below `%LOCALAPPDATA%\Programs\MisaManager` and adds Start menu and
+desktop shortcuts. GitHub Actions (`.github/workflows/release.yml`) publishes it on every
+merge to `master` (and for `v*.*.*` tags) and attaches it to pull requests as an
+artifact; the in-app updater installs those releases. The steps below are the manual,
+developer-only path.
 State under `%LOCALAPPDATA%\MisaManager` is not removed by uninstall.
 
 ## Stage
