@@ -106,7 +106,7 @@ public partial class MainWindow : Window
         ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
         ((App)Application.Current).Services.PartyCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshPartyLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
-        workflow.CheckedChanged += (_, _) => RefreshChecked();
+        workflow.CheckedChanged += (_, _) => { RefreshChecked(); SaveTicks(); };
         uiTimer.Tick += UiTimer_Tick;
         uiTimer.Start();
         PreviewKeyDown += Window_PreviewKeyDown;
@@ -127,6 +127,7 @@ public partial class MainWindow : Window
             RefreshCatalogLabel();
             RefreshPartyLabel();
             await workflow.RestoreAsync();
+            await RestoreImportSessionAsync();
             _ = UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: false, status => StatusLabel.Text = status);
         }
         catch (Exception error) { StatusLabel.Text = "Không khôi phục được phiên trước: " + error.Message; }
@@ -352,7 +353,6 @@ public partial class MainWindow : Window
     {
         var state = workflow.State;
         if (state == shownState) return;
-        var wasHint = shownState?.Hint.Length > 0;
         shownState = state;
         var (fg, bg) = StatePalette.Of(state.Kind);
         RunBadge.Background = bg;
@@ -360,16 +360,8 @@ public partial class MainWindow : Window
         RunBadgeText.Foreground = fg;
         RunBadgeText.Text = state.Label;
         RunBadge.ToolTip = string.Join(Environment.NewLine, new[] { state.Label, state.Detail, state.Hint }.Where(text => text.Length > 0));
+        // Errors are shown by the error popup and kept in Hồ sơ; the footer badge tooltip carries the hint.
         Motion.Pulse(RunDot, state.IsBusy);
-        // A lost connection is already shown by the footer badge (details in its tooltip).
-        if (state.Hint.Length == 0 || state.Kind == ToolStateKind.Disconnected) { HintPanel.Visibility = Visibility.Collapsed; return; }
-        HintPanel.Background = bg;
-        HintPanel.BorderBrush = fg;
-        HintTitle.Foreground = fg;
-        HintTitle.Text = state.Detail.Length == 0 ? state.Label : $"{state.Label} · {state.Detail}";
-        HintText.Text = state.Hint;
-        HintPanel.Visibility = Visibility.Visible;
-        if (!wasHint) Motion.FadeIn(HintPanel, fromY: -4);
     }
 
     private void InvoiceList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -481,23 +473,8 @@ public partial class MainWindow : Window
                 .ToImmutableDictionary(row => row.Key, row => row.SelectedColumn!.Value, StringComparer.Ordinal) : null;
             var imported = await importModel.ImportAsync(sheet, columnMap, work.Token);
             if (!IsCurrent(work)) return;
-            // MISA numbers vouchers in entry order, so enter oldest first: issued date, then invoice number.
-            var ordered = imported.Invoices
-                .OrderBy(invoice => invoice.Issued ?? DateOnly.MaxValue)
-                .ThenBy(invoice => long.TryParse(invoice.Identity.Number, out var number) ? number : long.MaxValue)
-                .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
-                .ToArray();
-            invoices.Clear();
-            foreach (var invoice in ordered) invoices.Add(new(invoice, workflow));
-            workflow.InvoiceQueue = ordered;
-            workflow.KeepCheckedIn(ordered.Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal));
-            RefreshChecked();
-            if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
-            FitInvoiceList();
-            RefreshCatalogLabel();
-            RefreshPartyLabel();
-            RefreshRunSummary();
-            ShowWorkbookIssues();
+            ShowImported(imported, null);
+            SaveImportSession(source.FilePath, sheet, imported);
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
             {
                 MappingExpander.IsExpanded = true;
@@ -509,6 +486,57 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) when (work.IsCancellationRequested) { }
         catch (Exception error) { if (IsCurrent(work)) ShowImportError(error); }
         finally { EndImport(work); }
+    }
+
+    private void ShowImported(ImportResult imported, IReadOnlyList<string>? ticked)
+    {
+        // MISA numbers vouchers in entry order, so enter oldest first: issued date, then invoice number.
+        var ordered = imported.Invoices
+            .OrderBy(invoice => invoice.Issued ?? DateOnly.MaxValue)
+            .ThenBy(invoice => long.TryParse(invoice.Identity.Number, out var number) ? number : long.MaxValue)
+            .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
+            .ToArray();
+        invoices.Clear();
+        foreach (var invoice in ordered) invoices.Add(new(invoice, workflow));
+        workflow.InvoiceQueue = ordered;
+        if (ticked is not null) workflow.SetCheckedMany(ticked);
+        else workflow.KeepCheckedIn(ordered.Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal));
+        RefreshChecked();
+        if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
+        FitInvoiceList();
+        RefreshCatalogLabel();
+        RefreshPartyLabel();
+        RefreshRunSummary();
+        ShowWorkbookIssues();
+    }
+
+    private ImportSessionStore ImportSessions => ((App)Application.Current).Services.ImportSessions;
+
+    private async void SaveImportSession(string filePath, string sheet, ImportResult imported)
+    {
+        try { await ImportSessions.SaveAsync(filePath, sheet, imported, workflow.InvoiceQueue.Select(invoice => invoice.Fingerprint).Where(workflow.IsChecked)); }
+        catch (Exception error) { StatusLabel.Text = "Không lưu được danh sách hóa đơn để mở lại lần sau: " + error.Message; }
+    }
+
+    // Ticks change as invoices are saved during a run; keep them for the next start.
+    private async void SaveTicks()
+    {
+        if (invoices.Count == 0) return;
+        try { await ImportSessions.SaveCheckedAsync(workflow.InvoiceQueue.Select(invoice => invoice.Fingerprint).Where(workflow.IsChecked)); }
+        catch (Exception error) { System.Diagnostics.Trace.TraceWarning("Saving ticks failed: {0}", error.Message); }
+    }
+
+    /// <summary>Shows the invoices of the last import again after a restart or update, without re-opening the workbook.</summary>
+    private async Task RestoreImportSessionAsync()
+    {
+        if (invoices.Count > 0 || importModel.IsBusy) return;
+        var saved = await ImportSessions.LoadAsync();
+        if (saved is not { Result.Invoices.Count: > 0 } || invoices.Count > 0 || importModel.IsBusy) return;
+        importModel.Restore(saved.Result);
+        WorkbookLabel.Text = Path.GetFileName(saved.FilePath);
+        WorkbookLabel.ToolTip = $"{saved.FilePath} · trang tính {saved.Sheet} (khôi phục từ lần nhập trước)";
+        ShowImported(saved.Result, saved.Checked);
+        StatusLabel.Text = $"Đã khôi phục {saved.Result.Invoices.Count:N0} hóa đơn từ {Path.GetFileName(saved.FilePath)} (lần nhập trước); không cần mở lại Excel.";
     }
 
     private CancellationTokenSource BeginImport()
@@ -620,28 +648,22 @@ public partial class MainWindow : Window
         _ => key
     };
 
+    // Works without any Excel loaded: the voucher open in MISA is always read; the Excel side is the invoice with its number.
     private async void Reconcile_Click(object sender, RoutedEventArgs e)
     {
         if (workflow.IsRunning) return;
-        if (workflow.SelectedInvoice is null && workflow.CurrentContext is { } current)
+        if (workflow.SelectedInvoice is null && workflow.CurrentContext is { } current && !WorkflowRunner.IsTerminal(current.Snapshot.Status))
             workflow.SelectedInvoice = current.Invoice;
-        if (workflow.SelectedInvoice is not null)
+        try
         {
-            try
-            {
-                editorOpen = null;
-                var response = await workflow.ReconcileAsync();
-                StatusLabel.Text = response.Message;
-                RefreshWorkflowPanel();
-                UpdateComparisonPopup();
-            }
-            catch (Exception error) { StatusLabel.Text = error.Message; }
-            return;
+            editorOpen = null;
+            popupDismissedIdentity = null;
+            var response = await workflow.ReconcileAsync();
+            StatusLabel.Text = response.Message;
+            RefreshWorkflowPanel();
+            UpdateComparisonPopup();
         }
-        StatusLabel.Text = result?.IsBlocked == true
-            ? "Đối chiếu nguồn: workbook còn lỗi chặn."
-            : "Đối chiếu nguồn hoàn tất; chọn một hóa đơn để xem chi tiết.";
-        ShowWorkbookIssues();
+        catch (Exception error) { StatusLabel.Text = error.Message; }
     }
 
     private async void ComparisonWindow_ReconcileRequested(object? sender, EventArgs e)
@@ -718,13 +740,12 @@ public partial class MainWindow : Window
         Motion.FadeIn(ErrorPopup, fromY: -6);
     }
 
-    private async void StopNow_Click(object sender, RoutedEventArgs e)
+    private void StopNow_Click(object sender, RoutedEventArgs e)
     {
         if (!workflow.IsRunning) { StatusLabel.Text = "Không có bước nào đang chạy."; return; }
-        if (MessageBox.Show(this, "Dừng ngay sẽ hủy bước đang chạy và có thể để chứng từ dở dang trong MISA. Sau đó có thể bấm Tiếp tục để chạy lại bước hiện tại. Vẫn dừng ngay?",
-            "Dừng ngay", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-        await workflow.StopNowAsync();
-        StatusLabel.Text = workflow.Status;
+        workflow.RequestStop();
+        RefreshWorkflowPanel();
+        RefreshStateBadge();
     }
 
     private void CloseErrorPopup_Click(object sender, RoutedEventArgs e)
@@ -735,28 +756,6 @@ public partial class MainWindow : Window
         if (lastWorkflowError is null) return;
         var text = workflow.ExportLastError(lastWorkflowError.Message, lastWorkflowError.Details, lastWorkflowError.OccurredAt);
         StatusLabel.Text = TryCopy(text, "loi") ?? "Đã copy lỗi; dán vào AI để được hỗ trợ sửa.";
-    }
-
-    private async void ExportReport_Click(object sender, RoutedEventArgs e)
-    {
-        var services = ((App)Application.Current).Services;
-        StatusLabel.Text = "Đang tạo báo cáo lỗi (chụp màn hình, đọc giao diện MISA)…";
-        try
-        {
-            var path = await services.ExportFailureReportAsync(lastWorkflowError?.Message, lastWorkflowError?.Details, workflow.ExportPerformance());
-            StatusLabel.Text = "Đã tạo báo cáo lỗi: " + path;
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true });
-        }
-        catch (Exception error) { StatusLabel.Text = "Không tạo được báo cáo lỗi: " + error.Message; }
-    }
-
-    private async void CheckScreens_Click(object sender, RoutedEventArgs e)
-    {
-        StatusLabel.Text = "Đang kiểm tra ID giao diện MISA…";
-        var report = await workflow.CheckScreensAsync();
-        StatusLabel.Text = report.Summary;
-        MessageBox.Show(this, report.Details, "Kiểm tra giao diện MISA", MessageBoxButton.OK,
-            report.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
@@ -806,7 +805,7 @@ public partial class MainWindow : Window
             && (workflow.IsRunning || editorOpen == true || (editorOpen is null && comparisonWindow is not null));
         // A standalone "Đối chiếu hóa đơn" result stays up until closed or another invoice is selected.
         var check = !workflow.IsRunning && IsVisible && workflow.OpenVoucherCheck is { } latest
-            && latest.Invoice.Fingerprint == workflow.SelectedInvoice?.Fingerprint ? latest : null;
+            && latest.Selection == workflow.SelectedInvoice?.Fingerprint ? latest : null;
         if (check is null && (!wanted || current is null))
         {
             CloseComparisonWindow();
@@ -882,20 +881,35 @@ public partial class MainWindow : Window
 
     private ComparisonModel BuildOpenVoucherModel(OpenVoucherCheck check)
     {
-        var invoice = check.Invoice;
-        var result = check.Comparison?.Result;
-        var rows = BuildComparisonRows(invoice, result);
-        var mismatched = rows.Count(row => row.Kind == "mismatch");
-        var voucher = check.Comparison is { VoucherNumber.Length: > 0 } read ? "chứng từ " + read.VoucherNumber : "chứng từ đang mở";
+        var vi = System.Globalization.CultureInfo.GetCultureInfo("vi-VN");
+        var read = check.Comparison;
+        var result = read?.Result;
+        var voucher = read is { VoucherNumber.Length: > 0 } ? "chứng từ " + read.VoucherNumber : "chứng từ đang mở";
+        var observed = result is null ? "" : $"{char.ToUpperInvariant(voucher[0])}{voucher[1..]} · đọc lúc {result.ObservedAt.ToLocalTime():HH:mm:ss}";
+        if (check.Invoice is not { } invoice)
+        {
+            var number = read?.InvoiceNumber is { Length: > 0 } shown ? shown : "?";
+            var title = read is null ? "Đối chiếu hóa đơn" : $"Hóa đơn {number} (chỉ có trong MISA)";
+            var misaSubtitle = read is null ? "" : string.Join(" · ", new[] { read.CustomerName, read.IssuedDate, read.GrandTotal }.Where(text => text.Length > 0));
+            var rows = result is null ? [] : BuildComparisonRows(null, result);
+            return read is null
+                ? new(title, misaSubtitle, ToolStateKind.NeedsAction, "Chưa đọc được MISA",
+                    check.Error + (ErrorHints.For(ErrorHints.FindCode(check.Error)) is { } hint ? " " + hint : ""), observed, rows, !workflow.IsRunning)
+                : new(title, misaSubtitle, ToolStateKind.Ready, "Chỉ đọc MISA",
+                    invoices.Count == 0 ? "Chưa nạp Excel hóa đơn: cột Excel để trống, cột MISA là toàn bộ dữ liệu đọc được."
+                        : $"Excel đang nạp không có hóa đơn {number}: cột Excel để trống, cột MISA là toàn bộ dữ liệu đọc được.",
+                    observed, rows, !workflow.IsRunning);
+        }
+        var compared = BuildComparisonRows(invoice, result);
+        var mismatched = compared.Count(row => row.Kind == "mismatch");
         var (kind, label) = result is null ? (ToolStateKind.NeedsAction, "Chưa đọc được MISA")
             : mismatched == 0 ? (ToolStateKind.Saved, "Khớp với MISA") : (ToolStateKind.Error, $"Có {mismatched} trường lệch");
         var summary = result is null
-            ? check.Error + (ErrorHints.For(ErrorHints.FindCode(check.Error)) is { } hint ? " " + hint : "")
+            ? check.Error + (ErrorHints.For(ErrorHints.FindCode(check.Error)) is { } errorHint ? " " + errorHint : "")
             : mismatched == 0 ? $"Toàn bộ thông tin của {voucher} trong MISA khớp với hóa đơn Excel."
             : $"{mismatched} trường lệch giữa Excel và {voucher}. Dòng đỏ là chỗ cần kiểm tra.";
-        var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("vi-VN")) ?? "?"} {invoice.Currency}";
-        var observed = result is null ? "" : $"{char.ToUpperInvariant(voucher[0])}{voucher[1..]} · đọc lúc {result.ObservedAt.ToLocalTime():HH:mm:ss}";
-        return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, rows, !workflow.IsRunning);
+        var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", vi) ?? "?"} {invoice.Currency}";
+        return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, compared, !workflow.IsRunning);
     }
 
     private void CloseComparisonWindow()
@@ -920,8 +934,6 @@ public partial class MainWindow : Window
         }
         catch (Exception error) { StatusLabel.Text = "Không xóa được lịch sử hồ sơ: " + error.Message; }
     }
-
-    private void SourceSettings_Click(object sender, RoutedEventArgs e) => OpenSourceSettings();
 
     // Deferred so the closing context menu does not immediately dismiss the StaysOpen=False popup.
     private void OpenSourceSettings()

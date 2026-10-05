@@ -132,9 +132,9 @@
       <Button x:Name="ReconcileButton" Grid.Column="1" Style="{StaticResource MiniButton}" Content="Đối chiếu hóa đơn" Margin="4,0,0,0" Click="Reconcile_Click"
               ToolTip="Đối chiếu hóa đơn hiện tại với chứng từ đang mở trong MISA"/>
       <Button x:Name="StopButton" Grid.Column="2" Style="{StaticResource WarnButton}" Content="Dừng ngay" Margin="4,0,0,0" Click="StopNow_Click" IsEnabled="False"
-              ToolTip="Hủy bước đang chạy ngay lập tức; sau đó có thể Tiếp tục bước hiện tại."/>
+              ToolTip="Làm xong thao tác hiện tại (hóa đơn đang nhập được Cất/Bỏ như bình thường) rồi dừng; sau đó bấm Tiếp tục để chạy tiếp."/>
       <Button x:Name="ResumeButton" Grid.Column="2" Style="{StaticResource SuccessButton}" Content="Tiếp tục" Margin="4,0,0,0" Command="{Binding ResumeCommand}" Visibility="Collapsed"
-              ToolTip="Tiếp tục bước hiện tại từ checkpoint đã dừng"/>
+              ToolTip="Chạy tiếp các hóa đơn đã tick còn lại"/>
       <Button x:Name="MoreButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
           <MenuItem Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
@@ -142,15 +142,12 @@
           <MenuItem Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA"/>
           <Separator/>
-          <MenuItem Header="Trang tính &amp; cột dữ liệu…" Click="SourceSettings_Click"/>
           <MenuItem Header="Thêm mã khách hàng…" Click="ChooseCustomers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách khách hàng xuất từ MISA (Mã, Tên, MST) để tìm mã khách hàng theo tên người mua"/>
           <MenuItem Header="Thêm mã nhà cung cấp…" Click="ChooseSuppliers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách nhà cung cấp xuất từ MISA; dùng khi người mua chỉ có trong danh mục nhà cung cấp"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
           <Separator/>
-          <MenuItem Header="Kiểm tra giao diện MISA" Click="CheckScreens_Click" ToolTip="Đối chiếu ID control trong profile với các màn hình MISA đang mở"/>
-          <MenuItem Header="Xuất báo cáo lỗi…" Click="ExportReport_Click"/>
           <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
           <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>
         </ContextMenu></Button.ContextMenu>
@@ -180,14 +177,6 @@
         </Border>
       </Popup>
     </Grid>
-
-    <!-- Remediation hint: only when something needs the user's attention -->
-    <Border x:Name="HintPanel" Grid.Row="3" Visibility="Collapsed" CornerRadius="6" BorderThickness="1" Padding="6,2" Margin="0,3,0,0">
-      <StackPanel>
-        <TextBlock x:Name="HintTitle" FontWeight="SemiBold" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
-        <TextBlock x:Name="HintText" FontSize="11.5" TextWrapping="Wrap" MaxHeight="48" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-      </StackPanel>
-    </Border>
 
     <TabControl Grid.Row="4" x:Name="WorkspaceTabs" BorderThickness="0" Background="Transparent" Padding="0,2,0,0" Margin="0,1,0,0">
       <TabItem Header="Nhập liệu" IsSelected="True">
@@ -450,6 +439,19 @@
             <StackPanel Grid.Row="2" x:Name="ProfileDetail" Visibility="Collapsed" Margin="0,3,0,1">
               <TextBlock x:Name="ProfileOutcome" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"/>
               <TextBlock x:Name="ProfileEvidence" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,1,0,4"/>
+              <Border x:Name="ProfileErrorBox" Visibility="Collapsed" Background="#FEF2F2" BorderBrush="#FECACA" BorderThickness="1" CornerRadius="5" Padding="6,4" Margin="0,0,0,4">
+                <StackPanel>
+                  <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Copy lỗi" Click="ProfileCopyError_Click" Style="{StaticResource RailButton}" ToolTip="Copy chi tiết lỗi của lần xử lý này để dán cho AI"/>
+                    <TextBlock x:Name="ProfileErrorTitle" FontWeight="SemiBold" Foreground="#991B1B" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                  </DockPanel>
+                  <TextBlock x:Name="ProfileErrorMessage" TextWrapping="Wrap" Foreground="#450A0A" FontSize="12" Margin="0,3,0,0"/>
+                  <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="ProfileErrorDetails" TextWrapping="Wrap" Foreground="#450A0A" FontSize="11.5" Margin="0,2,0,0"/>
+                  </ScrollViewer>
+                  <TextBlock x:Name="ProfileErrorHint" TextWrapping="Wrap" Foreground="#78350F" FontSize="11.5" Margin="0,3,0,0"/>
+                </StackPanel>
+              </Border>
               <ComboBox x:Name="ProfileHistory" DisplayMemberPath="DisplaySummary" SelectionChanged="ProfileHistory_SelectionChanged" ToolTip="Lịch sử đối chiếu"/>
               <Grid x:Name="ProfileColumns" Margin="8,3,8,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="22"/></Grid.ColumnDefinitions>

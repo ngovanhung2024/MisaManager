@@ -95,6 +95,39 @@ public sealed partial class ItemCatalogStore
                 .Select(group => group.Key).FirstOrDefault();
     }
 
+    public ItemCatalogEntry? FindByCode(string? code)
+    {
+        var key = code?.Trim() ?? "";
+        if (key.Length == 0) return null;
+        lock (gate)
+        {
+            var matches = items.Where(item => string.Equals(item.Code.Trim(), key, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
+    }
+
+    /// <summary>
+    /// Evidence (from the MISA export) that <paramref name="unit"/> is not among the units registered for
+    /// <paramref name="code"/>, or null when the catalog cannot prove it. Only trusted when the export carried the
+    /// "Đơn vị chuyển đổi" column (some item lists a conversion unit), otherwise conversions would be invisible.
+    /// </summary>
+    public string? UnitAbsenceProof(string code, string unit)
+    {
+        var unitKey = NameKey(unit);
+        if (unitKey.Length == 0) return null;
+        bool knowsConversions;
+        lock (gate) knowsConversions = items.Any(item => item.ConversionUnit.Trim().Length > 0);
+        var entry = FindByCode(code);
+        if (!knowsConversions || entry is null || entry.Unit.Trim().Length == 0) return null;
+        var units = RegisteredUnits(entry);
+        if (units.Any(value => NameKey(value) == unitKey)) return null;
+        return $"ItemCatalog:{entry.Code}:" + JsonSerializer.Serialize(units);
+    }
+
+    private static string[] RegisteredUnits(ItemCatalogEntry entry)
+        => [entry.Unit.Trim(), .. entry.ConversionUnit.Split([',', ';', '|', '\n', '\r'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
     public PendingItemCreation? FindPending(string name, string unit)
     {
         var nameKey = NameKey(name);

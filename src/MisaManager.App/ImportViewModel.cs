@@ -79,6 +79,15 @@ public sealed class ImportViewModel(ImportSession session)
     public void SetLocale(string? locale) => Locale = locale;
     public void ClearResult() => Result = null;
 
+    /// <summary>Shows the invoices saved from the previous session; the workbook itself is not re-read.</summary>
+    public void Restore(ImportResult result)
+    {
+        Interlocked.Increment(ref generation);
+        Workbook = null;
+        Mapping = null;
+        Result = result;
+    }
+
     private void ClearSelection()
     {
         Mapping = null; Confirmation = null; Locale = null; Result = null;

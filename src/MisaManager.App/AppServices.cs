@@ -27,6 +27,9 @@ public sealed partial class AppServices : IAsyncDisposable
     public InvoiceDraftStore Drafts { get; }
     public WorkbookProfileStore Profiles { get; }
     public UpdateService Updates { get; }
+    // Outside generation folders so an update or restart keeps the imported invoice list.
+    public ImportSessionStore ImportSessions { get; } = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "import"));
     public string LogRoot { get; }
     private readonly SemaphoreSlim workflowGate = new(1, 1);
     private Task initialization;
@@ -194,11 +197,15 @@ public sealed partial class AppServices : IAsyncDisposable
         finally { workflowGate.Release(); }
     }
 
-    /// <summary>Read-only comparison of the voucher open in MISA with a source invoice; shares the single UIA input owner.</summary>
-    public async Task<OpenVoucherComparison> CompareOpenVoucherAsync(InvoiceDocument invoice, WindowIdentity window, CancellationToken token = default)
+    /// <summary>
+    /// Read-only comparison of the voucher open in MISA with the candidate invoice carrying its number; shares the single
+    /// UIA input owner.
+    /// </summary>
+    public async Task<OpenVoucherComparison> CompareOpenVoucherAsync(IReadOnlyList<InvoiceDocument> candidates, WindowIdentity window,
+        CancellationToken token = default)
     {
         await workflowGate.WaitAsync(token);
-        try { return await workflowGateway.CompareOpenVoucherAsync(invoice, window, token); }
+        try { return await workflowGateway.CompareOpenVoucherAsync(candidates, window, token); }
         finally { workflowGate.Release(); }
     }
 

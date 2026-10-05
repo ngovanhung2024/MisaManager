@@ -113,15 +113,14 @@ Repo đang **private** nên GitHub API cần token. Chọn một trong hai:
 Toàn bộ selector nằm trong `profiles/misa-sme2023-r20.json`, chia theo màn hình (`screens`): `scope` (vùng/cửa sổ),
 `tabs`, `elements` (`automationId` ưu tiên, `name`, `controlType`, `tab`, `required`) và `grids` (ID + tiêu đề cột).
 AutomationId của MISA (WinForms) chính là tên control, nên **không phụ thuộc DPI, độ phân giải hay theme** – chạy trên
-nhiều máy vẫn nhận đúng. Trước mỗi lượt nhập, app kiểm tra selector của các màn hình đang mở; có thể chạy tay qua
-**••• → Kiểm tra giao diện MISA**.
+nhiều máy vẫn nhận đúng. Trước mỗi lượt nhập, app tự kiểm tra selector của các màn hình đang mở (menu không còn mục
+kiểm tra tay); selector không khớp thì dừng và hiện popup lỗi kèm chi tiết.
 Element không nằm trong `scope` của màn hình (ví dụ thanh tab phân hệ `module_tab` của R20 nằm phía trên vùng Bán hàng)
 được tìm tiếp trong toàn cửa sổ MISA.
 
 Khi MISA đổi phiên bản:
-1. Mở MISA mới đến màn hình cần kiểm tra (Bán hàng, mở một chứng từ, mở từng tab), chạy **Kiểm tra giao diện MISA** hoặc
-   **Xuất báo cáo lỗi**. `screen-check.json` liệt kê selector `Missing`/`Ambiguous` và danh sách AutomationId đang hiển thị
-   (`visibleAutomationIds`) của màn hình đó.
+1. Mở MISA mới đến màn hình Bán hàng rồi bấm **Thêm vào MISA**: bước kiểm tra giao diện báo selector `Missing`/`Ambiguous`
+   trong popup lỗi; **Copy lỗi** lấy chi tiết (kèm danh sách AutomationId đang hiển thị của màn hình đó).
 2. Sửa ID/caption trong profile (không cần sửa C#). Nếu đổi hành vi (thứ tự bước, hộp thoại mới) thì tăng `revision`.
 3. Cập nhật app giả lập nếu giao diện thay đổi cấu trúc (control đọc tên từ profile nên đổi ID là tự khớp), chạy test, phát hành.
 4. `versionTitle` phải khớp đầu tiêu đề cửa sổ MISA (`MISA SME 2023 R20 Enterprise - …`).
@@ -141,10 +140,13 @@ selector của profile, tool lấy MST của đúng mã khách hàng đã chọn
 
 ## Đối chiếu hóa đơn
 
-Nút **Đối chiếu hóa đơn** so hóa đơn đang chọn với chứng từ bán hàng **đang mở trong MISA** (không cần tool vừa nhập):
-đọc tab Phiếu thu/Hóa đơn, toàn bộ dòng của tab Hàng tiền và Thuế, tổng tiền, rồi mở cửa sổ đối chiếu. Chỉ chuyển tab,
-không gõ/Cất/Bỏ gì. Dòng hàng ghép theo mã hàng (Excel hoặc danh mục mã hàng), rồi theo tên đã chuẩn hóa, rồi theo vị
-trí khi số dòng bằng nhau. Đang có phiên nhập dở của chính hóa đơn đó thì dùng đối chiếu theo checkpoint như trước.
+Nút **Đối chiếu hóa đơn** đọc chứng từ bán hàng **đang mở trong MISA** (không cần tool vừa nhập, không cần nạp Excel):
+tab Phiếu thu/Hóa đơn, toàn bộ dòng của tab Hàng tiền và Thuế, tổng tiền, rồi mở cửa sổ đối chiếu. Chỉ chuyển tab,
+không gõ/Cất/Bỏ gì. Hóa đơn Excel dùng để so là hóa đơn **có cùng số hóa đơn với MISA** (bỏ số 0 đầu; trùng số thì xét ký
+hiệu), không phải hóa đơn đang chọn trong danh sách; tool tự chọn hóa đơn đó trong danh sách. Excel không có hóa đơn đó
+(hoặc chưa nạp Excel) thì cửa sổ vẫn hiện mọi trường đọc từ MISA, cột Excel để trống. Dòng hàng ghép theo mã hàng (Excel
+hoặc danh mục mã hàng), rồi theo tên đã chuẩn hóa, rồi theo vị trí khi số dòng bằng nhau; dòng MISA không có trong Excel
+hiện là "Dòng MISA n". Đang có phiên nhập dở của chính hóa đơn đó thì dùng đối chiếu theo checkpoint như trước.
 Cửa sổ đối chiếu nằm ở mép đối diện của màn hình (tool bên phải → đối chiếu bên trái), cùng chiều ngang và chiều cao
 với tool, để không che chứng từ MISA (nút Đóng/Cất) ở giữa. Thu nhỏ tool thì cửa sổ đối chiếu ẩn theo.
 
@@ -155,12 +157,30 @@ chưa rõ/bị chặn/tạm dừng sẽ chặn lần chạy mới cho tới khi 
 (cùng phiên MISA), bấm **Thêm vào MISA** là tool tự đọc toàn bộ danh sách chứng từ bán hàng — có số chứng từ + số hóa đơn
 → ghi nhận đã Cất (không nhập lại), không có → ghi nhận chưa Cất. Bước này chỉ đọc, không gõ/bấm gì trong MISA.
 
+**Dừng ngay** không hủy giữa chừng: tool làm xong thao tác hiện tại (hóa đơn đang nhập vẫn được đối chiếu rồi Cất/Bỏ như
+bình thường, nên không để chứng từ dở và không báo lỗi), dừng trước hóa đơn kế tiếp và đồng hồ hiệu năng dừng theo. Nút
+chuyển thành **Tiếp tục** để chạy các hóa đơn đã tick còn lại; thời gian hiệu năng cộng dồn các đoạn đã chạy.
+Sau mỗi hóa đơn và khi kết thúc, nếu cửa sổ MISA bị thu nhỏ thì tool mở lại (giữ kích thước phóng to); tool luôn nằm trên
+cùng ở mép phải nên MISA không che tool.
+
+Danh sách hóa đơn đã nhập từ Excel (kèm lỗi nguồn và các ô đã tick) được lưu ở `%LOCALAPPDATA%\MisaManager\import` sau mỗi
+lần nhập và mỗi lần tick thay đổi (kể cả khi tool tự bỏ tick hóa đơn đã Cất). Tắt/mở lại hoặc cập nhật app thì danh sách
+hiện lại ngay, không cần mở lại Excel. File Excel gốc vẫn phải còn nguyên: trước khi nhập tool kiểm tra SHA-256, file đã
+sửa thì phải mở lại Excel.
+
+Dòng Excel ĐVT kg mà mã hàng trong MISA chỉ có ĐVT Tấn: nếu danh mục mã hàng (xuất có cột "Đơn vị chuyển đổi") cho thấy mã
+đó không có kg, tool đổi thẳng sang Tấn (số lượng / 1000) mà không mở danh sách ĐVT để dò (tiết kiệm 2–3 giây/dòng); bằng
+chứng `ItemCatalog:<mã>:[các ĐVT]` được lưu vào checkpoint. Danh mục không đủ thông tin thì vẫn mở danh sách ĐVT như cũ.
+
 ## Báo cáo lỗi
 
 Popup lỗi chỉ hiện lỗi, nguyên nhân (exception bên trong, trường lệch) và gợi ý xử lý. Nút **Copy lỗi** copy một prompt
 ngắn cho AI: mã lỗi, nguyên nhân, yêu cầu sửa, stack trace, các bước trước lỗi và dữ liệu kỹ thuật rút gọn (bỏ các trường
-đã khớp).
-Lập trình viên cần gói đầy đủ thì dùng **••• → Xuất báo cáo lỗi…**. App tạo
+đã khớp). Lỗi không còn hiện dưới nút **Thêm vào MISA**. Tab **Hồ sơ** lưu chi tiết lỗi của từng lần xử lý (thời điểm, mã
+lỗi, thông báo, nguyên nhân từ exception, gợi ý) kèm nút **Copy lỗi** để xem lại sau.
+Menu ••• không còn mục **Xuất báo cáo lỗi**, **Kiểm tra giao diện MISA** và **Trang tính & cột dữ liệu** (bảng chọn trang
+tính/cột vẫn tự mở khi file có nhiều trang tính hoặc thiếu cột). Mã tạo gói báo cáo bên dưới vẫn còn trong
+`FailureReports` nhưng không có lối vào từ giao diện. Gói đó tạo
 `%LOCALAPPDATA%\MisaManager\logs\reports\misa-report-*.zip` gồm: `README-AI.md` (hướng dẫn cho AI), `summary.json`
 (phiên bản, mã lỗi + exception, bước lỗi, checkpoint, dữ liệu hóa đơn mong đợi, giá trị đọc từ MISA, kết quả đối chiếu,
 timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**, trước khi tool Bỏ chứng từ), trạng thái

@@ -580,11 +580,15 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         if (!context.AllowKgToTon || conversion != "kg_to_ton:1000"
             || !Match(line.Unit, "Kg", NativeValueKind.Text)
             || !Match(context.NativeValues?.GetValueOrDefault("unit:" + line.LineId) ?? "", "T\u1ea5n", NativeValueKind.Text)
-            || !(context.NativeValues?.GetValueOrDefault("unit_absence:" + line.LineId) ?? "").StartsWith("UIA3.CompleteRegisteredUnitList:", StringComparison.Ordinal)
+            || !IsUnitAbsenceEvidence(context.NativeValues?.GetValueOrDefault("unit_absence:" + line.LineId))
             || string.IsNullOrWhiteSpace(context.NativeValues?.GetValueOrDefault("line:" + line.LineId)))
             throw new AutomationException("UNIT_CONVERSION_PROVENANCE_INVALID", "Converted line has no valid authorization and registered-unit absence evidence.");
         return ("T\u1ea5n", line.Quantity!.Value / 1000m, line.UnitPrice.GetValueOrDefault() * 1000m);
     }
+
+    private static bool IsUnitAbsenceEvidence(string? evidence)
+        => evidence is not null && (evidence.StartsWith("UIA3.CompleteRegisteredUnitList:", StringComparison.Ordinal)
+            || evidence.StartsWith("ItemCatalog:", StringComparison.Ordinal));
 
     private async Task EnterLines(WorkflowContext context, Func<WorkflowProgress, CancellationToken, Task> progress, CancellationToken token)
     {
@@ -648,27 +652,31 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 throw new AutomationException("ACCOUNT_READBACK_INVALID", $"Row {row + 1}: native account is invalid.");
             var converted = !string.IsNullOrWhiteSpace(context.NativeValues?.GetValueOrDefault("conversion:" + line.LineId));
             var expected = ExpectedLine(context, line);
-            if (!Match(expected.Unit, metadata.Values[profile.Columns["unit"]].Value, NativeValueKind.Text))
+            var nativeUnit = metadata.Values[profile.Columns["unit"]].Value;
+            if (!Match(expected.Unit, nativeUnit, NativeValueKind.Text))
             {
                 if (converted)
                     throw new AutomationException("ITEM_UNIT_MISMATCH", $"Row {row + 1}: native unit differs from the recorded conversion.");
-                var selected = await input.SelectCellOptionAsync(await input.CaptureAsync(token),
-                    CellTarget(row, code, "unit"), line.Unit, profile.Culture, token,
-                    allowMissing: context.AllowKgToTon && Match(line.Unit, "Kg", NativeValueKind.Text));
-                if (selected.Status == "option_absent")
+                var kgLine = context.AllowKgToTon && Match(line.Unit, "Kg", NativeValueKind.Text);
+                // The MISA export lists every registered unit of the item. When it proves Kg is absent, opening the
+                // unit list only to see that (2–3 s per line) is skipped and the line goes straight to the Tấn unit.
+                var catalogProof = kgLine && Match("T\u1ea5n", nativeUnit, NativeValueKind.Text)
+                    ? ItemCatalog?.UnitAbsenceProof(code, line.Unit) : null;
+                var selected = catalogProof is not null ? null : await input.SelectCellOptionAsync(await input.CaptureAsync(token),
+                    CellTarget(row, code, "unit"), line.Unit, profile.Culture, token, allowMissing: kgLine);
+                if (catalogProof is not null || selected!.Status == "option_absent")
                 {
-                    if (!context.AllowKgToTon || !Match(line.Unit, "Kg", NativeValueKind.Text)
-                        || !Match(selected.Value ?? "", "T\u1ea5n", NativeValueKind.Text))
+                    if (!kgLine || !Match(selected?.Value ?? nativeUnit ?? "", "T\u1ea5n", NativeValueKind.Text))
                         throw new AutomationException("ITEM_UNIT_MISMATCH", $"Row {row + 1}: no authorized conversion for the native unit.");
                     expected = ("T\u1ea5n", line.Quantity!.Value / 1000m, line.UnitPrice.GetValueOrDefault() * 1000m);
                     // Commit absence evidence and exact code before any numeric
                     // write so partial-row recovery cannot apply the factor twice.
-                    await progress(new("line:" + line.LineId, code, Frame(selected.Frame), row,
+                    await progress(new("line:" + line.LineId, code, Frame(selected?.Frame ?? metadata.Frame), row,
                         new Dictionary<string, string>
                         {
                             ["conversion:" + line.LineId] = "kg_to_ton:1000",
                             ["unit:" + line.LineId] = expected.Unit,
-                            ["unit_absence:" + line.LineId] = selected.Source + ":" + selected.Reason
+                            ["unit_absence:" + line.LineId] = catalogProof ?? selected!.Source + ":" + selected.Reason
                         }), token);
                 }
             }
@@ -959,6 +967,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     /// the proof: the verified customer code must carry the source MST there. A readable MISA value always decides.
     /// </summary>
     private async Task<ValueComparison> CompareCustomerTaxAsync(string expected, string? customerCode, CancellationToken token)
+        => CustomerTaxComparison(expected, customerCode, await ReadCustomerTaxAsync(token));
+
+    private async Task<Readback?> ReadCustomerTaxAsync(CancellationToken token)
     {
         Readback? read = null;
         try
@@ -969,6 +980,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         }
         catch (AutomationException error) when (error.Code == "TARGET_NOT_FOUND" && !error.InputMayHaveBeenSent) { }
         customerTaxAbsent = read is null;
+        return read;
+    }
+
+    private ValueComparison CustomerTaxComparison(string expected, string? customerCode, Readback? read)
+    {
         if (read is not null)
             return new("customer_tax", expected, read.Value,
                 PartyCatalogStore.TaxKey(expected) == PartyCatalogStore.TaxKey(read.Value), read.Source);
