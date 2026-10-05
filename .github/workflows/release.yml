@@ -91,7 +91,9 @@ jobs:
         run: |
           $arguments = @{ Stage = $true; Installer = $true; Version = $env:VERSION; DotnetPath = (Get-Command dotnet).Source }
           if ($env:SIGNING_PFX) { $arguments.CertificatePath = $env:SIGNING_PFX }
-          $manifest = (& .\scripts\release.ps1 @arguments | Select-Object -Last 1)
+          # Tee keeps build/WiX output in the log; the manifest path is the script's last output line.
+          & .\scripts\release.ps1 @arguments | Tee-Object -Variable releaseOutput | Out-Host
+          $manifest = $releaseOutput | Select-Object -Last 1
           $release = Split-Path -Parent $manifest
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           $msi = "dist\MisaManager-$env:VERSION.msi"
