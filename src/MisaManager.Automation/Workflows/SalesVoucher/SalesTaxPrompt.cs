@@ -1,72 +1,122 @@
-using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Text;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using MisaManager.Core;
+using Windows.Win32;
+using Windows.Win32.Foundation;
 
 namespace MisaManager.Automation;
 
-// Sales-voucher specific: MISA's "tổng tiền thuế chênh lệch" prompt shown on Cất.
+// Sales-voucher specific: MISA's "Tổng tiền thuế GTGT <..> khác ... chênh lệch <..>" prompt shown on Cất.
 public sealed partial class NativeInputService
 {
-    public Task<bool> TryPreserveSourceTaxAsync(WindowIdentity window, string editorId, string? editorTitle,
-        NativeSelector voucherField, string expectedVoucher, decimal expectedTax, int lineCount, CancellationToken token)
-        => dispatcher.RunAsync(() =>
+    private static readonly string[] TaxPromptKeys = [TextKey.Compact("Tổng tiền thuế"), TextKey.Compact("chênh lệch")];
+    private static readonly string[] NoCaptions = ["&No", "No", "&Không", "Không"];
+
+    /// <summary>
+    /// Answers MISA's tax-difference prompt with "Không" whatever the difference, so MISA never moves the
+    /// difference into the first line and the source tax typed by the tool is kept (the saved totals are read
+    /// back afterwards). Returns the prompt text, or null when no such prompt is open.
+    /// </summary>
+    public Task<string?> AnswerTaxRoundingPromptAsync(nint editorHandle, CancellationToken token)
+        => dispatcher.RunAsync<string?>(() =>
         {
-            var editors = WorkflowScopes(window, editorId);
-            if (editors.Length == 0) return false;
-            if (editors.Length != 1 || editorTitle is not null && editors[0].Name != editorTitle)
-                throw new AutomationException("EDITOR_IDENTITY_INVALID", "Cannot bind the invoice editor for tax prompt resolution.");
-            var editor = editors[0];
-            var dialogs = editor.FindAllDescendants(automation.ConditionFactory.ByAutomationId(RequireProfile().TaxPromptScopeId))
-                .Where(item => item.Properties.ProcessId.ValueOrDefault == window.ProcessId
-                    && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault).ToArray();
-            if (dialogs.Length == 0) return false;
-            if (dialogs.Length != 1)
-                throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Multiple save prompts belong to the voucher.");
-            var dialog = dialogs[0];
-            var editorHandle = (nint)editor.Properties.NativeWindowHandle.ValueOrDefault;
-            var dialogHandle = (nint)dialog.Properties.NativeWindowHandle.ValueOrDefault;
-            if (editorHandle == nint.Zero || dialogHandle == nint.Zero || !OwnedBy(dialogHandle, editorHandle))
-                throw new AutomationException("SAVE_PROMPT_OWNER_INVALID", "Tax prompt is not owned by the bound voucher.");
-            var vouchers = editor.FindAllDescendants(automation.ConditionFactory.ByAutomationId(voucherField.AutomationId))
-                .Where(item => item.Properties.ProcessId.ValueOrDefault == window.ProcessId
-                    && !item.Properties.IsOffscreen.ValueOrDefault)
-                .Where(item => string.Equals(ReadNativeText(item).Value, expectedVoucher, StringComparison.Ordinal))
-                .ToArray();
-            if (vouchers.Length == 0)
-                throw new AutomationException("VOUCHER_IDENTITY_CHANGED", "Tax prompt voucher identity differs from the run.");
-            var messages = dialog.FindAllDescendants(automation.ConditionFactory.ByAutomationId(RequireProfile().TaxPromptMessage.AutomationId));
-            if (messages.Length != 1)
-                throw new AutomationException("SAVE_PROMPT_UNREADABLE", "A unique complete tax prompt message is required.");
-            var message = System.Net.WebUtility.HtmlDecode(ReadNativeText(messages[0]).Value);
-            var match = System.Text.RegularExpressions.Regex.Match(message,
-                @"^T\u1ed5ng ti\u1ec1n thu\u1ebf GTGT <(?<source>[^<>]+)> kh\u00e1c \(Ti\u1ec1n h\u00e0ng - Ti\u1ec1n chi\u1ebft kh\u1ea5u\) \* Thu\u1ebf su\u1ea5t <(?<calculated>[^<>]+)>, ch\u00eanh l\u1ec7ch <(?<difference>[^<>]+)>\. B\u1ea1n c\u00f3 mu\u1ed1n ch\u01b0\u01a1ng tr\u00ecnh t\u1ef1 \u0111i\u1ec1u ch\u1ec9nh s\u1ed1 ti\u1ec1n ch\u00eanh l\u1ec7ch n\u00e0y v\u00e0o d\u00f2ng h\u00e0ng \u0111\u1ea7u ti\u00ean c\u00f3 ti\u1ec1n thu\u1ebf kh\u00f4ng\? Xem h\u01b0\u1edbng d\u1eabn <a href=""https://helpsme\.misa\.vn/2023/kb/canh_bao_tong_tien_thue_chenh_lech_khi_cat_chung_tu_ban_hang/"">T\u1ea0I \u0110\u00c2Y</a>$");
-            var culture = CultureInfo.GetCultureInfo("vi-VN");
-            if (!match.Success
-                || !decimal.TryParse(match.Groups["source"].Value, NumberStyles.Number, culture, out var sourceTax)
-                || !decimal.TryParse(match.Groups["calculated"].Value, NumberStyles.Number, culture, out var calculatedTax)
-                || !decimal.TryParse(match.Groups["difference"].Value, NumberStyles.Number, culture, out var difference)
-                || sourceTax != expectedTax || Math.Abs(sourceTax - calculatedTax) != Math.Abs(difference)
-                || difference == 0 || Math.Abs(difference) > lineCount)
-                throw new AutomationException("SAVE_PROMPT_REQUIRES_ATTENTION", "Unrecognized or non-rounding save prompt: " + message);
-            var buttons = dialog.FindAllDescendants(automation.ConditionFactory.ByAutomationId(RequireProfile().TaxPromptNo.AutomationId))
-                .Where(item => item.Properties.ProcessId.ValueOrDefault == window.ProcessId
-                    && item.Properties.IsEnabled.ValueOrDefault && !item.Properties.IsOffscreen.ValueOrDefault
-                    && item.Patterns.Invoke.IsSupported).ToArray();
-            if (buttons.Length != 1)
-                throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "A unique native No command is required.");
-            identity = window; root = dialog; epoch++;
-            GuardWorkflow(Capture());
-            var bounds = buttons[0].BoundingRectangle;
-            if (bounds.Width <= 0 || bounds.Height <= 0)
-                throw new AutomationException("BOUNDS_UNREADABLE", "Tax prompt command bounds are unavailable.");
+            if (identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
+            var prompts = TaxRoundingPrompts(editorHandle);
+            if (prompts.Count == 0) return null;
+            if (prompts.Count > 1)
+                throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Có nhiều hộp thông báo chênh lệch tiền thuế cùng lúc; xử lý trong MISA rồi chạy lại.");
+            var (dialog, text, noHandle, noElement) = prompts[0];
             token.ThrowIfCancellationRequested();
             MarkWorkflowInput();
-            NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                window.WindowHandle, window.ProcessId, WorkflowTargetHandle(buttons[0]));
             epoch++;
-            return true;
+            if (noHandle != nint.Zero)
+            {
+                if (SendMessageTimeout(noHandle, 0x00F5, 0, nint.Zero, 2, 1000, out _) == nint.Zero)
+                    throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được thao tác bấm Không; không bấm lại.", true);
+            }
+            else
+            {
+                var bounds = noElement!.BoundingRectangle;
+                if (bounds.Width <= 0 || bounds.Height <= 0)
+                    throw new AutomationException("BOUNDS_UNREADABLE", "Nút Không của hộp thông báo thuế không có vị trí hiển thị.");
+                NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
+                    identity.WindowHandle, identity.ProcessId, WorkflowTargetHandle(noElement));
+            }
+            var closeBy = Environment.TickCount64 + 3000;
+            while (PInvoke.IsWindow((HWND)dialog) && PInvoke.IsWindowVisible((HWND)dialog))
+            {
+                if (Environment.TickCount64 > closeBy)
+                    throw new AutomationException("SAVE_PROMPT_NOT_CLOSED", "Hộp thông báo chênh lệch tiền thuế chưa đóng sau khi bấm Không.", true);
+                if (token.WaitHandle.WaitOne(50)) token.ThrowIfCancellationRequested();
+            }
+            return text;
         }, token, maySendInput: true);
+
+    private List<(nint Dialog, string Text, nint NoHandle, AutomationElement? NoElement)> TaxRoundingPrompts(nint editorHandle)
+    {
+        var result = new List<(nint, string, nint, AutomationElement?)>();
+        var main = identity!.WindowHandle;
+        var candidates = new List<nint>();
+        EnumWindows((handle, _) =>
+        {
+            GetWindowThreadProcessId(handle, out var processId);
+            var title = WindowText(handle).Trim();
+            // Message boxes are short "MISA SME 2023" windows; the main window and large forms carry " - ".
+            if (processId == identity.ProcessId && handle != main && PInvoke.IsWindowVisible((HWND)handle)
+                && title.StartsWith("MISA", StringComparison.OrdinalIgnoreCase) && !title.Contains(" - ", StringComparison.Ordinal)
+                && (editorHandle != nint.Zero && OwnedBy(handle, editorHandle) || OwnedBy(handle, main)))
+                candidates.Add(handle);
+            return true;
+        }, nint.Zero);
+        foreach (var handle in candidates)
+        {
+            var texts = new List<string>();
+            var noButtons = new List<nint>();
+            EnumChildWindows(handle, (child, _) =>
+            {
+                var label = WindowText(child).Trim();
+                if (label.Length > 0) texts.Add(label.Normalize(NormalizationForm.FormC));
+                if (NoCaptions.Contains(label) && PInvoke.IsWindowEnabled((HWND)child) && PInvoke.IsWindowVisible((HWND)child))
+                    noButtons.Add(child);
+                return true;
+            }, nint.Zero);
+            var message = string.Join(" ", texts);
+            if (IsTaxPrompt(message) && noButtons.Count == 1)
+            {
+                result.Add((handle, message, noButtons[0], null));
+                continue;
+            }
+            // Windowless (DirectUI/WPF) prompts expose the text and buttons through UIA only.
+            try
+            {
+                var window = automation.FromHandle(handle);
+                var parts = window.FindAllDescendants()
+                    .Where(element => element.ControlType is ControlType.Text or ControlType.Edit or ControlType.Document)
+                    .Select(element => ReadNativeText(element).Value)
+                    .Append(window.Properties.Name.ValueOrDefault ?? "")
+                    .Where(value => !string.IsNullOrWhiteSpace(value));
+                var uiaMessage = System.Net.WebUtility.HtmlDecode(string.Join(" ", parts));
+                if (!IsTaxPrompt(uiaMessage)) continue;
+                var noId = RequireProfile().TaxPromptNo.AutomationId;
+                var buttons = window.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Button))
+                    .Where(button => button.Properties.IsEnabled.ValueOrDefault && !button.Properties.IsOffscreen.ValueOrDefault
+                        && (noId.Length > 0 && button.Properties.AutomationId.ValueOrDefault == noId
+                            || NoCaptions.Contains(button.Properties.Name.ValueOrDefault?.Trim())))
+                    .ToArray();
+                if (buttons.Length != 1)
+                    throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Không xác định duy nhất nút Không trên hộp thông báo chênh lệch tiền thuế.");
+                result.Add((handle, uiaMessage, nint.Zero, buttons[0]));
+            }
+            catch (FlaUI.Core.Exceptions.ElementNotAvailableException) { }
+            catch (System.Runtime.InteropServices.COMException) { }
+        }
+        return result;
+    }
+
+    private static bool IsTaxPrompt(string message)
+    {
+        var key = TextKey.Compact(message);
+        return TaxPromptKeys.All(part => key.Contains(part, StringComparison.Ordinal));
+    }
 }

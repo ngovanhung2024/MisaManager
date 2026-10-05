@@ -377,6 +377,19 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(TaxRoundingPrompt: true));
 
     [Fact]
+    public Task TaxPromptWithALargeDifferenceIsStillAnsweredNo() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1016", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(invoice.TaxTotal, Assert.Single(misa.State().Vouchers).TaxTotal);
+    }, new FakeScenario(TaxRoundingPrompt: true, TaxRoundingDifference: 25));
+
+    [Fact]
     public Task TwoInvoicesInOneSessionAreSavedAsSeparateVouchers() => WithFakeAsync(async (misa, harness, token) =>
     {
         var first = Invoices.Build(TempDirectory(misa), "1007", Invoices.AV,

@@ -12,6 +12,8 @@ public sealed record Scenario
     public IReadOnlyList<SavedVoucher> ExistingVouchers { get; init; } = [];
     /// <summary>Shows MISA's "tổng tiền thuế chênh lệch" prompt on Cất.</summary>
     public bool TaxRoundingPrompt { get; init; }
+    /// <summary>Difference MISA reports in that prompt; "Có" adds it to the first line.</summary>
+    public decimal TaxRoundingDifference { get; init; } = 1;
     /// <summary>Added to every computed line VAT, to simulate MISA rounding differently from the source.</summary>
     public decimal TaxOffset { get; init; }
     /// <summary>Item codes the new-item dialog refuses with "đã tồn tại" (created by another user meanwhile).</summary>

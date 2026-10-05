@@ -35,6 +35,11 @@ public static class RunOutcome
 
     public static bool IsExisting(WorkflowSnapshot snapshot)
         => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode == ExistingCode;
+
+    /// <summary>Paused by Dừng ngay; its half-entered voucher was Bỏ when the batch started again.</summary>
+    public static bool IsStoppedDiscard(WorkflowSnapshot snapshot)
+        => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode == WorkflowRunner.StoppedByUserCode;
+    public const string StoppedDiscardLabel = "Tạm dừng · đã bỏ chứng từ dở";
 }
 
 /// <param name="SourceOnlyMisa">The voucher's invoice is not in the loaded Excel: only the MISA side exists, nothing is compared.</param>
@@ -73,8 +78,9 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
     public string Subtitle => $"{Context.Invoice.Buyer.Name} · {Runs.Count} lần xử lý";
     public string Status => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingLabel
         : Context.Snapshot.Status == WorkflowStatus.Discarded && Context.Reconciliations?.Any(attempt => attempt.Result is { Matched: false }) == true
-        ? "Lệch · Đã bỏ" : StatusLabel(Context.Snapshot.Status);
-    public string StatusColor => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingColor : Context.Snapshot.Status switch
+        ? "Lệch · Đã bỏ" : StatusLabel(Context.Snapshot);
+    public string StatusColor => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingColor
+        : RunOutcome.IsStoppedDiscard(Context.Snapshot) ? "#617B70" : Context.Snapshot.Status switch
     {
         WorkflowStatus.Saved => "#15803D",
         WorkflowStatus.Discarded => "#BE123C",
@@ -84,7 +90,8 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
         _ => "#617B70"
     };
     public static string StatusLabel(WorkflowSnapshot snapshot)
-        => RunOutcome.IsExisting(snapshot) ? RunOutcome.ExistingLabel : StatusLabel(snapshot.Status);
+        => RunOutcome.IsExisting(snapshot) ? RunOutcome.ExistingLabel
+            : RunOutcome.IsStoppedDiscard(snapshot) ? RunOutcome.StoppedDiscardLabel : StatusLabel(snapshot.Status);
     public static string StatusLabel(WorkflowStatus status) => status switch
     {
         WorkflowStatus.Saved => "Đã lưu",

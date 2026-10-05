@@ -710,9 +710,13 @@ public partial class MainWindow : Window
         probeBusy = true;
         try
         {
-            if (now >= editorProbeDue && workflow.Connection == MisaConnection.Connected && IsComparisonBound())
+            // Each probe is a UIA search over MISA's whole tree, which runs on MISA's UI thread. Polling it every
+            // second while idle after a batch made MISA (and the PC) unresponsive, so probe only while the answer
+            // can change the comparison popup: it is shown, or the editor state is still unknown.
+            if (now >= editorProbeDue && workflow.Connection == MisaConnection.Connected && IsComparisonBound()
+                && (comparisonWindow is not null || editorOpen is null))
             {
-                editorProbeDue = now.AddMilliseconds(1000);
+                editorProbeDue = now.AddMilliseconds(2000);
                 var editor = await workflow.ObserveVoucherEditorAsync();
                 if (workflow.IsRunning) return;
                 editorOpen = editor.IsOpen;
