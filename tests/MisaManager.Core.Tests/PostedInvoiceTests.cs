@@ -122,11 +122,10 @@ public sealed class PostedInvoiceTests : IDisposable
 
         var (pending, hidden) = store.WithoutPosted(imported);
 
-        Assert.Equal((2, 3), (imported.SkippedUnnumberedRows, hidden));
-        Assert.Equal(["1425", "1600", "1824"], pending.Invoices.Select(invoice => invoice.Identity.Number).Order(StringComparer.Ordinal));
-        var negative = pending.Invoices.Single(invoice => invoice.Identity.Number == "1425");
-        Assert.True(negative.IsBlocked);
-        Assert.DoesNotContain(pending.Issues, issue => issue.Severity == IssueSeverity.Blocking && issue.InvoiceId != negative.InvoiceId);
+        Assert.Equal((2, 1, 3), (imported.SkippedUnnumberedRows, imported.SkippedNegativeInvoices, hidden));
+        // 1425 (quantity -1, not posted) is an adjustment and is left out as well.
+        Assert.Equal(["1600", "1824"], pending.Invoices.Select(invoice => invoice.Identity.Number).Order(StringComparer.Ordinal));
+        Assert.False(pending.IsBlocked);
         Assert.False(pending.Invoices.Single(invoice => invoice.Identity.Number == "1600").IsBlocked);
         Assert.Equal((imported, 0), new PostedInvoiceStore(temp.Combine("empty.json")).WithoutPosted(imported));
     }

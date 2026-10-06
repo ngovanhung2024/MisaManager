@@ -582,6 +582,7 @@ public partial class MainWindow : Window
         return $"{ordered.Length:N0} hóa đơn chưa nhập"
             + (posted.Count == 0 ? " (chưa nạp danh sách đã ghi sổ)" : $" · bỏ {hidden:N0} hóa đơn đã ghi sổ")
             + (imported.SkippedUnnumberedRows > 0 ? $" · bỏ {imported.SkippedUnnumberedRows:N0} dòng chưa có số" : "")
+            + (imported.SkippedNegativeInvoices > 0 ? $" · bỏ {imported.SkippedNegativeInvoices:N0} hóa đơn số lượng âm" : "")
             + (blocked > 0 ? $" · {blocked:N0} hóa đơn cần bổ sung dữ liệu" : "");
     }
 

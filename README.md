@@ -154,6 +154,7 @@ Khách lẻ → `CUSTOMER_CODE_MISSING`. Người mua cá nhân không có MST l
 hàng tìm theo tên trong danh mục. Chỉ người mua là tổ chức (loại Organization hoặc tên có Công ty/CTY/Hợp tác xã/HTX/Doanh
 nghiệp/Chi nhánh/Trung tâm/Vườn quốc gia/UBND/Ngân hàng…) thiếu MST mới bị chặn (`BUYER_TAX_STATUS`).
 Dòng không có số hóa đơn (hóa đơn chưa được cấp số) bị bỏ qua, chỉ báo một thông tin `INVOICE_NUMBER_MISSING_SKIPPED`.
+Hóa đơn có dòng số lượng hoặc thành tiền âm (điều chỉnh/trả hàng) bị bỏ cả hóa đơn, báo thông tin `INVOICE_NEGATIVE_SKIPPED`.
 Mã số thuế người mua được đối chiếu ở bước đối chiếu trước khi Cất (tab Hóa đơn). Nếu bản R20 không hiện ô MST khớp
 selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
 `PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.
