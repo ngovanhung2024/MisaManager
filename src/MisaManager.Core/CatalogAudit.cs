@@ -28,8 +28,18 @@ public static class CatalogAudit
         }
         foreach (var group in items.GroupBy(item => (Name: ItemCatalogStore.ItemNameKey(item.Name), Unit: ItemCatalogStore.NameKey(item.Unit)))
                      .Where(group => group.Key.Name.Length > 0 && group.Count() > 1))
-            findings.Add($"Trùng tên cùng ĐVT '{group.First().Unit}': '{group.First().Name}' = {List(group.Select(item => item.Code))}. "
-                + "Hóa đơn có tên này mà không ghi mã sẽ dừng (ITEM_AMBIGUOUS): ghi mã vào cột Mã hàng hoặc ngừng theo dõi một mã.");
+        {
+            // Same letters, different punctuation: an invoice spelled exactly like one of them still finds its code.
+            var spellingOnly = group.Select(item => TextKey.LettersAndDigits(item.Name)).Distinct(StringComparer.Ordinal).Count() == 1
+                && group.Select(item => ItemCatalogStore.NameKey(item.Name)).Distinct(StringComparer.Ordinal).Count() == group.Count();
+            findings.Add(spellingOnly
+                ? $"Tên gần trùng cùng ĐVT '{group.First().Unit}' (chỉ khác dấu câu/khoảng trắng): "
+                    + $"{List(group.Select(item => $"{item.Code} '{item.Name}'"), 6)}. Hóa đơn ghi đúng từng ký tự một tên thì dùng mã đó; "
+                    + "ghi kiểu khác (thừa/thiếu dấu '-', '.') sẽ dừng (ITEM_AMBIGUOUS): nên ngừng theo dõi mã thừa trong MISA."
+                : $"Trùng tên cùng ĐVT '{group.First().Unit}': '{group.First().Name}' = {List(group.Select(item => item.Code))}. "
+                    + "Hóa đơn có tên này mà không ghi mã sẽ dừng (ITEM_AMBIGUOUS): ghi mã vào cột 'Mã hàng' của file Excel hóa đơn "
+                    + "hoặc ngừng theo dõi một mã.");
+        }
         return findings;
     }
 }

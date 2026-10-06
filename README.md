@@ -134,6 +134,10 @@ Tên hàng trong
 hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng trắng và chữ "bao" trong quy cách dạng `(bao 25kg)`;
 vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg hoặc HC-15/HC-16 không bị ghép chung. Database cũ tự đọc lại file
 danh mục gốc một lần để ghi nguồn mã; nếu file mất thì cần nạp lại. Mã đã tạo và bằng chứng Cất chưa rõ vẫn được giữ.
+Khi danh mục có nhiều mã cùng ĐVT mà tên chỉ khác dấu câu/khoảng trắng (`FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`),
+mã có tên viết đúng từng ký tự như hóa đơn được chọn; không có tên nào viết đúng thì dừng `ITEM_AMBIGUOUS`.
+File hóa đơn có thể thêm cột **Mã hàng** (không bắt buộc): dòng có mã dùng thẳng mã đó, không tra theo tên — cách xử lý
+tên trùng nhiều mã (`ITEM_AMBIGUOUS`) hoặc khác ĐVT (`ITEM_UNIT_CONFLICT`).
 Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.
 
 **••• → Thêm mã khách hàng…** / **Thêm mã nhà cung cấp…** nạp file danh sách xuất từ MISA (cột Mã, Tên, Mã số thuế; bỏ
@@ -143,6 +147,11 @@ tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MT
 `TextKey` (cách bỏ dấu cũ/mới, chữ Đ giả, khoảng trắng, ký tự ẩn, hoa/thường). Bán cho người tiêu dùng luôn dùng `NTD`;
 mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ**
 (`CUSTOMER_CODE_MISSING` / `CUSTOMER_AMBIGUOUS`).
+Tên người mua lấy từ cột **DN mua** (đơn vị mua) của file hóa đơn nếu ô có dữ liệu; khi đó **Người mua** chỉ là người liên hệ.
+DN mua trống thì dùng Người mua; file chỉ có cột DN mua cũng nhập được. Người mua "Khách hàng không cung cấp thông tin"
+không cần MST và nhập vào khách hàng **Khách lẻ** của danh mục khách hàng (như các chứng từ đã ghi sổ); danh mục không có
+Khách lẻ → `CUSTOMER_CODE_MISSING`. Người mua có tên khác mà thiếu MST vẫn bị chặn để không chọn nhầm mã cùng tên.
+Dòng không có số hóa đơn (hóa đơn chưa được cấp số) hiện thành hóa đơn lỗi riêng từng dòng và không nhập được.
 Mã số thuế người mua được đối chiếu ở bước đối chiếu trước khi Cất (tab Hóa đơn). Nếu bản R20 không hiện ô MST khớp
 selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
 `PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.

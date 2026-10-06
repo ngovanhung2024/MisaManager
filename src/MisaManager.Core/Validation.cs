@@ -51,6 +51,9 @@ public static class InvoiceValidation
         {
             if (invoice.Buyer.Name?.Contains("NGƯỜI TIÊU DÙNG", StringComparison.OrdinalIgnoreCase) == true)
                 issues.Add(new("BUYER_TAX_OPTIONAL", IssueSeverity.Info, "MST người mua để trống; chấp nhận cho giao dịch bán cho người tiêu dùng."));
+            else if (BuyerCodes.IsAnonymous(invoice.Buyer.Name))
+                issues.Add(new("BUYER_TAX_OPTIONAL", IssueSeverity.Info,
+                    $"MST người mua để trống; người mua không cung cấp thông tin nên nhập vào khách hàng '{BuyerCodes.RetailCustomerName}'."));
             else Block("BUYER_TAX_STATUS", "Thiếu MST người mua cho giao dịch không phải bán cho người tiêu dùng.", "Bổ sung MST người mua trong workbook.");
         }
         if (invoice.Buyer.TaxCodePresence == ValuePresence.Provided && string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode))

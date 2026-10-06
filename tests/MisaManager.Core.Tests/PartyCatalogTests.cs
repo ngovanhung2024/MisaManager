@@ -189,6 +189,43 @@ public sealed class PartyCatalogTests : IDisposable
         Assert.Null(BuyerCodes.Resolve(Buyer("CÔNG TY CỔ PHẦN DỆT MAY HUẾ"), null));
     }
 
+    /// <summary>The posted vouchers enter every "Khách hàng không cung cấp thông tin" invoice under MISA's "Khách lẻ".</summary>
+    [Fact]
+    public void AnonymousBuyerUsesTheRetailCustomerOfTheCatalog()
+    {
+        var store = Store();
+        Party Buyer(string name, string code = "") => new(name, "", "", code, ValuePresence.NotApplicable);
+
+        Assert.Null(BuyerCodes.Resolve(Buyer("Khách hàng không cung cấp thông tin"), null));
+        store.Replace(PartyRole.Customer, [.. Customers, new("KL", "Khách lẻ"), new("NTD", "BÁN CHO NGƯỜI TIÊU DÙNG")], "Khach_hang.xlsx");
+
+        Assert.Equal(new BuyerCode("KL", "người mua không cung cấp thông tin → Khách lẻ", "Khách lẻ"),
+            BuyerCodes.Resolve(Buyer("Khách hàng không cung cấp thông tin"), store));
+        Assert.Equal("KL", BuyerCodes.Resolve(Buyer(" KHACH HANG KHONG CUNG CAP THONG TIN "), store)?.Code);
+        Assert.Equal("KL", BuyerCodes.Resolve(Buyer("Người mua không cung cấp thông tin."), store)?.Code);
+        Assert.Equal("X01", BuyerCodes.Resolve(Buyer("Khách hàng không cung cấp thông tin", "X01"), store)?.Code);
+        Assert.False(BuyerCodes.IsAnonymous("Khách hàng"));
+        Assert.False(BuyerCodes.IsAnonymous("BÁN CHO NGƯỜI TIÊU DÙNG"));
+    }
+
+    /// <summary>The real export stores "Ngừng theo dõi" as boolean cells, not "0"/"1" text.</summary>
+    [Fact]
+    public async Task BooleanStoppedColumnDropsOnlyStoppedRows()
+    {
+        var book = new WorkbookBuilder();
+        var sheet = book.Sheet("Khach_hang");
+        sheet.Row(1, "DANH SÁCH KHÁCH HÀNG").Merge("A1:G1");
+        sheet.Row(2, "Mã khách hàng", "Tên khách hàng", "Địa chỉ", "Nhóm KH, NCC", "Mã số thuế", "Điện thoại", "Ngừng theo dõi");
+        sheet.Row(3, "KL", "Khách lẻ", null, null, null, null, false);
+        sheet.Row(4, "CU", "KHÁCH CŨ", null, null, null, null, true);
+        sheet.Row(5, "NTD", "BÁN CHO NGƯỜI TIÊU DÙNG", null, null, "", null, false);
+        sheet.Row(6, "Số dòng = 3");
+
+        var entries = await PartyCatalogWorkbook.ReadAsync(new WorkbookReader(), book.Save(temp.Combine("Khach_hang.xlsx")), PartyRole.Customer, Token);
+
+        Assert.Equal(["KL", "NTD"], entries.Select(entry => entry.Code));
+    }
+
     /// <summary>Layout of MISA's "Danh sách khách hàng" export (the attached Khach_hang.xlsx).</summary>
     [Fact]
     public async Task CustomerExportIsReadWithoutFooterOrStoppedRows()

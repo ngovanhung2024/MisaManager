@@ -212,19 +212,33 @@ public sealed record BuyerCode(string Code, string Source, string? CatalogName =
 public static class BuyerCodes
 {
     public const string ConsumerCode = "NTD";
+    /// <summary>MISA customer used for buyers who gave no details (accountants' convention in the posted vouchers).</summary>
+    public const string RetailCustomerName = "Khách lẻ";
     private static readonly string ConsumerKey = TextKey.LettersAndDigits("BÁN CHO NGƯỜI TIÊU DÙNG");
+    private static readonly string[] AnonymousKeys =
+        [Plain("Khách hàng không cung cấp thông tin"), Plain("Người mua không cung cấp thông tin")];
 
     public static bool IsConsumer(string? name) => TextKey.LettersAndDigits(name) == ConsumerKey;
 
+    /// <summary>E-invoice placeholder for a buyer without name/MST, e.g. "Khách hàng không cung cấp thông tin".</summary>
+    public static bool IsAnonymous(string? name) => AnonymousKeys.Contains(Plain(name));
+
     /// <summary>
-    /// The Excel code wins; consumer sales always use NTD; otherwise the customer/supplier catalog is searched by name.
+    /// The Excel code wins; consumer sales always use NTD; anonymous buyers use the catalog's "Khách lẻ"; otherwise the
+    /// customer/supplier catalog is searched by name.
     /// Returns null when no code is known; throws <see cref="AutomationException"/> when the catalog is ambiguous.
     /// </summary>
     public static BuyerCode? Resolve(Party buyer, PartyCatalogStore? catalog)
     {
         if (buyer.Code.Trim().Length > 0) return new(buyer.Code.Trim(), "Excel");
         if (IsConsumer(buyer.Name)) return new(ConsumerCode, "bán cho người tiêu dùng");
+        if (IsAnonymous(buyer.Name))
+            return catalog?.FindCode(RetailCustomerName) is { } retail
+                ? new(retail.Code, $"người mua không cung cấp thông tin → {retail.Name}", retail.Name) : null;
         return catalog?.FindCode(buyer.Name, buyer.TaxCode) is { } match
             ? new(match.Code, $"danh mục {PartyCatalogStore.Label(match.Role)} · {match.Method}", match.Name) : null;
     }
+
+    private static string Plain(string? value) => new(TextKey.LettersAndDigits(value).Normalize(NormalizationForm.FormD)
+        .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark).Select(c => c == 'Đ' ? 'D' : c).ToArray());
 }
