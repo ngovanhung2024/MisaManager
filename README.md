@@ -131,11 +131,14 @@ Danh mục mã hàng ưu tiên mã từ file Excel đã nạp hơn mã phát sin
 nguồn từ file Excel, dòng không có mã chỉ được tra bằng các mã hiện có trong lần xuất đó; mã cache cũ không được tự chọn
 vì MISA có thể đã đổi tên hoặc cấp lại mã. Mã do tool tạo chỉ được tái sử dụng sau khi lần Cất đã xác nhận và ghi bằng chứng.
 Tên hàng trong
-hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng trắng và chữ "bao" trong quy cách dạng `(bao 25kg)`;
-vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg hoặc HC-15/HC-16 không bị ghép chung. Database cũ tự đọc lại file
+hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng trắng, chữ "bao" trong quy cách dạng `(bao 25kg)`,
+tag nhà phân phối đứng riêng (`(ĐN)`, `ĐN` cuối tên), chữ "bón" của "phân bón"; "khuyến mãi" = "khuyến mại";
+vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg, HC-15/HC-16 hoặc `(ĐN - chai tím …)` không bị ghép chung. Database cũ tự đọc lại file
 danh mục gốc một lần để ghi nguồn mã; nếu file mất thì cần nạp lại. Mã đã tạo và bằng chứng Cất chưa rõ vẫn được giữ.
-Khi danh mục có nhiều mã cùng ĐVT mà tên chỉ khác dấu câu/khoảng trắng (`FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`),
-mã có tên viết đúng từng ký tự như hóa đơn được chọn; không có tên nào viết đúng thì dừng `ITEM_AMBIGUOUS`.
+Khi danh mục có nhiều mã cùng ĐVT trùng tên hoặc gần trùng theo quy tắc trên (`Phân kali` = HH_03/HH_50,
+`FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`), hóa đơn có dòng không ghi mã dùng tên đó được đánh dấu
+**Tạm hoãn** ở tab Hóa đơn: không tick được, không nhập, không ghi lỗi; lý do hiện khi chọn hóa đơn. Ngừng theo dõi mã thừa
+trong MISA rồi nạp lại danh mục (hoặc ghi mã vào cột Mã hàng) thì hóa đơn tự mở lại.
 File hóa đơn có thể thêm cột **Mã hàng** (không bắt buộc): dòng có mã dùng thẳng mã đó, không tra theo tên — cách xử lý
 tên trùng nhiều mã (`ITEM_AMBIGUOUS`) hoặc khác ĐVT (`ITEM_UNIT_CONFLICT`).
 Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.
@@ -170,9 +173,9 @@ chưa nạp file nhóm thì mọi mã mới vẫn là `HH_n` như cũ. Dòng chi
 tiền tố (ví dụ `Phí vận chuyển → DV_`) để phát hiện sai nhóm trước khi chạy. Tool chỉ đặt mã, chưa chọn ô **Nhóm VTHH**
 trong hộp thoại thêm mới của MISA.
 
-**••• → Kiểm tra danh mục mã hàng** (tự hiện sau khi nạp mã hàng/nhóm nếu có vấn đề) báo trước: mã có khoảng trắng
-(`HH _CAI`), mã không bắt đầu bằng mã nhóm nào, và tên trùng nhiều mã cùng ĐVT (hóa đơn không ghi mã sẽ dừng
-`ITEM_AMBIGUOUS`).
+**••• → Kiểm tra danh mục mã hàng** (tự hiện sau khi nạp mã hàng/nhóm nếu có vấn đề) báo trước: mã không bắt đầu bằng
+mã nhóm nào (khoảng trắng trước `_` như `HH _CAI` vẫn tính là nhóm HH, không cần sửa), và tên trùng/gần trùng nhiều mã
+cùng ĐVT (hóa đơn dùng tên đó sẽ tạm hoãn).
 
 ## Hóa đơn đã ghi sổ
 

@@ -141,7 +141,34 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         finally { running = false; operation = null; NotifyWorkflowChanged(); }
     }
 
-    public IReadOnlyList<InvoiceDocument> InvoiceQueue { get; set; } = [];
+    public IReadOnlyList<InvoiceDocument> InvoiceQueue
+    {
+        get => invoiceQueue;
+        set { invoiceQueue = value; RefreshHolds(); }
+    }
+    private IReadOnlyList<InvoiceDocument> invoiceQueue = [];
+    private Dictionary<string, IReadOnlyList<ImportIssue>> holds = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Recomputes which invoices are held because an item name matches several catalog codes (see <see cref="CatalogHold"/>);
+    /// held invoices lose their tick. Call after the queue or the item catalog changes.
+    /// </summary>
+    public void RefreshHolds()
+    {
+        var catalog = services.ItemCatalog;
+        holds = invoiceQueue.Select(invoice => (invoice.Fingerprint, Issues: CatalogHold.Issues(invoice, catalog)))
+            .Where(entry => entry.Issues.Count > 0)
+            .GroupBy(entry => entry.Fingerprint, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Issues, StringComparer.Ordinal);
+        if (checkedFingerprints.RemoveWhere(holds.ContainsKey) > 0)
+            CheckedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Why the invoice is held back from entry; empty when it is not held or already entered.</summary>
+    public IReadOnlyList<ImportIssue> HoldIssues(InvoiceDocument invoice)
+        => holds.TryGetValue(invoice.Fingerprint, out var issues) && !IsDone(invoice) ? issues : [];
+
+    public bool IsHeld(InvoiceDocument invoice) => HoldIssues(invoice).Count > 0;
 
     /// <summary>Raised when the set of invoices ticked for the next run changes.</summary>
     public event EventHandler? CheckedChanged;
@@ -150,6 +177,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public void SetChecked(string fingerprint, bool value)
     {
+        if (value && holds.ContainsKey(fingerprint)) { CheckedChanged?.Invoke(this, EventArgs.Empty); return; }
         if (value ? checkedFingerprints.Add(fingerprint) : checkedFingerprints.Remove(fingerprint))
             CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -157,7 +185,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public void SetCheckedMany(IEnumerable<string> fingerprints)
     {
         checkedFingerprints.Clear();
-        checkedFingerprints.UnionWith(fingerprints);
+        checkedFingerprints.UnionWith(fingerprints.Where(fingerprint => !holds.ContainsKey(fingerprint)));
         CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -168,8 +196,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Invoices that can still be entered: not blocked and neither saved, already in MISA nor posted.</summary>
-    public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice));
+    /// <summary>Invoices that can still be entered: not blocked or held and neither saved, already in MISA nor posted.</summary>
+    public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice) && !IsHeld(invoice));
 
     private bool IsDone(InvoiceDocument invoice) => services.PostedInvoices.Contains(invoice)
         || History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
@@ -294,6 +322,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var existing = 0;
         var mismatched = 0;
         var skipped = 0;
+        var held = 0;
         var blockedNumbers = new List<string>();
         var failedNumbers = new List<string>();
         var consecutiveFailures = 0;
@@ -367,6 +396,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     handledInBatch.Add(fingerprint);
                     blockedNumbers.Add(invoice.Identity.Number);
                     Status = $"{position} · còn lỗi nguồn, bỏ qua và chuyển sang hóa đơn kế tiếp.";
+                    continue;
+                }
+                // Held by a duplicate item name: skipped quietly, the reason is shown on the invoice list.
+                if (IsHeld(invoice))
+                {
+                    handledInBatch.Add(fingerprint);
+                    SetChecked(fingerprint, false);
+                    held++;
                     continue;
                 }
                 SelectedInvoice = invoice;
@@ -485,6 +522,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (mismatched > 0) parts.Add($"{mismatched} đã bỏ vì lệch");
                     if (existing > 0) parts.Add($"{existing} đã tồn tại trong MISA");
                     if (skipped > 0) parts.Add($"{skipped} bỏ qua (đã nhập trước đó)");
+                    if (held > 0) parts.Add($"{held} tạm hoãn (mặt hàng trùng tên nhiều mã)");
                     if (failedNumbers.Count > 0) parts.Add($"{failedNumbers.Count} lỗi, đã bỏ chứng từ, cần xem lại ({string.Join(", ", failedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
                     Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy trong danh sách đã tick."

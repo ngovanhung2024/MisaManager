@@ -60,7 +60,7 @@ public sealed class ItemGroupTests : IDisposable
         Assert.Equal("Nhom.xlsx", reopened.Source);
         Assert.Equal("NVL", reopened.GroupOfCode("NVL_01"));
         Assert.Equal("HH", reopened.GroupOfCode("HH_12"));
-        Assert.Null(reopened.GroupOfCode("HH _CAI"));
+        Assert.Equal("HH", reopened.GroupOfCode("HH _CAI"));
         Assert.Null(reopened.GroupOfCode("CM GOLD 20.10.10"));
 
         reopened.Clear();
@@ -90,17 +90,18 @@ public sealed class ItemGroupTests : IDisposable
             new("HH _CAI", "HANG HOA CAI", "Cái"), new("CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn")
         ];
 
+        // A space before "_" is the user's convention, not a finding.
         var withoutGroups = CatalogAudit.Items(items, groups);
-        Assert.Equal(2, withoutGroups.Count);
-        Assert.Contains(withoutGroups, finding => finding.Contains("'HH _CAI'", StringComparison.Ordinal));
-        var ambiguous = Assert.Single(withoutGroups, finding => finding.Contains("ITEM_AMBIGUOUS", StringComparison.Ordinal));
+        var ambiguous = Assert.Single(withoutGroups);
         Assert.Contains("HH_03, HH_50", ambiguous, StringComparison.Ordinal);
+        Assert.Contains("tạm hoãn", ambiguous, StringComparison.Ordinal);
         Assert.DoesNotContain("HH_133", ambiguous, StringComparison.Ordinal);
 
         groups.Replace(MisaGroups, "Nhom.xlsx");
         var outside = Assert.Single(CatalogAudit.Items(items, groups), finding => finding.Contains("không bắt đầu", StringComparison.Ordinal));
-        Assert.StartsWith("2 mã", outside, StringComparison.Ordinal);
+        Assert.StartsWith("1 mã", outside, StringComparison.Ordinal);
         Assert.Contains("'CM GOLD 20.10.10'", outside, StringComparison.Ordinal);
+        Assert.Equal("HH", groups.GroupOfCode("HH _CAI"));
     }
 
     [Fact]
@@ -118,6 +119,7 @@ public sealed class ItemGroupTests : IDisposable
         Assert.StartsWith("Tên gần trùng", spelling, StringComparison.Ordinal);
         Assert.Contains("HH_203 'FUJI ONE 40EC-100CC PET'", spelling, StringComparison.Ordinal);
         var duplicate = Assert.Single(findings, finding => finding.Contains("HH_03", StringComparison.Ordinal));
+        Assert.StartsWith("Trùng tên", duplicate, StringComparison.Ordinal);
         Assert.Contains("cột 'Mã hàng' của file Excel hóa đơn", duplicate, StringComparison.Ordinal);
     }
 
