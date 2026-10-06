@@ -179,7 +179,8 @@ public sealed record ImportResult(
     IReadOnlyList<ImportIssue> Issues,
     int ReadRows,
     int IgnoredEmptyRows,
-    int SkippedUnnumberedRows = 0)
+    int SkippedUnnumberedRows = 0,
+    int SkippedNegativeInvoices = 0)
 {
     public bool IsBlocked => Issues.Any(issue => issue.Severity == IssueSeverity.Blocking)
         || Invoices.Any(invoice => invoice.IsBlocked);

@@ -151,10 +151,17 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
                 Resolution: "Hóa đơn chưa được cấp số (chưa ký/phát hành) không nhập; xuất lại file sau khi đã có số."));
         var sha = workbook.Sha256;
         var source = new SourceReference(workbook.FilePath, sha, sheet.Name, header.Number, sheet.Rows.LastOrDefault()?.Number ?? header.Number, options.ImportRevision);
-        var invoices = groups.Values.Select(group => BuildInvoice(source, group, workbook.Date1904, options.Locale, confirmation, token)).ToImmutableArray();
+        var built = groups.Values.Select(group => BuildInvoice(source, group, workbook.Date1904, options.Locale, confirmation, token)).ToArray();
+        // Negative lines are adjustments/returns, which are not entered: the whole invoice is left out.
+        var negative = built.Where(invoice => invoice.Lines.Any(line => line.Quantity < 0 || line.AmountBeforeTax < 0)).ToArray();
+        var invoices = built.Except(negative).ToImmutableArray();
+        if (negative.Length > 0)
+            issues.Add(new("INVOICE_NEGATIVE_SKIPPED", IssueSeverity.Info,
+                $"Bỏ qua {negative.Length:N0} hóa đơn có số lượng/thành tiền âm (HĐ {string.Join(", ", negative.Take(10).Select(invoice => invoice.Identity.Number))}{(negative.Length > 10 ? ", …" : "")}).",
+                sheet.Name, Resolution: "Hóa đơn điều chỉnh/trả hàng không nhập bằng tool."));
         if (invoices.Length == 0) issues.Add(new("NO_INVOICES", IssueSeverity.Blocking, "Worksheet không có dòng hóa đơn.", sheet.Name));
         return new ImportResult(source, sheets.Select(item => item.Name).ToArray(), invoices, issues.Concat(invoices.SelectMany(item => item.Issues)).ToArray(),
-            sheet.Rows.Length, ignored, unnumbered.Count);
+            sheet.Rows.Length, ignored, unnumbered.Count, negative.Length);
     }
 
     private static InvoiceDocument BuildInvoice(SourceReference source, List<(WorkbookRow Row, IReadOnlyDictionary<string, SourceCell> Cells)> records, bool date1904, string? locale, ImportConfirmation? confirmation, CancellationToken token)

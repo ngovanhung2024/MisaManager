@@ -293,6 +293,24 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
         Assert.True(Has(result.Issues, "NO_INVOICES"));
     }
 
+    /// <summary>HĐ 1425 of the real export: one line of quantity -1 makes the whole invoice an adjustment, left out.</summary>
+    [Fact]
+    public async Task InvoiceWithANegativeLineIsSkipped()
+    {
+        var result = await ImportPortal(
+            PortalLine(1, "1425", "Khách hàng không cung cấp thông tin", "", ""),
+            PortalLine(2, "1425", "Khách hàng không cung cấp thông tin", "", "", "Phân NPK 16-16-8+13S+TE Phú Mỹ (Bao 25kg)",
+                "Kg", 0, -1, -13_524, 5, -676),
+            PortalLine(3, "1426", "BÁN CHO NGƯỜI TIÊU DÙNG", "", ""));
+
+        Assert.Equal("1426", Only(result).Identity.Number);
+        Assert.False(result.IsBlocked);
+        Assert.Equal(1, result.SkippedNegativeInvoices);
+        var skipped = Assert.Single(result.Issues, issue => issue.Code == "INVOICE_NEGATIVE_SKIPPED");
+        Assert.Equal(IssueSeverity.Info, skipped.Severity);
+        Assert.Contains("HĐ 1425", skipped.Message);
+    }
+
     [Fact]
     public async Task ImportIsRepeatableForTheSameFile()
     {
@@ -665,11 +683,13 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
     }
 
     [Fact]
-    public async Task NegativeQuantityIsRefusedAsAnAdjustmentLine()
+    public async Task NegativeQuantityLeavesTheInvoiceOutAsAnAdjustment()
     {
         var result = await Import(sheet => sheet.Cell(2, InvoiceSheet.Quantity, -22m));
 
-        Assert.True(Has(result.Invoices[0].Issues, "LINE_NUMBERS_INVALID"));
+        Assert.Equal(1, result.SkippedNegativeInvoices);
+        Assert.DoesNotContain(result.Invoices, invoice => invoice.Identity.Number == "1000");
+        Assert.True(Has(result.Issues, "INVOICE_NEGATIVE_SKIPPED", IssueSeverity.Info));
     }
 
     [Fact]
