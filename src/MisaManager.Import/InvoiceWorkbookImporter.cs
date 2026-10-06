@@ -34,6 +34,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         ["sellerAddress"] = ["địa chỉ người bán", "dia chi nguoi ban", "seller address"],
         ["sellerCode"] = ["mã người bán", "ma nguoi ban", "seller code"],
         ["buyer"] = ["người mua", "nguoi mua", "tên người mua", "ten nguoi mua", "customer", "buyer"],
+        ["buyerCompany"] = ["dn mua", "doanh nghiệp mua", "tên doanh nghiệp mua", "đơn vị mua", "tên đơn vị mua", "buyer company", "buyer organization"],
         ["buyerTaxCode"] = ["mst người mua", "mst nguoi mua", "mã số thuế người mua", "ma so thue nguoi mua", "buyer tax code"],
         ["buyerAddress"] = ["địa chỉ người mua", "dia chi nguoi mua", "buyer address"],
         ["buyerCode"] = ["mã khách hàng", "ma khach hang", "customer code", "buyer code"],
@@ -62,7 +63,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         ["postedDate"] = ["ngày hạch toán", "ngay hach toan", "posted date"],
         ["notes"] = ["ghi chú", "ghi chu", "notes", "note"]
     };
-    private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCode", "buyerTaxCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
+    private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] Required = ["number", "issued", "buyer", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] IdentityFields = ["number", "buyerCode", "buyerTaxCode"];
     public static IReadOnlyList<string> Fields => SelectedFields;
@@ -116,7 +117,8 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         header = header
             ?? throw new WorkbookImportException("HEADER_MISSING", "Không tìm thấy dòng tiêu đề.");
         var columns = options.ColumnMap is null ? MapColumns(header, issues) : ValidateMapping(options.ColumnMap, header);
-        foreach (var required in Required.Where(key => !columns.ContainsKey(key)))
+        // A "DN mua" column alone names the buyer as well as "Người mua" does.
+        foreach (var required in Required.Where(key => !columns.ContainsKey(key) && !(key == "buyer" && columns.ContainsKey("buyerCompany"))))
             issues.Add(new("COLUMN_MISSING", IssueSeverity.Blocking, $"Thiếu cột bắt buộc '{required}'.", sheet.Name, Resolution: "Bổ sung cột hoặc chọn lại worksheet."));
         if (issues.Any(issue => issue.Severity == IssueSeverity.Blocking))
             return EmptyResult(workbook, sheet, header.Number, issues);
@@ -136,7 +138,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             if (number.Length == 0)
             {
                 issues.Add(new("INVOICE_NUMBER_MISSING", IssueSeverity.Blocking, "Dòng dữ liệu thiếu số hóa đơn; không tự mang số từ dòng trước xuống.", sheet.Name, cells["number"].Address,
-                    Resolution: "Điền số hóa đơn trên từng dòng hoặc dùng merge cell hợp lệ."));
+                    Resolution: "Điền số hóa đơn trên từng dòng hoặc dùng merge cell hợp lệ. Hóa đơn chưa được cấp số (chưa ký/phát hành) không nhập được; xuất lại sau khi đã có số."));
             }
             var date = ParseDate(cells["issued"], workbook.Date1904, options.Locale, issues);
             // One invoice number denotes one invoice; conflicting header values are checked in BuildInvoice.
@@ -158,13 +160,17 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             records.Min(item => item.Row.Number), records.Max(item => item.Row.Number), source.ImportRevision);
         var issues = new List<ImportIssue>();
         var first = records[0].Cells.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        foreach (var field in new[] { "issued", "signed", "buyer", "buyerTaxCode" })
+        foreach (var field in new[] { "issued", "signed", "buyer", "buyerCompany", "buyerTaxCode" })
         {
             var populated = records.Select(record => record.Cells.GetValueOrDefault(field))
                 .Where(cell => cell is not null && !string.IsNullOrWhiteSpace(cell.ParsedValue)).ToArray();
             if (populated.Length > 0) first[field] = populated[0]!;
         }
-        var key = JsonSerializer.Serialize(new[] { source.FilePath, source.Sha256, source.Worksheet, Text(records[0].Cells, "number") });
+        var number = Text(records[0].Cells, "number");
+        // Rows without a number form one group each; the row number keeps their IDs (and saved drafts) apart.
+        var key = JsonSerializer.Serialize(number.Length > 0
+            ? new[] { source.FilePath, source.Sha256, source.Worksheet, number }
+            : [source.FilePath, source.Sha256, source.Worksheet, number, records[0].Row.Number.ToString(CultureInfo.InvariantCulture)]);
         var id = Hash(key)[..24];
         var issued = ParseDate(first["issued"], date1904, locale, issues);
         var identity = new InvoiceIdentity(Text(first, "sellerTaxCode"), Text(first, "series"), Text(first, "number"), issued);
@@ -204,13 +210,24 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         var buyerKind = PartyKind.Unspecified;
         if (Text(first, "buyerKind").Length > 0 && (!Enum.TryParse(Text(first, "buyerKind"), true, out buyerKind) || !Enum.IsDefined(buyerKind)))
             issues.Add(new("PARTY_KIND_INVALID", IssueSeverity.Blocking, "Loại người mua phải là Organization hoặc Individual."));
-        var buyerName = Text(first, "buyer");
+        var buyerName = BuyerName(first);
+        var buyerContact = Text(first, "buyerContact");
+        // With "DN mua" the organisation is the buyer; "Người mua" is then only the person who took the invoice.
+        if (buyerContact.Length == 0 && Text(first, "buyerCompany").Length > 0
+            && TextKey.Compact(Text(first, "buyer")) != TextKey.Compact(buyerName))
+            buyerContact = Text(first, "buyer");
         var buyerCode = Text(first, "buyerCode");
         // Consumer invoices use MISA's standard NTD customer when the source
         // workbook does not carry a customer code.
         if (Normalize(buyerName) == Normalize("BÁN CHO NGƯỜI TIÊU DÙNG") && buyerCode.Length == 0)
         {
             buyerCode = "NTD";
+            buyerKind = PartyKind.Individual;
+            if (buyerPresence == ValuePresence.Missing) buyerPresence = ValuePresence.NotApplicable;
+        }
+        else if (BuyerCodes.IsAnonymous(buyerName))
+        {
+            // The code (MISA's "Khách lẻ") is looked up in the customer list when the invoice runs.
             buyerKind = PartyKind.Individual;
             if (buyerPresence == ValuePresence.Missing) buyerPresence = ValuePresence.NotApplicable;
         }
@@ -239,7 +256,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         var postedDate = DateField("postedDate") ?? signed;
         var invoice = new InvoiceDocument(id, source.ImportRevision, "", identity, invoiceSource,
             new Party(Text(first, "seller"), Text(first, "sellerTaxCode"), Text(first, "sellerAddress"), Text(first, "sellerCode"), Presence(Text(first, "sellerTaxCode"))),
-            new Party(buyerName, Text(first, "buyerTaxCode"), Text(first, "buyerAddress"), buyerCode, buyerPresence, buyerKind, Text(first, "buyerContact")),
+            new Party(buyerName, Text(first, "buyerTaxCode"), Text(first, "buyerAddress"), buyerCode, buyerPresence, buyerKind, buyerContact),
             Text(first, "template"), Text(first, "currency").Length == 0 ? "VND" : Text(first, "currency"),
             Text(first, "payment").Length == 0 ? "Tiền mặt" : Text(first, "payment"), issued, voucherDate, postedDate,
             Text(first, "invoiceType").Length == 0 ? "Hóa đơn bán hàng" : Text(first, "invoiceType"),
@@ -272,7 +289,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             cells.GetValueOrDefault(Text(cells, "signed").Length == 0 ? "issued" : "signed"));
         Fill("postedDate", Text(cells, "signed").Length == 0 ? Text(cells, "issued") : Text(cells, "signed"),
             cells.GetValueOrDefault(Text(cells, "signed").Length == 0 ? "issued" : "signed"));
-        if (Normalize(Text(cells, "buyer")) == Normalize("BÁN CHO NGƯỜI TIÊU DÙNG"))
+        if (Normalize(BuyerName(cells)) == Normalize("BÁN CHO NGƯỜI TIÊU DÙNG"))
         {
             Fill("buyerCode", "NTD");
             Fill("buyerKind", nameof(PartyKind.Individual));
@@ -381,6 +398,8 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
     }
 
     private static string Text(IReadOnlyDictionary<string, SourceCell> cells, string key) => cells.TryGetValue(key, out var cell) ? cell.ParsedValue?.Trim() ?? "" : "";
+    private static string BuyerName(IReadOnlyDictionary<string, SourceCell> cells)
+        => Text(cells, "buyerCompany") is { Length: > 0 } company ? company : Text(cells, "buyer");
     private static ValuePresence Presence(string value) => string.IsNullOrWhiteSpace(value) ? ValuePresence.Missing : ValuePresence.Provided;
     private static SourceCell Blank(string sheet, int row, int column) => new(sheet, row, column, CellAddress.Format(column, row), "", "blank", "", null, null);
     private static string Normalize(string? value) => Regex.Replace(new string((value ?? "").Normalize(NormalizationForm.FormD)

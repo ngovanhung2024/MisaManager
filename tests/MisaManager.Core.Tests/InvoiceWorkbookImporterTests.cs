@@ -135,6 +135,123 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
         Assert.Equal("NTD", result.Invoices[0].Buyer.Code);
     }
 
+    // ---- e-invoice portal export (DanhSachHoaDon_*.xlsx): STT, Mẫu số, Ký hiệu, …, Người mua, DN mua, … ----
+
+    private static readonly string[] PortalHeaders =
+    [
+        "STT", "Mẫu số", "Ký hiệu", "Số hóa đơn", "Ngày lập", "Người mua", "DN mua", "MST người mua", "Địa chỉ người mua",
+        "Tên hàng hóa", "Đơn vị tính", "Đơn giá", "Số lượng", "Tổng tiền chưa thuế", "Thuế hàng hóa", "Tiền thuế chi tiết", "Tổng tiền có thuế"
+    ];
+
+    // The portal writes every identifier and the date as text and the money columns as numbers.
+    private static object?[] PortalLine(int stt, string? number, string person, string company, string tax, string name = "COMPASS 60OD-100CC PET",
+        string unit = "Chai", double price = 41904.76, int quantity = 37, long amount = 1_550_476, int rate = 5, long taxAmount = 77_524)
+        => [stt.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "C26MLV", number ?? "", "06/10/2026", person, company, tax,
+            "", name, unit, price, quantity, amount, rate, taxAmount, amount + taxAmount];
+
+    private async Task<ImportResult> ImportPortal(params object?[][] lines)
+    {
+        var book = new WorkbookBuilder();
+        var sheet = book.Sheet("HoaDon").Row(1, PortalHeaders.Cast<object?>().ToArray());
+        for (var index = 0; index < lines.Length; index++) sheet.Row(index + 2, lines[index]);
+        return await Import(book);
+    }
+
+    [Fact]
+    public async Task PortalExportMapsDnMuaAndImportsTheInvoice()
+    {
+        var book = new WorkbookBuilder();
+        book.Sheet("HoaDon").Row(1, PortalHeaders.Cast<object?>().ToArray()).Row(2, PortalLine(1, "1824", "BÁN CHO NGƯỜI TIÊU DÙNG", "", ""));
+        var path = Save(book);
+        var workbook = await new WorkbookReader().ReadAsync(path, Token);
+
+        var schema = importer.DescribeMapping(workbook, "HoaDon");
+        var invoice = Only(await importer.ImportAsync(path, null, Token));
+
+        Assert.Equal(7, schema.Fields.Single(field => field.Key == "buyerCompany").SuggestedColumn);
+        Assert.Equal(6, schema.Fields.Single(field => field.Key == "buyer").SuggestedColumn);
+        Assert.False(invoice.IsBlocked);
+        Assert.Equal(("1824", new DateOnly(2026, 10, 6), "NTD"), (invoice.Identity.Number, invoice.Issued, invoice.Buyer.Code));
+        Assert.Equal((1_550_476m, 77_524m, 1_628_000m), (invoice.Subtotal, invoice.TaxTotal, invoice.GrandTotal));
+        Assert.Equal("5", invoice.Lines[0].TaxRate);
+    }
+
+    [Fact]
+    public async Task DnMuaNamesTheBuyerAndNguoiMuaBecomesTheContact()
+    {
+        var result = await ImportPortal(
+            PortalLine(1, "628", "Trần Duy Tiệp", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628"),
+            PortalLine(2, "628", "Trần Duy Tiệp", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628", "FUJI ONE 40EC-450CC PET"),
+            // "Người mua" left empty when only the organisation is printed on the invoice.
+            PortalLine(3, "863", "", "CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA", "3300100096"),
+            PortalLine(4, "1805", "CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA",
+                "CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA", "3300100096"),
+            PortalLine(5, "1454", "Lê Thị Hương", "", "046172000663"));
+
+        Assert.DoesNotContain(result.Issues, issue => issue.Severity == IssueSeverity.Blocking);
+        Assert.Equal(
+        [
+            ("CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "Trần Duy Tiệp", "3300100628"),
+            ("CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA", "", "3300100096"),
+            ("CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA", "", "3300100096"),
+            ("Lê Thị Hương", "", "046172000663")
+        ], result.Invoices.Select(invoice => (invoice.Buyer.Name, invoice.Buyer.Contact, invoice.Buyer.TaxCode)));
+        Assert.Equal(2, result.Invoices[0].Lines.Length);
+    }
+
+    [Fact]
+    public async Task DnMuaColumnAloneSatisfiesTheBuyerColumn()
+    {
+        var book = new WorkbookBuilder();
+        book.Sheet("HoaDon")
+            .Row(1, "Số hóa đơn", "Ngày lập", "DN mua", "MST người mua", "Tên hàng hóa", "Đơn vị tính", "Đơn giá", "Số lượng",
+                "Tổng tiền chưa thuế", "Thuế hàng hóa", "Tiền thuế chi tiết", "Tổng tiền có thuế")
+            .Row(2, "533", "09/04/2026", "TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ HƯNG LỘC", "3301747496", "Phân kali", "kg", 10_000, 10, 100_000, 5, 5_000, 105_000);
+
+        var result = await Import(book);
+
+        Assert.DoesNotContain(result.Issues, issue => issue.Code == "COLUMN_MISSING");
+        Assert.Equal("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ HƯNG LỘC", Only(result).Buyer.Name);
+        Assert.False(result.IsBlocked);
+    }
+
+    [Theory]
+    [InlineData("Khách hàng không cung cấp thông tin")]
+    [InlineData("KHACH HANG KHONG CUNG CAP THONG TIN")]
+    public async Task AnonymousBuyerNeedsNoTaxCodeAndKeepsTheCodeForTheCatalog(string buyer)
+    {
+        var invoice = Only(await ImportPortal(PortalLine(1, "1425", buyer, "", "")));
+
+        Assert.False(invoice.IsBlocked);
+        Assert.Equal(("", PartyKind.Individual, ValuePresence.NotApplicable), (invoice.Buyer.Code, invoice.Buyer.Kind, invoice.Buyer.TaxCodePresence));
+        Assert.Contains(invoice.Issues, issue => issue.Code == "BUYER_TAX_OPTIONAL" && issue.Severity == IssueSeverity.Info);
+    }
+
+    [Fact]
+    public async Task NamedBuyerWithoutTaxCodeIsStillBlocked()
+    {
+        var invoice = Only(await ImportPortal(PortalLine(1, "1040", "Hoàng Trọng Tiếp", "", "")));
+
+        Assert.True(Has(invoice.Issues, "BUYER_TAX_STATUS"));
+    }
+
+    /// <summary>Invoices not yet numbered by the portal: one blocked group per row, each with its own ID.</summary>
+    [Fact]
+    public async Task RowsWithoutNumberAreBlockedWithDistinctIds()
+    {
+        var result = await ImportPortal(
+            PortalLine(1, null, "Khách hàng không cung cấp thông tin", "", ""),
+            PortalLine(2, null, "Khách hàng không cung cấp thông tin", "", "", "Chani 300EC - 100ml (ĐN Nicotex)"),
+            PortalLine(3, "1823", "BÁN CHO NGƯỜI TIÊU DÙNG", "", ""));
+
+        Assert.Equal(3, result.Invoices.Count);
+        Assert.Equal(3, result.Invoices.Select(invoice => invoice.InvoiceId).Distinct().Count());
+        Assert.Equal(2, result.Issues.Count(issue => issue.Code == "INVOICE_NUMBER_MISSING"));
+        Assert.All(result.Invoices.Where(invoice => invoice.Identity.Number.Length == 0),
+            invoice => Assert.True(Has(invoice.Issues, "NUMBER_MISSING")));
+        Assert.False(result.Invoices.Single(invoice => invoice.Identity.Number == "1823").IsBlocked);
+    }
+
     [Fact]
     public async Task ImportIsRepeatableForTheSameFile()
     {

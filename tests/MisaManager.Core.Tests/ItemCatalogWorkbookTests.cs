@@ -46,6 +46,30 @@ public sealed class ItemCatalogWorkbookTests : IDisposable
         ], items);
     }
 
+    /// <summary>Newer exports add stock, conversion rate, description and sale-price columns around the four used ones.</summary>
+    [Fact]
+    public async Task ExtraColumnsOfTheCurrentExportAreIgnored()
+    {
+        var book = new WorkbookBuilder();
+        var sheet = book.Sheet("Vat_tu__hang_hoa__dich_vu");
+        sheet.Row(1, "DANH SÁCH VẬT TƯ, HÀNG HÓA, DỊCH VỤ").Merge("A1:L1");
+        sheet.Row(2, "Mã", "Tên", "ĐVT chính", "Số lượng tồn", "Đơn vị chuyển đổi", "Tỷ lệ chuyển đổi về đơn vị chính", "Phép tính",
+            "Mô tả", "Đơn giá bán 1", "Đơn giá bán 2", "Đơn giá bán 3", "Đơn giá cố định");
+        sheet.Row(3, "CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn", 17.25, "kg", 1000, "/", "1 kg = 1/1.000,00 Tấn", 0, 0, 0, 0);
+        sheet.Row(4, "CPMH", "Chi phí mua hàng", null, 0);
+        sheet.Row(5, "HH_179", "NÓN TAI BÈO", "Cái", 12);
+        sheet.Row(6, "Số dòng = 3");
+
+        var items = await Read(book);
+
+        Assert.Equal(
+        [
+            new ItemCatalogEntry("CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn", "kg"),
+            new ItemCatalogEntry("CPMH", "Chi phí mua hàng", ""),
+            new ItemCatalogEntry("HH_179", "NÓN TAI BÈO", "Cái")
+        ], items);
+    }
+
     [Theory]
     [InlineData("Mã hàng", "Tên hàng", "ĐVT")]
     [InlineData("Ma hang", "Ten hang hoa", "DVT chinh")]

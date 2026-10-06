@@ -143,6 +143,11 @@ tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MT
 `TextKey` (cách bỏ dấu cũ/mới, chữ Đ giả, khoảng trắng, ký tự ẩn, hoa/thường). Bán cho người tiêu dùng luôn dùng `NTD`;
 mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ**
 (`CUSTOMER_CODE_MISSING` / `CUSTOMER_AMBIGUOUS`).
+Tên người mua lấy từ cột **DN mua** (đơn vị mua) của file hóa đơn nếu ô có dữ liệu; khi đó **Người mua** chỉ là người liên hệ.
+DN mua trống thì dùng Người mua; file chỉ có cột DN mua cũng nhập được. Người mua "Khách hàng không cung cấp thông tin"
+không cần MST và nhập vào khách hàng **Khách lẻ** của danh mục khách hàng (như các chứng từ đã ghi sổ); danh mục không có
+Khách lẻ → `CUSTOMER_CODE_MISSING`. Người mua có tên khác mà thiếu MST vẫn bị chặn để không chọn nhầm mã cùng tên.
+Dòng không có số hóa đơn (hóa đơn chưa được cấp số) hiện thành hóa đơn lỗi riêng từng dòng và không nhập được.
 Mã số thuế người mua được đối chiếu ở bước đối chiếu trước khi Cất (tab Hóa đơn). Nếu bản R20 không hiện ô MST khớp
 selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
 `PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.

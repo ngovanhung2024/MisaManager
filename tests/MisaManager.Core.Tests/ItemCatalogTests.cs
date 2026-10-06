@@ -604,7 +604,9 @@ public sealed class ItemCatalogTests : IDisposable
         Assert.Equal(store.Snapshot().OrderBy(item => item.Code), reopened.Snapshot().OrderBy(item => item.Code));
         Assert.Equal(store.SourceFile, reopened.SourceFile);
         Assert.NotNull(reopened.UpdatedAt);
-        Assert.Equal("CM GOLD 20.10.10", reopened.Find("Phân NPK Cà Mau Gold 20-10-10-25kg", "kg")!.Code);
+        Assert.Equal("HH_02", reopened.Find("Phân NPK 16.16.813S QN", "kg")!.Code);
+        // Provenance survives the reload: a cached code missing from the export is still not auto-selected.
+        Assert.Null(reopened.Find("Phân NPK Cà Mau Gold 20-10-10-25kg", "kg"));
     }
 
     [Fact]

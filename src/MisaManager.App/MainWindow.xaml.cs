@@ -686,6 +686,7 @@ public partial class MainWindow : Window
         "sellerAddress" => "Địa chỉ người bán",
         "sellerCode" => "Mã người bán",
         "buyer" => "Tên người mua",
+        "buyerCompany" => "DN mua (đơn vị mua)",
         "buyerTaxCode" => "MST người mua",
         "buyerAddress" => "Địa chỉ người mua",
         "buyerCode" => "Mã khách hàng",
