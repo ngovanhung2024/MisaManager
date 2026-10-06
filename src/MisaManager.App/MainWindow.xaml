@@ -141,6 +141,10 @@
                     ToolTip="Chọn file Excel hóa đơn (hodon.xlsx)"/>
           <MenuItem Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA"/>
+          <MenuItem Header="Nạp nhóm vật tư, hàng hóa…" Click="ChooseItemGroups_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Nạp danh sách nhóm VTHH xuất từ MISA (HH, DV, NVL…): mã hàng mới tool tạo bắt đầu bằng mã nhóm, ví dụ HH_337, DV_01"/>
+          <MenuItem Header="Kiểm tra danh mục mã hàng" Click="AuditCatalog_Click"
+                    ToolTip="Báo trước các mã trùng tên, mã sai quy tắc nhóm VTHH trong danh mục đã nạp"/>
           <Separator/>
           <MenuItem Header="Thêm mã khách hàng…" Click="ChooseCustomers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách khách hàng xuất từ MISA (Mã, Tên, MST) để tìm mã khách hàng theo tên người mua"/>
@@ -150,7 +154,7 @@
                     ToolTip="Nạp danh sách bán hàng xuất từ MISA (Số hóa đơn, Ký hiệu HĐ): các hóa đơn có trong file được đánh dấu đã ghi sổ và không được thêm vào MISA nữa"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
           <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, mã khách hàng, nhà cung cấp và danh sách hóa đơn đã ghi sổ. Lịch sử chống nhập trùng được giữ lại."/>
+                    ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, nhóm VTHH, mã khách hàng, nhà cung cấp và danh sách hóa đơn đã ghi sổ. Lịch sử chống nhập trùng được giữ lại."/>
           <Separator/>
           <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
           <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>

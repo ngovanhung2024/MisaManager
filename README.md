@@ -147,6 +147,21 @@ Mã số thuế người mua được đối chiếu ở bước đối chiếu 
 selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
 `PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.
 
+## Nhóm vật tư, hàng hóa & quy tắc mã hàng mới
+
+**••• → Nạp nhóm vật tư, hàng hóa…** nạp file danh sách nhóm VTHH xuất từ MISA (cột Mã nhóm, Tên nhóm; bỏ dòng "Ngừng
+theo dõi" và "Số dòng = N"), lưu tại `%LOCALAPPDATA%\MisaManager\item-groups.json`. Mã hàng mới tool tạo (F9) bắt đầu
+bằng mã nhóm + `_` và đánh số riêng theo từng nhóm: `HH_337`, `DV_01`, `NVL_01`. Nhóm đoán theo tên/ĐVT: ĐVT Lần/Giờ/
+Ngày/Phút/Tháng/Chuyến/Ca/Công hoặc tên bắt đầu bằng Dịch vụ/Chi phí/Phí/Lệ phí/Cước/Vận chuyển/Thuê/Sửa chữa… → `DV`;
+tên bắt đầu bằng Nguyên (vật) liệu/Vật liệu → `NVL`; còn lại → `HH`. Nhóm đoán ra không có trong file thì dùng `HH`;
+chưa nạp file nhóm thì mọi mã mới vẫn là `HH_n` như cũ. Dòng chi tiết dưới danh mục mã hàng hiện tên hàng sẽ tạo mới kèm
+tiền tố (ví dụ `Phí vận chuyển → DV_`) để phát hiện sai nhóm trước khi chạy. Tool chỉ đặt mã, chưa chọn ô **Nhóm VTHH**
+trong hộp thoại thêm mới của MISA.
+
+**••• → Kiểm tra danh mục mã hàng** (tự hiện sau khi nạp mã hàng/nhóm nếu có vấn đề) báo trước: mã có khoảng trắng
+(`HH _CAI`), mã không bắt đầu bằng mã nhóm nào, và tên trùng nhiều mã cùng ĐVT (hóa đơn không ghi mã sẽ dừng
+`ITEM_AMBIGUOUS`).
+
 ## Hóa đơn đã ghi sổ
 
 **••• → Bỏ hóa đơn đã ghi sổ…** nạp file danh sách chứng từ bán hàng xuất từ MISA (`Ban_hang.xlsx`: cột Số hóa đơn, Ký hiệu

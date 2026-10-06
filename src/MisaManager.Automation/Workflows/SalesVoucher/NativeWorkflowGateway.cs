@@ -97,6 +97,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     public ItemResolutionDiagnostic? LastItemResolution { get; private set; }
     /// <summary>Customer/supplier codes; used when the source has no customer code.</summary>
     public PartyCatalogStore? PartyCatalog { get; set; }
+    /// <summary>Item groups from MISA; the group code (HH/DV/NVL…) is the prefix of a created item code.</summary>
+    public ItemGroupStore? ItemGroups { get; set; }
     /// <summary>Dừng ngay; shared with <see cref="WorkflowRunner.StopSignal"/>.</summary>
     public WorkflowStopSignal? StopSignal { get; set; }
     // Only entry steps stop mid-checkpoint; opening the voucher, creating an item, Cất and Bỏ always finish.
@@ -490,7 +492,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // MISA pre-fills its next code from the live database, which also covers codes
         // created by other users or sessions since the local catalog was exported.
         var proposed = (await input.ReadFieldAsync(newItem, profile.ItemNewCode, token)).Value?.Trim();
-        var code = catalog.NextCode(proposed: proposed);
+        var code = catalog.NextCode(ItemGroups?.CodePrefix(line.Name, line.Unit) ?? "HH_", proposed);
         // Unit, warehouse and tax are ComboBoxes: focus must be verified before any key is sent,
         // otherwise a Tab could commit text into another field of the dialog.
         if (!string.Equals(proposed, code, StringComparison.Ordinal))

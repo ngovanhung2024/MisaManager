@@ -258,15 +258,55 @@ public partial class MainWindow : Window
             var total = await Task.Run(() => services.ItemCatalog.Merge(items, dialog.FileName));
             RefreshCatalogLabel();
             StatusLabel.Text = $"Đã nạp {items.Count:N0} mã hàng từ {Path.GetFileName(dialog.FileName)}; database có {total:N0} mã.";
+            ShowCatalogAudit(onlyWhenFindings: true);
         }
         catch (Exception error) { StatusLabel.Text = "Không nạp được file mã hàng: " + error.Message; }
     }
 
+    private async void ChooseItemGroups_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Chọn file danh sách nhóm vật tư, hàng hóa, dịch vụ xuất từ MISA" };
+        if (dialog.ShowDialog(this) != true) return;
+        var services = ((App)Application.Current).Services;
+        StatusLabel.Text = "Đang đọc file nhóm vật tư, hàng hóa...";
+        try
+        {
+            var groups = await ItemGroupWorkbook.ReadAsync(services.WorkbookReader, dialog.FileName);
+            var count = await Task.Run(() => services.ItemGroups.Replace(groups, dialog.FileName));
+            RefreshCatalogLabel();
+            StatusLabel.Text = $"Đã nạp {count:N0} nhóm VTHH ({string.Join(", ", services.ItemGroups.Snapshot().Select(group => group.Code))}); "
+                + "mã hàng mới sẽ bắt đầu bằng mã nhóm.";
+            if (services.ItemCatalog.Count > 0) ShowCatalogAudit(onlyWhenFindings: true);
+        }
+        catch (Exception error) { StatusLabel.Text = "Không nạp được file nhóm vật tư, hàng hóa: " + error.Message; }
+    }
+
+    private void AuditCatalog_Click(object sender, RoutedEventArgs e) => ShowCatalogAudit(onlyWhenFindings: false);
+
+    private void ShowCatalogAudit(bool onlyWhenFindings)
+    {
+        var services = ((App)Application.Current).Services;
+        if (services.ItemCatalog.Count == 0)
+        {
+            if (!onlyWhenFindings) StatusLabel.Text = "Chưa nạp danh mục mã hàng để kiểm tra.";
+            return;
+        }
+        var findings = CatalogAudit.Items(services.ItemCatalog.Snapshot(), services.ItemGroups);
+        if (findings.Count == 0 && onlyWhenFindings) return;
+        var groups = services.ItemGroups.Count == 0 ? "Chưa nạp nhóm VTHH: mã hàng mới sẽ theo dạng HH_n.\n\n" : "";
+        MessageBox.Show(this, groups + (findings.Count == 0 ? "Không phát hiện vấn đề trong danh mục mã hàng."
+                : string.Join("\n\n", findings.Select(finding => "• " + finding))),
+            "Kiểm tra danh mục mã hàng", MessageBoxButton.OK, findings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
     private void RefreshCatalogLabel()
     {
-        var catalog = ((App)Application.Current).Services.ItemCatalog;
+        var services = ((App)Application.Current).Services;
+        var catalog = services.ItemCatalog;
         CatalogLabel.Text = catalog.Count == 0 ? "Chưa nạp danh mục mã hàng"
-            : $"{catalog.Count:N0} mã · {Path.GetFileName(catalog.SourceFile ?? catalog.FilePath)}";
+            : $"{catalog.Count:N0} mã · {Path.GetFileName(catalog.SourceFile ?? catalog.FilePath)}"
+                + (services.ItemGroups.Count == 0 ? "" : $" · {services.ItemGroups.Count} nhóm VTHH");
         CatalogLabel.ToolTip = catalog.SourceFile;
         var names = invoices.SelectMany(row => row.Invoice.Lines)
             .Where(line => line.ItemCode.Trim().Length == 0)
@@ -276,7 +316,8 @@ public partial class MainWindow : Window
         var ambiguous = new List<string>();
         foreach (var line in names)
         {
-            try { if (catalog.Find(line.Name, line.Unit) is null) missing.Add(line.Name); }
+            // Shows the group prefix the new code will get, so a wrong group is caught before the run.
+            try { if (catalog.Find(line.Name, line.Unit) is null) missing.Add($"{line.Name} → {services.ItemGroups.CodePrefix(line.Name, line.Unit)}"); }
             catch (AutomationException) { ambiguous.Add(line.Name); }
         }
         CatalogDetail.Text = (missing.Count == 0 ? $"Đủ mã cho {names.Length} tên hàng trong file hóa đơn."
@@ -991,6 +1032,7 @@ public partial class MainWindow : Window
                 + "• Danh sách hóa đơn và các chỉnh sửa trên hóa đơn\n"
                 + "• Toàn bộ danh mục mã hàng (kể cả mã do tool đã tạo)\n"
                 + "• Danh sách mã khách hàng và nhà cung cấp\n"
+                + "• Danh sách nhóm vật tư, hàng hóa\n"
                 + "• Danh sách hóa đơn đã ghi sổ\n\n"
                 + "Sau khi xóa, hãy nạp lại danh mục mới nhất xuất từ MISA. Lịch sử nhập (chống nhập trùng) và cấu hình cột "
                 + "được giữ lại. Không hoàn tác được.",
@@ -1014,12 +1056,13 @@ public partial class MainWindow : Window
             var removedItems = await Task.Run(services.ItemCatalog.Clear);
             await Task.Run(services.PartyCatalog.Clear);
             await Task.Run(services.PostedInvoices.Clear);
+            await Task.Run(services.ItemGroups.Clear);
             RefreshCatalogLabel();
             RefreshPartyLabel();
             presentationInitialized = false;
             RefreshWorkflowPanel();
             RefreshRunSummary();
-            StatusLabel.Text = $"Đã xóa sạch dữ liệu: danh sách hóa đơn, {removedItems:N0} mã hàng, mã khách hàng, nhà cung cấp và hóa đơn đã ghi sổ.";
+            StatusLabel.Text = $"Đã xóa sạch dữ liệu: danh sách hóa đơn, {removedItems:N0} mã hàng, nhóm VTHH, mã khách hàng, nhà cung cấp và hóa đơn đã ghi sổ.";
         }
         catch (Exception error) { StatusLabel.Text = "Không xóa hết được dữ liệu Excel: " + error.Message; }
     }
