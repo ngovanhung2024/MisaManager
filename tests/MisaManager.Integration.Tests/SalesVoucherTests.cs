@@ -623,6 +623,46 @@ public sealed class SalesVoucherTests : UiTest
     });
 
     [Fact]
+    public Task NewSessionReleasesSaveUncertainRunOfAnEarlierMisaSessionWithoutReplayingIt() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var old = Invoices.Build(TempDirectory(misa), "1654", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+        var next = Invoices.Build(TempDirectory(misa), "1655", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+        var entered = await harness.EnterWithoutSavingAsync(old, misa, token);
+        await misa.CloseVoucherAsUserAsync(token);
+        // The report: Cất was sent in a MISA process that has since been restarted.
+        const string earlierSession = "pid=1;start=2026-10-06T00:00:00.0000000Z;hwnd=1;exe=MISA.exe";
+        var uncertain = entered.Context with
+        {
+            WindowIdentity = earlierSession,
+            Snapshot = entered.Context.Snapshot with
+            {
+                WindowIdentity = earlierSession, Status = WorkflowStatus.SaveUncertain,
+                InputMayHaveBeenSent = true, LastInputDisposition = InputDisposition.Uncertain
+            }
+        };
+        await new JsonStateStore(Path.Combine(misa.Root, "state")).WriteAsync("workflow-session", "session.json", uncertain, token);
+        await using var reopened = new AutomationHarness(misa.Root);
+        var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => reopened.RunAsync(next, misa, token));
+        Assert.Contains("SaveUncertain", blocked.Message);
+
+        var result = await reopened.RunNewSessionAsync(next, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("1655", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+        var journal = (await reopened.Runner.ReadHistoryAsync(token)).Single(run => run.Snapshot.RunId == uncertain.Snapshot.RunId);
+        Assert.True(journal.SessionDetached);
+        Assert.Equal(WorkflowStatus.SaveUncertain, journal.Snapshot.Status);
+        // The released run still guards its own invoice: no input is sent for 1654 again.
+        var inputs = reopened.Input.WorkflowInputSequence;
+        var guard = await Assert.ThrowsAsync<AutomationException>(() => reopened.RunNewSessionAsync(old, misa, token));
+        Assert.Equal("DETACHED_INVOICE_UNCERTAIN", guard.Code);
+        Assert.Equal(inputs, reopened.Input.WorkflowInputSequence);
+        Assert.Single(misa.State().Vouchers);
+    });
+
+    [Fact]
     public Task DetachedUnsavedInvoiceCanStartFromReadyOnceTheRegisterProvesItAbsent() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1045", Invoices.Consumer,
