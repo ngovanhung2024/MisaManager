@@ -208,6 +208,18 @@ public sealed class PartyCatalogTests : IDisposable
         Assert.False(BuyerCodes.IsAnonymous("BÁN CHO NGƯỜI TIÊU DÙNG"));
     }
 
+    [Theory]
+    [InlineData("CÔNG TY CỔ PHẦN ĐẦU TƯ VÀ PHÁT TRIỂN LÂM NGHIỆP A&V", true)]
+    [InlineData("CTY. TNHH ABC", true)]
+    [InlineData("Hợp tác xã nông nghiệp Vinh Hà", true)]
+    [InlineData("HTX Phú Lộc", true)]
+    [InlineData("Chi nhánh Huế - Ngân hàng X", true)]
+    [InlineData("Hoàng Trọng Tiếp", false)]
+    [InlineData("Trương Văn Công", false)]
+    [InlineData("", false)]
+    public void OrganizationNamesAreRecognisedByWholeWords(string name, bool expected)
+        => Assert.Equal(expected, BuyerCodes.LooksLikeOrganization(name));
+
     /// <summary>The real export stores "Ngừng theo dõi" as boolean cells, not "0"/"1" text.</summary>
     [Fact]
     public async Task BooleanStoppedColumnDropsOnlyStoppedRows()

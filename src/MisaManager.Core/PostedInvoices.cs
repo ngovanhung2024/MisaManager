@@ -43,6 +43,23 @@ public sealed class PostedInvoiceStore
 
     public bool Contains(InvoiceDocument invoice) => Contains(invoice.Identity.Number, invoice.Identity.Series);
 
+    /// <summary>
+    /// The invoices still to enter: posted ones are dropped with their issues, so an invoice MISA already has never
+    /// shows up as an error.
+    /// </summary>
+    public (ImportResult Pending, int Posted) WithoutPosted(ImportResult result)
+    {
+        var posted = result.Invoices.Where(Contains).ToArray();
+        if (posted.Length == 0) return (result, 0);
+        var ids = posted.Select(invoice => invoice.InvoiceId).ToHashSet(StringComparer.Ordinal);
+        var postedIssues = posted.SelectMany(invoice => invoice.Issues.IsDefault ? [] : invoice.Issues).ToHashSet();
+        return (result with
+        {
+            Invoices = result.Invoices.Where(invoice => !ids.Contains(invoice.InvoiceId)).ToArray(),
+            Issues = result.Issues.Where(issue => !(issue.InvoiceId is { } id && ids.Contains(id)) && !postedIssues.Contains(issue)).ToArray()
+        }, posted.Length);
+    }
+
     /// <summary>A missing series on either side matches any series, so an invoice is never entered twice for lack of it.</summary>
     public bool Contains(string? number, string? series)
     {

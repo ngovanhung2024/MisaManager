@@ -143,6 +143,31 @@ public sealed class ValidationTests
     }
 
     [Theory]
+    [InlineData("Hoàng Trọng Tiếp")]
+    [InlineData("Huỳnh Thị Như Ý")]
+    [InlineData("LÊ THỊ THANH LIÊN")]
+    public void IndividualWithoutTaxCodeIsAnInfoNotABlock(string name)
+    {
+        var buyer = new Party(name, "", "Huế", "", ValuePresence.Missing);
+        var invoice = new InvoiceBuilder().WithBuyer(buyer).Build();
+
+        Assert.False(invoice.IsBlocked);
+        Assert.Equal(IssueSeverity.Info, Single(invoice.Issues, "BUYER_TAX_OPTIONAL").Severity);
+    }
+
+    [Theory]
+    [InlineData("CÔNG TY TNHH LÂM NGHIỆP NAM HÒA")]
+    [InlineData("Cty CP Dệt May Huế")]
+    [InlineData("HỢP TÁC XÃ NÔNG NGHIỆP VINH HÀ")]
+    [InlineData("VƯỜN QUỐC GIA BẠCH MÃ")]
+    public void UnspecifiedBuyerNamedLikeAnOrganizationStillNeedsATaxCode(string name)
+    {
+        var buyer = new Party(name, "", "Huế", "", ValuePresence.Missing);
+
+        AssertBlocking(new InvoiceBuilder().WithBuyer(buyer).Build().Issues, "BUYER_TAX_STATUS");
+    }
+
+    [Theory]
     [InlineData("BÁN CHO NGƯỜI TIÊU DÙNG")]
     [InlineData("Bán cho người tiêu dùng")]
     [InlineData("KHÁCH LẺ - NGƯỜI TIÊU DÙNG")]

@@ -168,13 +168,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Unticks invoices that are saved, already in MISA or posted (e.g. after loading the posted list).</summary>
-    public void UncheckDone()
-    {
-        var done = InvoiceQueue.Where(IsDone).Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal);
-        if (checkedFingerprints.RemoveWhere(done.Contains) > 0) CheckedChanged?.Invoke(this, EventArgs.Empty);
-    }
-
     /// <summary>Invoices that can still be entered: not blocked and neither saved, already in MISA nor posted.</summary>
     public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice));
 

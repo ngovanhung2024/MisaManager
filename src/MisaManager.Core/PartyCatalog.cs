@@ -223,6 +223,20 @@ public static class BuyerCodes
     /// <summary>E-invoice placeholder for a buyer without name/MST, e.g. "Khách hàng không cung cấp thông tin".</summary>
     public static bool IsAnonymous(string? name) => AnonymousKeys.Contains(Plain(name));
 
+    // Organisations must carry an MST; any other named buyer is taken as an individual, who may have none.
+    private static readonly string[] OrganizationWords =
+    [
+        "CONG TY", "CTY", "HOP TAC XA", "HTX", "DOANH NGHIEP", "DNTN", "CHI NHANH", "TAP DOAN", "XI NGHIEP", "NHA MAY",
+        "TRUNG TAM", "VUON QUOC GIA", "UBND", "UY BAN", "BAN QUAN LY", "BENH VIEN", "NGAN HANG", "HIEP HOI", "VAN PHONG"
+    ];
+
+    public static bool LooksLikeOrganization(string? name)
+    {
+        var words = " " + string.Join(' ', TextKey.Canonical(name).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => Plain(word)).Where(word => word.Length > 0)) + " ";
+        return OrganizationWords.Any(phrase => words.Contains(" " + phrase + " ", StringComparison.Ordinal));
+    }
+
     /// <summary>
     /// The Excel code wins; consumer sales always use NTD; anonymous buyers use the catalog's "Khách lẻ"; otherwise the
     /// customer/supplier catalog is searched by name.
