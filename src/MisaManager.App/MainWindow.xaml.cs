@@ -109,7 +109,11 @@ public partial class MainWindow : Window
             lastWorkflowError = null;
             ErrorPopup.Visibility = Visibility.Collapsed;
         };
-        ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshCatalogLabel);
+        ((App)Application.Current).Services.ItemCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            RefreshCatalogLabel();
+            RefreshHolds();
+        });
         ((App)Application.Current).Services.PartyCatalog.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshPartyLabel);
         workflow.ErrorRaised += Workflow_ErrorRaised;
         workflow.CheckedChanged += (_, _) => { RefreshChecked(); SaveTicks(); };
@@ -396,6 +400,13 @@ public partial class MainWindow : Window
         PartyDetail.Visibility = Visibility.Visible;
     }
 
+    private void RefreshHolds()
+    {
+        workflow.RefreshHolds();
+        foreach (var row in invoices) row.Refresh();
+        if (InvoiceList.SelectedItem is InvoiceRow selected) ShowIssues(selected.Invoice);
+    }
+
     private void RefreshChecked()
     {
         foreach (var row in invoices) row.RefreshChecked();
@@ -403,7 +414,7 @@ public partial class MainWindow : Window
     }
 
     private void CheckAll_Click(object sender, RoutedEventArgs e)
-        => workflow.SetCheckedMany(invoices.Where(row => !row.Invoice.IsBlocked).Select(row => row.Invoice.Fingerprint));
+        => workflow.SetCheckedMany(invoices.Where(row => !row.Invoice.IsBlocked && !workflow.IsHeld(row.Invoice)).Select(row => row.Invoice.Fingerprint));
 
     private void UncheckAll_Click(object sender, RoutedEventArgs e) => workflow.SetCheckedMany([]);
 
@@ -439,7 +450,7 @@ public partial class MainWindow : Window
         RefreshWorkflowPanel();
     }
 
-    private void ShowIssues(InvoiceDocument invoice) => SetVisibleIssues(invoice.Issues);
+    private void ShowIssues(InvoiceDocument invoice) => SetVisibleIssues(invoice.Issues.Concat(workflow.HoldIssues(invoice)));
 
     private void SetVisibleIssues(IEnumerable<ImportIssue> issues)
     {
@@ -579,11 +590,13 @@ public partial class MainWindow : Window
         RefreshRunSummary();
         ShowWorkbookIssues();
         var blocked = ordered.Count(invoice => invoice.IsBlocked);
+        var held = ordered.Count(workflow.IsHeld);
         return $"{ordered.Length:N0} hóa đơn chưa nhập"
             + (posted.Count == 0 ? " (chưa nạp danh sách đã ghi sổ)" : $" · bỏ {hidden:N0} hóa đơn đã ghi sổ")
             + (imported.SkippedUnnumberedRows > 0 ? $" · bỏ {imported.SkippedUnnumberedRows:N0} dòng chưa có số" : "")
             + (imported.SkippedNegativeInvoices > 0 ? $" · bỏ {imported.SkippedNegativeInvoices:N0} hóa đơn số lượng âm" : "")
-            + (blocked > 0 ? $" · {blocked:N0} hóa đơn cần bổ sung dữ liệu" : "");
+            + (blocked > 0 ? $" · {blocked:N0} hóa đơn cần bổ sung dữ liệu" : "")
+            + (held > 0 ? $" · {held:N0} hóa đơn tạm hoãn (mặt hàng trùng tên nhiều mã)" : "");
     }
 
     private ImportSessionStore ImportSessions => ((App)Application.Current).Services.ImportSessions;
@@ -1106,7 +1119,14 @@ public partial class MainWindow : Window
             PropertyChanged?.Invoke(this, new(nameof(DisplayStatus)));
             PropertyChanged?.Invoke(this, new(nameof(StatusKind)));
             PropertyChanged?.Invoke(this, new(nameof(DisplaySummary)));
+            PropertyChanged?.Invoke(this, new(nameof(CanCheck)));
+            PropertyChanged?.Invoke(this, new(nameof(CheckTip)));
         }
+        /// <summary>Held invoices (duplicate item names in the catalog) cannot be ticked.</summary>
+        public bool CanCheck => !selection.IsHeld(Invoice);
+        public string CheckTip => selection.HoldIssues(Invoice) is { Count: > 0 } issues
+            ? string.Join(Environment.NewLine, issues.Select(issue => issue.Message))
+            : "Tick để đưa hóa đơn này vào danh sách chạy";
         public InvoiceDocument Invoice { get; }
         public InvoiceRow(InvoiceDocument invoice, WorkflowViewModel selection)
         {
@@ -1127,6 +1147,7 @@ public partial class MainWindow : Window
                 // MISA's register outranks an earlier failed/discarded run; a tool Cất keeps its own label.
                 if (IsPosted && LatestRun()?.Snapshot.Status != WorkflowStatus.Saved) return RunOutcome.PostedLabel;
                 if (Invoice.IsBlocked) return "Thiếu dữ liệu";
+                if (selection.IsHeld(Invoice)) return "Tạm hoãn";
                 if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot);
                 return "Sẵn sàng nhập";
             }
@@ -1137,7 +1158,7 @@ public partial class MainWindow : Window
             get
             {
                 if (IsPosted) return "saved";
-                if (Invoice.IsBlocked) return "attention";
+                if (Invoice.IsBlocked || selection.IsHeld(Invoice)) return "attention";
                 var snapshot = LatestRun()?.Snapshot;
                 if (snapshot is not null && RunOutcome.IsExisting(snapshot)) return "existing";
                 return snapshot?.Status switch

@@ -53,9 +53,30 @@ public sealed partial class ItemCatalogStore
 
     public static string NameKey(string? value) => TextKey.Compact(value);
 
-    // Only the packaging word inside a measured kg parenthesis is optional; keep the weight and product variant.
-    public static string ItemNameKey(string? value) => TextKey.LettersAndDigits(
-        Regex.Replace(TextKey.Canonical(value), @"(?<=\()\s*BAO\s*(?=\d+(?:\.\d+)?\s*KG\s*\))", "", RegexOptions.CultureInvariant));
+    /// <summary>
+    /// Name identity: <see cref="TextKey.LettersAndDigits"/> plus wording that MISA and the e-invoice system spell
+    /// differently for the same item: the packaging word of "(bao 25kg)", a bare distributor tag ("(ĐN)", trailing "ĐN"),
+    /// "bón" of "phân bón" and "khuyến mãi"/"khuyến mại". Weights, sizes and variant descriptions are kept.
+    /// </summary>
+    public static string ItemNameKey(string? value)
+    {
+        var text = Regex.Replace(TextKey.Canonical(value), @"(?<=\()\s*BAO\s*(?=\d+(?:\.\d+)?\s*KG\s*\))", "", RegexOptions.CultureInvariant);
+        text = DistributorTag().Replace(text, " ");
+        text = FertilizerWord.Replace(text, Fertilizer);
+        text = PromotionWord.Replace(text, Promotion);
+        return TextKey.LettersAndDigits(text);
+    }
+
+    [GeneratedRegex(@"\(\s*ĐN\s*\)|(?<![\p{L}\p{Mn}\p{Nd}])ĐN\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex DistributorTag();
+
+    // Canonical text is decomposed with tones moved, so these words are matched in that same form.
+    private static readonly string Fertilizer = TextKey.Canonical("PHÂN");
+    private static readonly Regex FertilizerWord = Word(TextKey.Canonical("PHÂN BÓN"));
+    private static readonly string Promotion = TextKey.Canonical("KHUYẾN MẠI");
+    private static readonly Regex PromotionWord = Word(TextKey.Canonical("KHUYẾN MÃI"));
+    private static Regex Word(string canonical)
+        => new(@"(?<![\p{L}\p{Mn}])" + Regex.Escape(canonical) + @"(?![\p{L}\p{Mn}])", RegexOptions.CultureInvariant);
 
     public IReadOnlyList<ItemCatalogEntry> Snapshot() { lock (gate) return items.ToArray(); }
     public IReadOnlyList<PendingItemCreation> PendingSnapshot() { lock (gate) return pending.ToArray(); }
@@ -73,30 +94,14 @@ public sealed partial class ItemCatalogStore
     /// </summary>
     public ItemCatalogEntry? Find(string name, string unit, bool allowKgToTon = false)
     {
-        ItemCatalogEntry[] candidates;
-        lock (gate)
-        {
-            candidates = byName.GetValueOrDefault(ItemNameKey(name)) ?? [];
-            var exported = candidates.Where(item => importedCodes?.Contains(item.Code) == true).ToArray();
-            if (exported.Length > 0) candidates = exported;
-            // Retained legacy rows reserve codes, but cannot prove that MISA still maps them to these names.
-            else if (importedCodes is not null) candidates = candidates.Where(item => verifiedCodes.Contains(item.Code)).ToArray();
-        }
+        var candidates = Candidates(name);
         if (candidates.Length == 0) return null;
-        var unitKey = NameKey(unit);
-        bool HasUnit(ItemCatalogEntry item, string key) => NameKey(item.Unit) == key || NameKey(item.ConversionUnit) == key;
-        var sameUnit = ExactSpelling(candidates.Where(item => HasUnit(item, unitKey)).ToArray(), name);
+        var sameUnit = SameUnit(candidates, unit, allowKgToTon);
         if (sameUnit.Length == 1) return sameUnit[0];
         if (sameUnit.Length > 1)
             throw new AutomationException("ITEM_AMBIGUOUS",
                 $"Danh mục có {sameUnit.Length} mã cùng tên '{name}' và ĐVT '{unit}' ({string.Join(", ", sameUnit.Select(item => item.Code))}). "
                 + "Hãy ghi đúng mã vào cột 'Mã hàng' của file Excel hóa đơn hoặc giữ lại một mã trong danh mục rồi nạp lại.");
-        // The workflow converts Kg to the item's Tấn unit only when the user authorised it.
-        if (allowKgToTon && unitKey == "KG")
-        {
-            var tons = ExactSpelling(candidates.Where(item => HasUnit(item, NameKey("Tấn"))).ToArray(), name);
-            if (tons.Length == 1) return tons[0];
-        }
         // Old exports may omit the unit column; a single unit-less match is still the same item.
         if (candidates.Length == 1 && candidates[0].Unit.Length == 0 && candidates[0].ConversionUnit.Length == 0)
             return candidates[0];
@@ -107,16 +112,36 @@ public sealed partial class ItemCatalogStore
     }
 
     /// <summary>
-    /// MISA can hold distinct items whose names differ only in punctuation/spacing ("FUJI ONE 40EC 100CC PET" and
-    /// "FUJI ONE 40EC-100CC PET"); they share an <see cref="ItemNameKey"/>, so the exact spelling picks one. Names that
-    /// differ in letters, e.g. the optional "bao" of "(bao 25kg)", are duplicates and stay ambiguous.
+    /// Codes that share the name (by <see cref="ItemNameKey"/>, so near-duplicates such as "FUJI ONE 40EC 100CC PET" and
+    /// "FUJI ONE 40EC-100CC PET" count too) and the unit; empty unless there are at least two.
     /// </summary>
-    private static ItemCatalogEntry[] ExactSpelling(ItemCatalogEntry[] matches, string name)
+    public IReadOnlyList<ItemCatalogEntry> Duplicates(string name, string unit, bool allowKgToTon = false)
     {
-        var letters = TextKey.LettersAndDigits(name);
-        if (matches.Length < 2 || matches.Any(item => TextKey.LettersAndDigits(item.Name) != letters)) return matches;
-        var exact = matches.Where(item => NameKey(item.Name) == NameKey(name)).ToArray();
-        return exact.Length == 1 ? exact : matches;
+        var sameUnit = SameUnit(Candidates(name), unit, allowKgToTon);
+        return sameUnit.Length > 1 ? sameUnit : [];
+    }
+
+    private ItemCatalogEntry[] Candidates(string name)
+    {
+        lock (gate)
+        {
+            var candidates = byName.GetValueOrDefault(ItemNameKey(name)) ?? [];
+            var exported = candidates.Where(item => importedCodes?.Contains(item.Code) == true).ToArray();
+            if (exported.Length > 0) return exported;
+            // Retained legacy rows reserve codes, but cannot prove that MISA still maps them to these names.
+            return importedCodes is null ? candidates : candidates.Where(item => verifiedCodes.Contains(item.Code)).ToArray();
+        }
+    }
+
+    private static ItemCatalogEntry[] SameUnit(ItemCatalogEntry[] candidates, string unit, bool allowKgToTon)
+    {
+        var unitKey = NameKey(unit);
+        bool HasUnit(ItemCatalogEntry item, string key) => NameKey(item.Unit) == key || NameKey(item.ConversionUnit) == key;
+        var sameUnit = candidates.Where(item => HasUnit(item, unitKey)).ToArray();
+        // The workflow converts Kg to the item's Tấn unit only when the user authorised it.
+        if (sameUnit.Length == 0 && allowKgToTon && unitKey == "KG")
+            sameUnit = candidates.Where(item => HasUnit(item, NameKey("Tấn"))).ToArray();
+        return sameUnit;
     }
 
     /// <summary>The spelling MISA uses for a unit that differs only in case/spacing (e.g. "kg", "Chai 90 ml").</summary>
