@@ -649,6 +649,14 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         => value.Snapshot.Status == WorkflowStatus.Paused && VoucherWasOpened(value);
 
     /// <summary>
+    /// A fresh Thêm vào MISA detaches every unfinished checkpoint (chưa rõ, bị chặn, tạm dừng). Its history entry keeps
+    /// the uncertainty, so entering that same invoice again still needs register proof. A voucher left open by Dừng ngay
+    /// is excluded: it is Bỏ once the MISA session is known.
+    /// </summary>
+    public static bool ReleasedByNewSession(WorkflowContext value)
+        => !IsTerminal(value.Snapshot.Status) && !StoppedWithOpenVoucher(value);
+
+    /// <summary>
     /// Bỏ the voucher Dừng ngay left half-entered (the gateway proves it is still this run's voucher), so the
     /// invoice can be entered again from scratch. Returns the run with its outcome; nothing else is replayed.
     /// </summary>

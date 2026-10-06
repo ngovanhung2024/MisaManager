@@ -297,8 +297,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             if (!resume)
             {
                 // A voucher left open by Dừng ngay is Bỏ once the MISA session is known (below), not abandoned here.
-                if (services.Workflow.Current is { Snapshot.Status: WorkflowStatus.Paused } stoppedRun
-                    && !WorkflowRunner.StoppedWithOpenVoucher(stoppedRun))
+                if (services.Workflow.Current is { } oldRun && WorkflowRunner.ReleasedByNewSession(oldRun))
                 {
                     var abandoned = await services.AbandonStoppedSessionAsync();
                     if (abandoned.Status != OperationStatuses.Completed)
