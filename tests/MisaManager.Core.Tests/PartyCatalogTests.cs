@@ -46,6 +46,20 @@ public sealed class PartyCatalogTests : IDisposable
     }
 
     [Fact]
+    public void ClearForgetsCustomersAndSuppliers()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, Customers, "Khach_hang.xlsx");
+        store.Replace(PartyRole.Supplier, Suppliers, "Nha_cung_cap.xlsx");
+
+        store.Clear();
+
+        var reloaded = Store();
+        Assert.Equal((0, 0, null, null), (reloaded.CustomerCount, reloaded.SupplierCount, reloaded.CustomerSource, reloaded.SupplierSource));
+        Assert.Null(reloaded.FindCode("CÔNG TY CỔ PHẦN DỆT MAY HUẾ"));
+    }
+
+    [Fact]
     public void EthLookAlikeIsReadAsVietnameseD()
     {
         var store = Store();

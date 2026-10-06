@@ -98,6 +98,22 @@ public sealed partial class PartyCatalogStore
         return cleaned.Length;
     }
 
+    public void Clear()
+    {
+        lock (gate)
+        {
+            var (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource) = (customers, suppliers, CustomerSource, SupplierSource);
+            (customers, suppliers, CustomerSource, SupplierSource) = (Index.Empty, Index.Empty, null, null);
+            try { SaveLocked(); }
+            catch
+            {
+                (customers, suppliers, CustomerSource, SupplierSource) = (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource);
+                throw;
+            }
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>
     /// Finds the code for a party name, preferring the most exact evidence: exact name, then tax code, then the relaxed
     /// name; customers before suppliers at each level. Returns null when nothing matches; throws when the best match

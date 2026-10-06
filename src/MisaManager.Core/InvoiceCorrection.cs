@@ -160,6 +160,18 @@ public sealed class InvoiceDraftStore(IStateStore state)
         return saved;
     }
 
+    /// <summary>Deletes all saved corrections of imported invoices.</summary>
+    public async Task ClearAsync(CancellationToken token = default)
+    {
+        await gate.WaitAsync(token);
+        try
+        {
+            var directory = Path.Combine(state.RootPath, "drafts");
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+        finally { gate.Release(); }
+    }
+
     public async Task<InvoiceCorrectionResult> CorrectAsync(InvoiceDocument source, InvoiceCorrection correction, CancellationToken token = default)
     {
         await gate.WaitAsync(token);
