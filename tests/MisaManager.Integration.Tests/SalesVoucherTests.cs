@@ -450,6 +450,20 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(TaxRoundingPrompt: true, TaxRoundingDifference: 25));
 
     [Fact]
+    public Task TaxPromptWhoseTextIsALabelWithoutPatternsIsAnsweredNo() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // Report 0.2.68 (hóa đơn 1657): READBACK_UNSUPPORTED while scanning the prompt's text elements.
+        var invoice = Invoices.Build(TempDirectory(misa), "1017", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(invoice.TaxTotal, Assert.Single(misa.State().Vouchers).TaxTotal);
+    }, new FakeScenario(TaxRoundingPrompt: true, TaxPromptAsLabel: true));
+
+    [Fact]
     public Task TwoInvoicesInOneSessionAreSavedAsSeparateVouchers() => WithFakeAsync(async (misa, harness, token) =>
     {
         var first = Invoices.Build(TempDirectory(misa), "1007", Invoices.AV,

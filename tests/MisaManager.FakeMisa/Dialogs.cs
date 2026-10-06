@@ -79,7 +79,7 @@ public sealed class NewItemWindow : Window
 /// <summary>MISA's warning when the voucher VAT total differs from the per-rate calculation.</summary>
 public sealed class TaxPromptWindow : Window
 {
-    public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated)
+    public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated, bool asLabel = false)
     {
         Ui.Id(this, profile.ScopeId("tax_rounding_prompt"));
         Title = "MISA SME 2023";
@@ -92,8 +92,10 @@ public sealed class TaxPromptWindow : Window
         var message = $"Tổng tiền thuế GTGT <{Ui.Money(source)}> khác (Tiền hàng - Tiền chiết khấu) * Thuế suất <{Ui.Money(calculated)}>, "
             + $"chênh lệch <{Ui.Money(source - calculated)}>. Bạn có muốn chương trình tự điều chỉnh số tiền chênh lệch này vào dòng hàng đầu tiên "
             + "có tiền thuế không? Xem hướng dẫn <a href=\"https://helpsme.misa.vn/2023/kb/canh_bao_tong_tien_thue_chenh_lech_khi_cat_chung_tu_ban_hang/\">TẠI ĐÂY</a>";
-        var text = new TextBox { Text = message, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 120, Margin = new Thickness(8) }
-            .Id(profile.Id("tax_rounding_prompt", "message"));
+        FrameworkElement text = asLabel
+            ? new Label { Content = message, Height = 120, Margin = new Thickness(8) }
+            : new TextBox { Text = message, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 120, Margin = new Thickness(8) };
+        text.Id(profile.Id("tax_rounding_prompt", "message"));
         var yes = Ui.Button("Có", width: 80);
         yes.Click += (_, _) => { Adjust = true; Close(); };
         var no = Ui.Button("Không", automationId: profile.Id("tax_rounding_prompt", "no"), width: 80);
