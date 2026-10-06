@@ -94,7 +94,7 @@
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel Margin="5,2">
-          <Button DockPanel.Dock="Right" Style="{StaticResource RailButton}" Content="Mở Excel" IsEnabled="{Binding CanEditSource}" Click="ChooseWorkbook_Click" ToolTip="Chọn file hóa đơn (hodon.xlsx)"/>
+          <Button DockPanel.Dock="Right" Style="{StaticResource RailButton}" Content="Mở Excel" IsEnabled="{Binding CanEditSource}" Click="ChooseWorkbook_Click" ToolTip="Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA"/>
           <Border DockPanel.Dock="Left" Width="22" Height="22" CornerRadius="5" Background="{StaticResource PrimarySoft}" Margin="0,0,6,0">
             <TextBlock Text="HĐ" FontSize="9.5" FontWeight="Bold" Foreground="{StaticResource Primary}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
@@ -138,7 +138,7 @@
       <Button x:Name="MoreButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
           <MenuItem Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Chọn file Excel hóa đơn (hodon.xlsx)"/>
+                    ToolTip="Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập"/>
           <MenuItem Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA"/>
           <MenuItem Header="Nạp nhóm vật tư, hàng hóa…" Click="ChooseItemGroups_Click" IsEnabled="{Binding CanEditSource}"
@@ -150,8 +150,6 @@
                     ToolTip="Nạp danh sách khách hàng xuất từ MISA (Mã, Tên, MST) để tìm mã khách hàng theo tên người mua"/>
           <MenuItem Header="Thêm mã nhà cung cấp…" Click="ChooseSuppliers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách nhà cung cấp xuất từ MISA; dùng khi người mua chỉ có trong danh mục nhà cung cấp"/>
-          <MenuItem Header="Bỏ hóa đơn đã ghi sổ…" Click="ChoosePostedInvoices_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Nạp danh sách bán hàng xuất từ MISA (Số hóa đơn, Ký hiệu HĐ): các hóa đơn có trong file được đánh dấu đã ghi sổ và không được thêm vào MISA nữa"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
           <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, nhóm VTHH, mã khách hàng, nhà cung cấp và danh sách hóa đơn đã ghi sổ. Lịch sử chống nhập trùng được giữ lại."/>
@@ -291,7 +289,7 @@
             <Grid>
               <StackPanel x:Name="EntryEmpty" Margin="10,8,10,6" VerticalAlignment="Top">
                 <TextBlock Text="Bắt đầu trong 3 bước" FontWeight="SemiBold" FontSize="14.5"/>
-                <TextBlock Text="1. Mở Excel hóa đơn." Foreground="{StaticResource Muted}" Margin="0,6,0,0"/>
+                <TextBlock Text="1. Mở Excel hóa đơn, rồi chọn file bán hàng đã ghi sổ (Ban_hang.xlsx) để chỉ hiện hóa đơn chưa nhập." Foreground="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                 <TextBlock Text="2. Nạp file mã hàng (danh mục vật tư, hàng hóa)." Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                 <TextBlock Text="3. Tick các hóa đơn cần chạy (hoặc chọn hóa đơn đầu tiên) rồi bấm Thêm vào MISA." Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                 <TextBlock Text="Đã lưu tô xanh · đã bỏ tô hồng · đã có trong MISA tô xanh xám · chưa rõ tô tím · lỗi tô đỏ · cần xử lý viền vàng · tạm dừng viền xám." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11.5" Margin="0,8,0,0"/>

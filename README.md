@@ -150,8 +150,10 @@ mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhi
 Tên người mua lấy từ cột **DN mua** (đơn vị mua) của file hóa đơn nếu ô có dữ liệu; khi đó **Người mua** chỉ là người liên hệ.
 DN mua trống thì dùng Người mua; file chỉ có cột DN mua cũng nhập được. Người mua "Khách hàng không cung cấp thông tin"
 không cần MST và nhập vào khách hàng **Khách lẻ** của danh mục khách hàng (như các chứng từ đã ghi sổ); danh mục không có
-Khách lẻ → `CUSTOMER_CODE_MISSING`. Người mua có tên khác mà thiếu MST vẫn bị chặn để không chọn nhầm mã cùng tên.
-Dòng không có số hóa đơn (hóa đơn chưa được cấp số) hiện thành hóa đơn lỗi riêng từng dòng và không nhập được.
+Khách lẻ → `CUSTOMER_CODE_MISSING`. Người mua cá nhân không có MST là hợp lệ (thông tin `BUYER_TAX_OPTIONAL`), mã khách
+hàng tìm theo tên trong danh mục. Chỉ người mua là tổ chức (loại Organization hoặc tên có Công ty/CTY/Hợp tác xã/HTX/Doanh
+nghiệp/Chi nhánh/Trung tâm/Vườn quốc gia/UBND/Ngân hàng…) thiếu MST mới bị chặn (`BUYER_TAX_STATUS`).
+Dòng không có số hóa đơn (hóa đơn chưa được cấp số) bị bỏ qua, chỉ báo một thông tin `INVOICE_NUMBER_MISSING_SKIPPED`.
 Mã số thuế người mua được đối chiếu ở bước đối chiếu trước khi Cất (tab Hóa đơn). Nếu bản R20 không hiện ô MST khớp
 selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
 `PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.
@@ -173,9 +175,11 @@ trong hộp thoại thêm mới của MISA.
 
 ## Hóa đơn đã ghi sổ
 
-**••• → Bỏ hóa đơn đã ghi sổ…** nạp file danh sách chứng từ bán hàng xuất từ MISA (`Ban_hang.xlsx`: cột Số hóa đơn, Ký hiệu
-HĐ, Số chứng từ; bỏ dòng "Số dòng = N"). Mọi hóa đơn có trong file được coi như đã Cất: tab Hóa đơn hiện **Đã ghi sổ**
-(màu đã Cất), tool bỏ tick, **Chọn chưa nhập** không chọn và **Thêm vào MISA** bỏ qua chúng. Ghép theo số hóa đơn (bỏ số 0
+**Mở Excel** (hoặc **••• → Mở Excel hóa đơn…**) hỏi hai file liên tiếp: file hóa đơn, rồi file danh sách chứng từ bán
+hàng xuất từ MISA (`Ban_hang.xlsx`: cột Số hóa đơn, Ký hiệu HĐ, Số chứng từ; bỏ dòng "Số dòng = N"). Bấm Hủy ở file thứ hai
+thì dùng danh sách đã nạp lần trước. Tab Hóa đơn chỉ hiện hóa đơn **chưa có trong MISA**: hóa đơn đã ghi sổ bị ẩn cùng lỗi
+dữ liệu của nó (kể cả khi thiếu/sai số liệu), dòng trạng thái báo số hóa đơn đã bỏ. Hóa đơn đã ghi sổ vẫn bị **Thêm vào
+MISA** bỏ qua nếu còn trong hàng đợi. Ghép theo số hóa đơn (bỏ số 0
 đầu) và ký hiệu (bỏ chữ số mẫu số đầu, `1C26MLV` = `C26MLV`); một bên không có ký hiệu thì chỉ cần trùng số. Lưu tại
 `%LOCALAPPDATA%\MisaManager\posted-invoices.json`; mỗi lần nạp thay toàn bộ danh sách cũ, **Xóa tất cả dữ liệu Excel đã
 nạp** xóa danh sách này. Lịch sử nhập của tool không bị ảnh hưởng.
