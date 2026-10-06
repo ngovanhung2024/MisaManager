@@ -72,6 +72,22 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(ItemLookupUsesVoucherColumns: true), catalog: Catalog);
 
     [Fact]
+    public Task NewItemCodeStartsWithItsGroupCode() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Groups.Replace([new("DV", "Dịch vụ"), new("HH", "Hàng hóa"), new("NVL", "Nguyên vật liệu")], "Nhom_vat_tu.xlsx");
+        var invoice = Invoices.Build(TempDirectory(misa), "1004", Invoices.AV,
+            Invoices.Line(0, "", "Phí vận chuyển", "Lần", 1, 200_000, "10%"),
+            Invoices.Line(1, "", "Phân bón lá Siêu Kali 1kg", "Gói", 4, 45_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var state = misa.State();
+        Assert.Equal(["DV_01", "HH_11"], state.CreatedItems.Select(item => item.Code));
+        Assert.Equal(["DV_01", "HH_11"], Assert.Single(state.Vouchers).Lines.Select(line => line.Code));
+    }, new FakeScenario(ItemLookupUsesVoucherColumns: true), catalog: Catalog);
+
+    [Fact]
     public Task Invoice1657UsesImportedCodeInsteadOfRetainedGeneratedMapping() => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Catalog.Add(new("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg"));

@@ -85,16 +85,16 @@ public sealed partial class ItemCatalogStore
         if (candidates.Length == 0) return null;
         var unitKey = NameKey(unit);
         bool HasUnit(ItemCatalogEntry item, string key) => NameKey(item.Unit) == key || NameKey(item.ConversionUnit) == key;
-        var sameUnit = candidates.Where(item => HasUnit(item, unitKey)).ToArray();
+        var sameUnit = ExactSpelling(candidates.Where(item => HasUnit(item, unitKey)).ToArray(), name);
         if (sameUnit.Length == 1) return sameUnit[0];
         if (sameUnit.Length > 1)
             throw new AutomationException("ITEM_AMBIGUOUS",
                 $"Danh mục có {sameUnit.Length} mã cùng tên '{name}' và ĐVT '{unit}' ({string.Join(", ", sameUnit.Select(item => item.Code))}). "
-                + "Hãy ghi đúng mã vào cột Mã hàng của file Excel hoặc giữ lại một mã trong danh mục rồi nạp lại.");
+                + "Hãy ghi đúng mã vào cột 'Mã hàng' của file Excel hóa đơn hoặc giữ lại một mã trong danh mục rồi nạp lại.");
         // The workflow converts Kg to the item's Tấn unit only when the user authorised it.
         if (allowKgToTon && unitKey == "KG")
         {
-            var tons = candidates.Where(item => HasUnit(item, NameKey("Tấn"))).ToArray();
+            var tons = ExactSpelling(candidates.Where(item => HasUnit(item, NameKey("Tấn"))).ToArray(), name);
             if (tons.Length == 1) return tons[0];
         }
         // Old exports may omit the unit column; a single unit-less match is still the same item.
@@ -102,8 +102,21 @@ public sealed partial class ItemCatalogStore
             return candidates[0];
         throw new AutomationException("ITEM_UNIT_CONFLICT",
             $"Tên hàng '{name}' đã có mã {string.Join(", ", candidates.Select(item => $"{item.Code} (ĐVT {Describe(item)})"))} "
-            + $"nhưng khác ĐVT '{unit}'. Tool không tự tạo mã mới để tránh trùng: hãy ghi đúng mã vào cột Mã hàng của file Excel, "
+            + $"nhưng khác ĐVT '{unit}'. Tool không tự tạo mã mới để tránh trùng: hãy ghi đúng mã vào cột 'Mã hàng' của file Excel hóa đơn, "
             + "hoặc thêm ĐVT chuyển đổi cho mã đó trong MISA rồi xuất và nạp lại danh mục.");
+    }
+
+    /// <summary>
+    /// MISA can hold distinct items whose names differ only in punctuation/spacing ("FUJI ONE 40EC 100CC PET" and
+    /// "FUJI ONE 40EC-100CC PET"); they share an <see cref="ItemNameKey"/>, so the exact spelling picks one. Names that
+    /// differ in letters, e.g. the optional "bao" of "(bao 25kg)", are duplicates and stay ambiguous.
+    /// </summary>
+    private static ItemCatalogEntry[] ExactSpelling(ItemCatalogEntry[] matches, string name)
+    {
+        var letters = TextKey.LettersAndDigits(name);
+        if (matches.Length < 2 || matches.Any(item => TextKey.LettersAndDigits(item.Name) != letters)) return matches;
+        var exact = matches.Where(item => NameKey(item.Name) == NameKey(name)).ToArray();
+        return exact.Length == 1 ? exact : matches;
     }
 
     /// <summary>The spelling MISA uses for a unit that differs only in case/spacing (e.g. "kg", "Chai 90 ml").</summary>

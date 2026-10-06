@@ -17,7 +17,8 @@ public sealed class AutomationHarness : IAsyncDisposable
         if (catalog is not null) Catalog.Merge(catalog, Path.Combine(root, "catalog.xlsx"));
         Parties = new PartyCatalogStore(Path.Combine(root, "party-catalog.json"));
         if (customers is not null) Parties.Replace(PartyRole.Customer, customers, Path.Combine(root, "Khach_hang.xlsx"));
-        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile) { ItemCatalog = Catalog, PartyCatalog = Parties };
+        Groups = new ItemGroupStore(Path.Combine(root, "item-groups.json"));
+        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile) { ItemCatalog = Catalog, PartyCatalog = Parties, ItemGroups = Groups };
         Runner = new WorkflowRunner(Gateway, new JsonStateStore(Path.Combine(root, "state")), new RunEventStore(Path.Combine(root, "logs")));
     }
 
@@ -25,6 +26,7 @@ public sealed class AutomationHarness : IAsyncDisposable
     public NativeInputService Input { get; }
     public ItemCatalogStore Catalog { get; }
     public PartyCatalogStore Parties { get; }
+    public ItemGroupStore Groups { get; }
     public NativeWorkflowGateway Gateway { get; }
     public WorkflowRunner Runner { get; }
 
