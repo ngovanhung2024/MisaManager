@@ -40,6 +40,8 @@ public static class RunOutcome
     public static bool IsStoppedDiscard(WorkflowSnapshot snapshot)
         => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode == WorkflowRunner.StoppedByUserCode;
     public const string StoppedDiscardLabel = "Tạm dừng · đã bỏ chứng từ dở";
+    /// <summary>Listed in the MISA sales export loaded by "Bỏ hóa đơn đã ghi sổ".</summary>
+    public const string PostedLabel = "Đã ghi sổ";
 }
 
 /// <param name="SourceOnlyMisa">The voucher's invoice is not in the loaded Excel: only the MISA side exists, nothing is compared.</param>

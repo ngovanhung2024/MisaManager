@@ -47,7 +47,7 @@ public static class PartyCatalogWorkbook
     private static bool IsTrue(string value) => Plain(value) is "1" or "TRUE" or "CO" or "X";
 
     // Header matching ignores marks and Đ/đ: export headers differ between MISA builds only in such details.
-    private static string Plain(string? value)
+    internal static string Plain(string? value)
         => new(TextKey.Canonical(value).Normalize(System.Text.NormalizationForm.FormD)
             .Where(c => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark)
             .Select(c => c == 'Đ' ? 'D' : c).ToArray());

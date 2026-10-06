@@ -168,11 +168,19 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Invoices that can still be entered: not blocked and neither saved nor already in MISA.</summary>
+    /// <summary>Unticks invoices that are saved, already in MISA or posted (e.g. after loading the posted list).</summary>
+    public void UncheckDone()
+    {
+        var done = InvoiceQueue.Where(IsDone).Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal);
+        if (checkedFingerprints.RemoveWhere(done.Contains) > 0) CheckedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Invoices that can still be entered: not blocked and neither saved, already in MISA nor posted.</summary>
     public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice));
 
-    private bool IsDone(InvoiceDocument invoice) => History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
-        && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot)));
+    private bool IsDone(InvoiceDocument invoice) => services.PostedInvoices.Contains(invoice)
+        || History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
+            && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot)));
 
     public IReadOnlyList<WorkflowContext> History { get; private set; } = [];
     public WorkflowActivity? Activity => services.Activity;

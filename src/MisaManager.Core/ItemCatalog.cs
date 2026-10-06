@@ -246,6 +246,29 @@ public sealed partial class ItemCatalogStore
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Empties the database, including codes created by the tool and pending creations: the user re-imports a fresh
+    /// MISA export each session, which already contains them. Returns the number of removed rows.
+    /// </summary>
+    public int Clear()
+    {
+        int removed;
+        lock (gate)
+        {
+            removed = items.Count;
+            Transact(() =>
+            {
+                Replace([]);
+                pending = [];
+                verifiedCodes = new(StringComparer.OrdinalIgnoreCase);
+                importedCodes = new(StringComparer.OrdinalIgnoreCase);
+                SourceFile = null;
+            });
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+        return removed;
+    }
+
     /// <summary>Replaces cached rows only after a complete live MISA catalog read; unresolved saves stay pending.</summary>
     public void RefreshNative(IEnumerable<ItemCatalogEntry> verified)
     {

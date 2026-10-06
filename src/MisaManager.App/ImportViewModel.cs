@@ -79,6 +79,14 @@ public sealed class ImportViewModel(ImportSession session)
     public void SetLocale(string? locale) => Locale = locale;
     public void ClearResult() => Result = null;
 
+    /// <summary>Forgets the open workbook, its mapping and result.</summary>
+    public void Reset()
+    {
+        Cancel();
+        Workbook = null;
+        ClearSelection();
+    }
+
     /// <summary>Shows the invoices saved from the previous session; the workbook itself is not re-read.</summary>
     public void Restore(ImportResult result)
     {

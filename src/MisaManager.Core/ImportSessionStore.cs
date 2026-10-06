@@ -24,6 +24,13 @@ public sealed class ImportSessionStore(string rootPath)
     public Task SaveCheckedAsync(IEnumerable<string> ticked, CancellationToken token = default)
         => store.WriteAsync("import-checked", CheckedPath, ticked.Order(StringComparer.Ordinal).ToArray(), token);
 
+    /// <summary>Forgets the last imported workbook so nothing is restored on the next start.</summary>
+    public void Clear()
+    {
+        File.Delete(Path.Combine(store.RootPath, SessionPath));
+        File.Delete(Path.Combine(store.RootPath, CheckedPath));
+    }
+
     /// <summary>Null when nothing was saved or the saved session is unreadable (it is then simply not restored).</summary>
     public async Task<ImportSessionSnapshot?> LoadAsync(CancellationToken token = default)
     {

@@ -335,6 +335,27 @@ public partial class MainWindow : Window
         PartyDetail.Visibility = Visibility.Visible;
     }
 
+    private async void ChoosePostedInvoices_Click(object sender, RoutedEventArgs e)
+    {
+        if (!workflow.CanEditSource) return;
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Chọn file danh sách bán hàng xuất từ MISA (Số hóa đơn, Ký hiệu HĐ)" };
+        if (dialog.ShowDialog(this) != true) return;
+        var services = ((App)Application.Current).Services;
+        StatusLabel.Text = "Đang đọc file hóa đơn đã ghi sổ...";
+        try
+        {
+            var entries = await PostedInvoiceWorkbook.ReadAsync(services.WorkbookReader, dialog.FileName);
+            var count = await Task.Run(() => services.PostedInvoices.Replace(entries, dialog.FileName));
+            workflow.UncheckDone();
+            foreach (var row in invoices) row.Refresh();
+            var marked = invoices.Count(row => services.PostedInvoices.Contains(row.Invoice));
+            StatusLabel.Text = $"Đã nạp {count:N0} hóa đơn đã ghi sổ từ {Path.GetFileName(dialog.FileName)}; "
+                + $"{marked:N0}/{invoices.Count:N0} hóa đơn trong danh sách đã ghi sổ, bỏ tick và không thêm vào MISA nữa.";
+        }
+        catch (Exception error) { StatusLabel.Text = "Không nạp được file hóa đơn đã ghi sổ: " + error.Message; }
+    }
+
     private void RefreshChecked()
     {
         foreach (var row in invoices) row.RefreshChecked();
@@ -962,6 +983,47 @@ public partial class MainWindow : Window
         catch (Exception error) { StatusLabel.Text = "Không xóa được lịch sử hồ sơ: " + error.Message; }
     }
 
+    private async void ClearImportedData_Click(object sender, RoutedEventArgs e)
+    {
+        if (!workflow.CanEditSource) return;
+        if (MessageBox.Show(this,
+                "Xóa toàn bộ dữ liệu đã nạp từ Excel?\n\n"
+                + "• Danh sách hóa đơn và các chỉnh sửa trên hóa đơn\n"
+                + "• Toàn bộ danh mục mã hàng (kể cả mã do tool đã tạo)\n"
+                + "• Danh sách mã khách hàng và nhà cung cấp\n"
+                + "• Danh sách hóa đơn đã ghi sổ\n\n"
+                + "Sau khi xóa, hãy nạp lại danh mục mới nhất xuất từ MISA. Lịch sử nhập (chống nhập trùng) và cấu hình cột "
+                + "được giữ lại. Không hoàn tác được.",
+                "Xóa tất cả dữ liệu", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var services = ((App)Application.Current).Services;
+        try
+        {
+            importModel.Reset();
+            ClearImportResult();
+            workflow.SetCheckedMany([]);
+            ResetMapping();
+            updatingSheet = true;
+            SheetChoice.ItemsSource = null;
+            updatingSheet = false;
+            SourcePopup.IsOpen = false;
+            WorkbookLabel.Text = "Chưa chọn file Excel hóa đơn";
+            WorkbookLabel.ToolTip = null;
+            ImportSessions.Clear();
+            await services.Drafts.ClearAsync();
+            var removedItems = await Task.Run(services.ItemCatalog.Clear);
+            await Task.Run(services.PartyCatalog.Clear);
+            await Task.Run(services.PostedInvoices.Clear);
+            RefreshCatalogLabel();
+            RefreshPartyLabel();
+            presentationInitialized = false;
+            RefreshWorkflowPanel();
+            RefreshRunSummary();
+            StatusLabel.Text = $"Đã xóa sạch dữ liệu: danh sách hóa đơn, {removedItems:N0} mã hàng, mã khách hàng, nhà cung cấp và hóa đơn đã ghi sổ.";
+        }
+        catch (Exception error) { StatusLabel.Text = "Không xóa hết được dữ liệu Excel: " + error.Message; }
+    }
+
     // Deferred so the closing context menu does not immediately dismiss the StaysOpen=False popup.
     private void OpenSourceSettings()
         => Dispatcher.BeginInvoke(() => SourcePopup.IsOpen = true, System.Windows.Threading.DispatcherPriority.Background);
@@ -1001,12 +1063,15 @@ public partial class MainWindow : Window
             + $"{Invoice.Identity.Number} · {Invoice.Buyer.Name}";
         public string DisplayDate => Invoice.Issued?.ToString("dd/MM/yyyy") ?? "Thiếu";
         public int LineCount => Invoice.Lines.Length;
+        private bool IsPosted => ((App)Application.Current).Services.PostedInvoices.Contains(Invoice);
         public string SourceRange => $"dòng {Invoice.Source.FirstRow}-{Invoice.Source.LastRow}";
         public string DisplaySummary => $"{DisplayDate} · {LineCount} mặt hàng · {Invoice.GrandTotal?.ToString("N0") ?? "?"} {Invoice.Currency}";
         public string DisplayStatus
         {
             get
             {
+                // MISA's register outranks an earlier failed/discarded run; a tool Cất keeps its own label.
+                if (IsPosted && LatestRun()?.Snapshot.Status != WorkflowStatus.Saved) return RunOutcome.PostedLabel;
                 if (Invoice.IsBlocked) return "Thiếu dữ liệu";
                 if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot);
                 return "Sẵn sàng nhập";
@@ -1017,6 +1082,7 @@ public partial class MainWindow : Window
         {
             get
             {
+                if (IsPosted) return "saved";
                 if (Invoice.IsBlocked) return "attention";
                 var snapshot = LatestRun()?.Snapshot;
                 if (snapshot is not null && RunOutcome.IsExisting(snapshot)) return "existing";

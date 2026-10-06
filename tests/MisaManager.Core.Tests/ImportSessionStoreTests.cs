@@ -33,6 +33,19 @@ public sealed class ImportSessionStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ClearForgetsTheSavedSession()
+    {
+        var invoice = InvoiceBuilder.Valid();
+        var store = new ImportSessionStore(temp.Root);
+        await store.SaveAsync("a.xlsx", "Sheet1", Imported(invoice), [invoice.Fingerprint], Token);
+
+        store.Clear();
+        store.Clear();
+
+        Assert.Null(await new ImportSessionStore(temp.Root).LoadAsync(Token));
+    }
+
+    [Fact]
     public async Task TicksFollowLaterChangesAndDropUnknownInvoices()
     {
         var invoice = InvoiceBuilder.Valid();
