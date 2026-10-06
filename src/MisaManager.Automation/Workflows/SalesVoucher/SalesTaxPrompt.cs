@@ -93,7 +93,7 @@ public sealed partial class NativeInputService
                 var window = automation.FromHandle(handle);
                 var parts = window.FindAllDescendants()
                     .Where(element => element.ControlType is ControlType.Text or ControlType.Edit or ControlType.Document)
-                    .Select(element => ReadNativeText(element).Value)
+                    .Select(PromptText)
                     .Append(window.Properties.Name.ValueOrDefault ?? "")
                     .Where(value => !string.IsNullOrWhiteSpace(value));
                 var uiaMessage = System.Net.WebUtility.HtmlDecode(string.Join(" ", parts));
@@ -118,5 +118,19 @@ public sealed partial class NativeInputService
     {
         var key = TextKey.Compact(message);
         return TaxPromptKeys.All(part => key.Contains(part, StringComparison.Ordinal));
+    }
+
+    // Only identifies the prompt (no input is verified here): MISA's message box shows its text in labels that
+    // expose just a Name, without Value/Text pattern or HWND.
+    private static string PromptText(AutomationElement element)
+    {
+        try
+        {
+            return ReadNativeText(element).Value;
+        }
+        catch (AutomationException error) when (error.Code == "READBACK_UNSUPPORTED")
+        {
+            return element.Properties.Name.ValueOrDefault ?? "";
+        }
     }
 }
