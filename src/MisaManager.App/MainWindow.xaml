@@ -146,9 +146,11 @@
                     ToolTip="Nạp danh sách khách hàng xuất từ MISA (Mã, Tên, MST) để tìm mã khách hàng theo tên người mua"/>
           <MenuItem Header="Thêm mã nhà cung cấp…" Click="ChooseSuppliers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách nhà cung cấp xuất từ MISA; dùng khi người mua chỉ có trong danh mục nhà cung cấp"/>
+          <MenuItem Header="Bỏ hóa đơn đã ghi sổ…" Click="ChoosePostedInvoices_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Nạp danh sách bán hàng xuất từ MISA (Số hóa đơn, Ký hiệu HĐ): các hóa đơn có trong file được đánh dấu đã ghi sổ và không được thêm vào MISA nữa"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
           <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, mã khách hàng và nhà cung cấp. Lịch sử chống nhập trùng được giữ lại."/>
+                    ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, mã khách hàng, nhà cung cấp và danh sách hóa đơn đã ghi sổ. Lịch sử chống nhập trùng được giữ lại."/>
           <Separator/>
           <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
           <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>

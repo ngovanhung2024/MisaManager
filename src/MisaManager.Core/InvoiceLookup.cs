@@ -20,7 +20,8 @@ public static class InvoiceLookup
         return sameSeries.Length == 1 ? sameSeries[0] : null;
     }
 
-    private static string NumberKey(string? number)
+    /// <summary>Invoice number for comparison: trimmed, leading zeros of an all-digit number dropped.</summary>
+    public static string NumberKey(string? number)
     {
         var text = (number ?? "").Trim();
         return text.Length > 0 && text.All(char.IsAsciiDigit) ? text.TrimStart('0') is { Length: > 0 } digits ? digits : "0" : text;
