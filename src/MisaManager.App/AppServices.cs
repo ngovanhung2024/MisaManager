@@ -13,6 +13,7 @@ public sealed partial class AppServices : IAsyncDisposable
     public ItemCatalogStore ItemCatalog { get; } = LoadItemCatalog();
     public PartyCatalogStore PartyCatalog { get; } = LoadPartyCatalog();
     public PostedInvoiceStore PostedInvoices { get; } = LoadPostedInvoices();
+    public ItemGroupStore ItemGroups { get; } = LoadItemGroups();
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
     private readonly NativeDispatcher nativeOwner = new();
@@ -62,6 +63,7 @@ public sealed partial class AppServices : IAsyncDisposable
         workflowGateway.FailureObserver = CaptureFailureUiAsync;
         workflowGateway.ItemCatalog = ItemCatalog;
         workflowGateway.PartyCatalog = PartyCatalog;
+        workflowGateway.ItemGroups = ItemGroups;
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
         workflowGateway.StopSignal = Workflow.StopSignal;
         Drafts = new(State);
@@ -110,6 +112,18 @@ public sealed partial class AppServices : IAsyncDisposable
         {
             File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
             return new PostedInvoiceStore(path);
+        }
+    }
+
+    private static ItemGroupStore LoadItemGroups()
+    {
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            ProductIdentity.TechnicalName, "item-groups.json");
+        try { return new ItemGroupStore(path); }
+        catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
+        {
+            File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
+            return new ItemGroupStore(path);
         }
     }
 
