@@ -129,6 +129,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
                 Resolution: "Kiểm tra phạm vi và từng hóa đơn trước khi chọn nhập."));
         var groups = new Dictionary<string, List<(WorkbookRow Row, IReadOnlyDictionary<string, SourceCell> Cells)>>(StringComparer.Ordinal);
         var ignored = 0;
+        var unnumbered = new List<SourceCell>();
         foreach (var row in sheet.Rows.Where(row => row.Number > header.Number))
         {
             token.ThrowIfCancellationRequested();
@@ -136,23 +137,24 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             if (row.Cells.Values.All(cell => string.IsNullOrWhiteSpace(cell.ParsedValue) && !cell.HasFormula)) { ignored++; continue; }
             if (confirmation?.UseLegacySalesDefaults == true) ApplyLegacyDefaults(cells, sheet.Name, row.Number, confirmation);
             var number = Text(cells, "number");
-            if (number.Length == 0)
-            {
-                issues.Add(new("INVOICE_NUMBER_MISSING", IssueSeverity.Blocking, "Dòng dữ liệu thiếu số hóa đơn; không tự mang số từ dòng trước xuống.", sheet.Name, cells["number"].Address,
-                    Resolution: "Điền số hóa đơn trên từng dòng hoặc dùng merge cell hợp lệ. Hóa đơn chưa được cấp số (chưa ký/phát hành) không nhập được; xuất lại sau khi đã có số."));
-            }
-            var date = ParseDate(cells["issued"], workbook.Date1904, options.Locale, issues);
+            // Unnumbered rows are invoices not yet signed/issued: skipped, never glued to the previous invoice.
+            if (number.Length == 0) { unnumbered.Add(cells["number"]); continue; }
+            ParseDate(cells["issued"], workbook.Date1904, options.Locale, issues);
             // One invoice number denotes one invoice; conflicting header values are checked in BuildInvoice.
-            var identity = number.Length > 0 ? number : ":missing:" + row.Number.ToString(CultureInfo.InvariantCulture);
-            if (!groups.TryGetValue(identity, out var group)) groups.Add(identity, group = []);
+            if (!groups.TryGetValue(number, out var group)) groups.Add(number, group = []);
             group.Add((row, cells));
         }
+        if (unnumbered.Count > 0)
+            issues.Add(new("INVOICE_NUMBER_MISSING_SKIPPED", IssueSeverity.Info,
+                $"Bỏ qua {unnumbered.Count:N0} dòng chưa có số hóa đơn (dòng {string.Join(", ", unnumbered.Take(10).Select(cell => cell.Row))}{(unnumbered.Count > 10 ? ", …" : "")}).",
+                sheet.Name, unnumbered[0].Address,
+                Resolution: "Hóa đơn chưa được cấp số (chưa ký/phát hành) không nhập; xuất lại file sau khi đã có số."));
         var sha = workbook.Sha256;
         var source = new SourceReference(workbook.FilePath, sha, sheet.Name, header.Number, sheet.Rows.LastOrDefault()?.Number ?? header.Number, options.ImportRevision);
         var invoices = groups.Values.Select(group => BuildInvoice(source, group, workbook.Date1904, options.Locale, confirmation, token)).ToImmutableArray();
         if (invoices.Length == 0) issues.Add(new("NO_INVOICES", IssueSeverity.Blocking, "Worksheet không có dòng hóa đơn.", sheet.Name));
         return new ImportResult(source, sheets.Select(item => item.Name).ToArray(), invoices, issues.Concat(invoices.SelectMany(item => item.Issues)).ToArray(),
-            sheet.Rows.Length, ignored);
+            sheet.Rows.Length, ignored, unnumbered.Count);
     }
 
     private static InvoiceDocument BuildInvoice(SourceReference source, List<(WorkbookRow Row, IReadOnlyDictionary<string, SourceCell> Cells)> records, bool date1904, string? locale, ImportConfirmation? confirmation, CancellationToken token)
@@ -168,10 +170,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             if (populated.Length > 0) first[field] = populated[0]!;
         }
         var number = Text(records[0].Cells, "number");
-        // Rows without a number form one group each; the row number keeps their IDs (and saved drafts) apart.
-        var key = JsonSerializer.Serialize(number.Length > 0
-            ? new[] { source.FilePath, source.Sha256, source.Worksheet, number }
-            : [source.FilePath, source.Sha256, source.Worksheet, number, records[0].Row.Number.ToString(CultureInfo.InvariantCulture)]);
+        var key = JsonSerializer.Serialize(new[] { source.FilePath, source.Sha256, source.Worksheet, number });
         var id = Hash(key)[..24];
         var issued = ParseDate(first["issued"], date1904, locale, issues);
         var identity = new InvoiceIdentity(Text(first, "sellerTaxCode"), Text(first, "series"), Text(first, "number"), issued);

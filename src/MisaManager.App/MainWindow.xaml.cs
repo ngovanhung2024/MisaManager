@@ -59,7 +59,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<EntryFieldRow> entryFields = [];
     private readonly ObservableCollection<ProfileRecord> profileRecords = [];
     private readonly DispatcherTimer uiTimer = new() { Interval = TimeSpan.FromMilliseconds(220) };
-    private ImportResult? result => importModel.Result;
+    // The imported result without invoices already posted in MISA: what the list and its issues show.
+    private ImportResult? shown;
     private WorkbookData? workbook => importModel.Workbook;
     private bool positioningRail;
     private bool updatingMapping;
@@ -208,8 +209,27 @@ public partial class MainWindow : Window
 
     private async void ChooseWorkbook_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false };
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Bước 1/2: Chọn file Excel hóa đơn (danh sách hóa đơn xuất từ cổng hóa đơn điện tử)" };
         if (dialog.ShowDialog(this) != true) return;
+        var services = ((App)Application.Current).Services;
+        var postedDialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Bước 2/2: Chọn file danh sách bán hàng đã ghi sổ xuất từ MISA (Ban_hang.xlsx)"
+                + (services.PostedInvoices.Count > 0 ? $" – Hủy để dùng danh sách đã nạp ({services.PostedInvoices.Count:N0} hóa đơn)" : " – Hủy nếu MISA chưa có hóa đơn nào") };
+        if (postedDialog.ShowDialog(this) == true)
+        {
+            StatusLabel.Text = "Đang đọc file hóa đơn đã ghi sổ...";
+            try
+            {
+                var entries = await PostedInvoiceWorkbook.ReadAsync(services.WorkbookReader, postedDialog.FileName);
+                await Task.Run(() => services.PostedInvoices.Replace(entries, postedDialog.FileName));
+            }
+            catch (Exception error)
+            {
+                StatusLabel.Text = "Không nạp được file hóa đơn đã ghi sổ: " + error.Message;
+                return;
+            }
+        }
         var work = BeginImport();
         ResetMapping();
         updatingSheet = true;
@@ -376,27 +396,6 @@ public partial class MainWindow : Window
         PartyDetail.Visibility = Visibility.Visible;
     }
 
-    private async void ChoosePostedInvoices_Click(object sender, RoutedEventArgs e)
-    {
-        if (!workflow.CanEditSource) return;
-        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
-            Title = "Chọn file danh sách bán hàng xuất từ MISA (Số hóa đơn, Ký hiệu HĐ)" };
-        if (dialog.ShowDialog(this) != true) return;
-        var services = ((App)Application.Current).Services;
-        StatusLabel.Text = "Đang đọc file hóa đơn đã ghi sổ...";
-        try
-        {
-            var entries = await PostedInvoiceWorkbook.ReadAsync(services.WorkbookReader, dialog.FileName);
-            var count = await Task.Run(() => services.PostedInvoices.Replace(entries, dialog.FileName));
-            workflow.UncheckDone();
-            foreach (var row in invoices) row.Refresh();
-            var marked = invoices.Count(row => services.PostedInvoices.Contains(row.Invoice));
-            StatusLabel.Text = $"Đã nạp {count:N0} hóa đơn đã ghi sổ từ {Path.GetFileName(dialog.FileName)}; "
-                + $"{marked:N0}/{invoices.Count:N0} hóa đơn trong danh sách đã ghi sổ, bỏ tick và không thêm vào MISA nữa.";
-        }
-        catch (Exception error) { StatusLabel.Text = "Không nạp được file hóa đơn đã ghi sổ: " + error.Message; }
-    }
-
     private void RefreshChecked()
     {
         foreach (var row in invoices) row.RefreshChecked();
@@ -541,25 +540,28 @@ public partial class MainWindow : Window
                 .ToImmutableDictionary(row => row.Key, row => row.SelectedColumn!.Value, StringComparer.Ordinal) : null;
             var imported = await importModel.ImportAsync(sheet, columnMap, work.Token);
             if (!IsCurrent(work)) return;
-            ShowImported(imported, null);
+            var summary = ShowImported(imported, null);
             SaveImportSession(source.FilePath, sheet, imported);
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
             {
                 MappingExpander.IsExpanded = true;
                 OpenSourceSettings();
             }
-            StatusLabel.Text = imported.IsBlocked ? "Cần bổ sung dữ liệu trước khi nhập." :
-                $"{imported.Invoices.Count:N0} hóa đơn · {imported.ReadRows:N0} dòng dữ liệu";
+            StatusLabel.Text = summary;
         }
         catch (OperationCanceledException) when (work.IsCancellationRequested) { }
         catch (Exception error) { if (IsCurrent(work)) ShowImportError(error); }
         finally { EndImport(work); }
     }
 
-    private void ShowImported(ImportResult imported, IReadOnlyList<string>? ticked)
+    /// <summary>Lists the invoices not yet posted in MISA and returns a status line saying what was left out.</summary>
+    private string ShowImported(ImportResult imported, IReadOnlyList<string>? ticked)
     {
+        var posted = ((App)Application.Current).Services.PostedInvoices;
+        var (pending, hidden) = posted.WithoutPosted(imported);
+        shown = pending;
         // MISA numbers vouchers in entry order, so enter oldest first: issued date, then invoice number.
-        var ordered = imported.Invoices
+        var ordered = pending.Invoices
             .OrderBy(invoice => invoice.Issued ?? DateOnly.MaxValue)
             .ThenBy(invoice => long.TryParse(invoice.Identity.Number, out var number) ? number : long.MaxValue)
             .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
@@ -576,6 +578,11 @@ public partial class MainWindow : Window
         RefreshPartyLabel();
         RefreshRunSummary();
         ShowWorkbookIssues();
+        var blocked = ordered.Count(invoice => invoice.IsBlocked);
+        return $"{ordered.Length:N0} hóa đơn chưa nhập"
+            + (posted.Count == 0 ? " (chưa nạp danh sách đã ghi sổ)" : $" · bỏ {hidden:N0} hóa đơn đã ghi sổ")
+            + (imported.SkippedUnnumberedRows > 0 ? $" · bỏ {imported.SkippedUnnumberedRows:N0} dòng chưa có số" : "")
+            + (blocked > 0 ? $" · {blocked:N0} hóa đơn cần bổ sung dữ liệu" : "");
     }
 
     private ImportSessionStore ImportSessions => ((App)Application.Current).Services.ImportSessions;
@@ -603,8 +610,8 @@ public partial class MainWindow : Window
         importModel.Restore(saved.Result);
         WorkbookLabel.Text = Path.GetFileName(saved.FilePath);
         WorkbookLabel.ToolTip = $"{saved.FilePath} · trang tính {saved.Sheet} (khôi phục từ lần nhập trước)";
-        ShowImported(saved.Result, saved.Checked);
-        StatusLabel.Text = $"Đã khôi phục {saved.Result.Invoices.Count:N0} hóa đơn từ {Path.GetFileName(saved.FilePath)} (lần nhập trước); không cần mở lại Excel.";
+        var summary = ShowImported(saved.Result, saved.Checked);
+        StatusLabel.Text = $"Đã khôi phục từ {Path.GetFileName(saved.FilePath)} (lần nhập trước): {summary}.";
     }
 
     private CancellationTokenSource BeginImport()
@@ -626,6 +633,7 @@ public partial class MainWindow : Window
     private void ClearImportResult()
     {
         importModel.ClearResult();
+        shown = null;
         invoices.Clear();
         workflow.InvoiceQueue = [];
         workflow.SelectedInvoice = null;
@@ -636,8 +644,8 @@ public partial class MainWindow : Window
 
     private void ShowWorkbookIssues()
     {
-        SetVisibleIssues(result?.Issues ?? []);
-        SelectedTitle.Text = result is { IsBlocked: true } ? "Thông tin cần bổ sung" : "Chọn một hóa đơn";
+        SetVisibleIssues(shown?.Issues ?? []);
+        SelectedTitle.Text = shown is { IsBlocked: true } ? "Thông tin cần bổ sung" : "Chọn một hóa đơn";
     }
 
     private void ShowImportError(Exception error)

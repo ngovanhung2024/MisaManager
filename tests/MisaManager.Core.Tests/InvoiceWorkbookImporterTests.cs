@@ -248,29 +248,49 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
         Assert.Contains(invoice.Issues, issue => issue.Code == "BUYER_TAX_OPTIONAL" && issue.Severity == IssueSeverity.Info);
     }
 
+    /// <summary>An individual buyer (no "DN mua", not a company name) has no MST: accepted.</summary>
     [Fact]
-    public async Task NamedBuyerWithoutTaxCodeIsStillBlocked()
+    public async Task IndividualBuyerWithoutTaxCodeIsAccepted()
     {
         var invoice = Only(await ImportPortal(PortalLine(1, "1040", "Hoàng Trọng Tiếp", "", "")));
+
+        Assert.False(invoice.IsBlocked);
+        Assert.True(Has(invoice.Issues, "BUYER_TAX_OPTIONAL", IssueSeverity.Info));
+    }
+
+    [Fact]
+    public async Task CompanyBuyerWithoutTaxCodeIsStillBlocked()
+    {
+        var invoice = Only(await ImportPortal(PortalLine(1, "863", "", "CÔNG TY TNHH LÂM NGHIỆP NAM HÒA", "")));
 
         Assert.True(Has(invoice.Issues, "BUYER_TAX_STATUS"));
     }
 
-    /// <summary>Invoices not yet numbered by the portal: one blocked group per row, each with its own ID.</summary>
+    /// <summary>Invoices not yet numbered by the portal are skipped and reported once as information.</summary>
     [Fact]
-    public async Task RowsWithoutNumberAreBlockedWithDistinctIds()
+    public async Task RowsWithoutNumberAreSkipped()
     {
         var result = await ImportPortal(
             PortalLine(1, null, "Khách hàng không cung cấp thông tin", "", ""),
-            PortalLine(2, null, "Khách hàng không cung cấp thông tin", "", "", "Chani 300EC - 100ml (ĐN Nicotex)"),
+            PortalLine(2, null, "", "", "", "Chani 300EC - 100ml (ĐN Nicotex)"),
             PortalLine(3, "1823", "BÁN CHO NGƯỜI TIÊU DÙNG", "", ""));
 
-        Assert.Equal(3, result.Invoices.Count);
-        Assert.Equal(3, result.Invoices.Select(invoice => invoice.InvoiceId).Distinct().Count());
-        Assert.Equal(2, result.Issues.Count(issue => issue.Code == "INVOICE_NUMBER_MISSING"));
-        Assert.All(result.Invoices.Where(invoice => invoice.Identity.Number.Length == 0),
-            invoice => Assert.True(Has(invoice.Issues, "NUMBER_MISSING")));
-        Assert.False(result.Invoices.Single(invoice => invoice.Identity.Number == "1823").IsBlocked);
+        var invoice = Only(result);
+        Assert.Equal("1823", invoice.Identity.Number);
+        Assert.False(result.IsBlocked);
+        Assert.Equal(2, result.SkippedUnnumberedRows);
+        var skipped = Assert.Single(result.Issues, issue => issue.Code == "INVOICE_NUMBER_MISSING_SKIPPED");
+        Assert.Equal(IssueSeverity.Info, skipped.Severity);
+        Assert.Contains("dòng 2, 3", skipped.Message);
+    }
+
+    [Fact]
+    public async Task WorkbookWithOnlyUnnumberedRowsHasNoInvoices()
+    {
+        var result = await ImportPortal(PortalLine(1, null, "Khách hàng không cung cấp thông tin", "", ""));
+
+        Assert.Empty(result.Invoices);
+        Assert.True(Has(result.Issues, "NO_INVOICES"));
     }
 
     [Fact]
@@ -453,8 +473,8 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
     {
         var result = await Import(sheet => sheet.Row(3, WithCell(Line(name: "Hesman 60WG 18g", unit: "Gói", quantity: 38, price: 16_000m), InvoiceSheet.Number, null)));
 
-        Assert.True(result.IsBlocked);
-        Assert.True(Has(result.Issues, "INVOICE_NUMBER_MISSING"));
+        Assert.True(Has(result.Issues, "INVOICE_NUMBER_MISSING_SKIPPED", IssueSeverity.Info));
+        Assert.Equal(1, result.SkippedUnnumberedRows);
         Assert.Single(result.Invoices.Single(invoice => invoice.Identity.Number == "1000").Lines);
     }
 

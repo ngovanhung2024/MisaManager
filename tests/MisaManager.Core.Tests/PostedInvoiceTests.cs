@@ -79,4 +79,55 @@ public sealed class PostedInvoiceTests : IDisposable
             PostedInvoiceWorkbook.ReadAsync(new WorkbookReader(), book.Save(temp.Combine("sai.xlsx")), Token));
         Assert.Equal("POSTED_INVOICE_HEADER_MISSING", error.Code);
     }
+
+    private static readonly object?[] PortalHeaders =
+    [
+        "STT", "Mẫu số", "Ký hiệu", "Số hóa đơn", "Ngày lập", "Người mua", "DN mua", "MST người mua", "Địa chỉ người mua",
+        "Tên hàng hóa", "Đơn vị tính", "Đơn giá", "Số lượng", "Tổng tiền chưa thuế", "Thuế hàng hóa", "Tiền thuế chi tiết", "Tổng tiền có thuế"
+    ];
+
+    private static object?[] PortalLine(string? number, string buyer, string tax = "", double price = 41904.76, int quantity = 37,
+        long amount = 1_550_476, long taxAmount = 77_524)
+        => ["1", "1", "C26MLV", number ?? "", "06/10/2026", buyer, "", tax, "", "COMPASS 60OD-100CC PET", "Chai",
+            price, quantity, amount, 5, taxAmount, amount + taxAmount];
+
+    /// <summary>
+    /// The cases of DanhSachHoaDon + Ban_hang: only invoices MISA does not have yet are listed; unnumbered rows are
+    /// skipped; a posted invoice with bad data is dropped with its errors; an unposted one keeps them.
+    /// </summary>
+    [Fact]
+    public async Task OnlyInvoicesNotYetPostedRemainAfterLoadingBothFiles()
+    {
+        var invoices = new WorkbookBuilder();
+        invoices.Sheet("HoaDon").Row(1, PortalHeaders)
+            .Row(2, PortalLine("1824", "BÁN CHO NGƯỜI TIÊU DÙNG"))
+            .Row(3, PortalLine("1452", "BÁN CHO NGƯỜI TIÊU DÙNG"))
+            .Row(4, PortalLine("199", "Khách hàng không cung cấp thông tin", price: 3333.33, quantity: 0, amount: 0, taxAmount: 0))
+            .Row(5, PortalLine("1425", "Khách hàng không cung cấp thông tin", price: 0, quantity: -1, amount: -13_524, taxAmount: -676))
+            .Row(6, PortalLine("941", "Hoàng Trọng Tiếp"))
+            .Row(7, PortalLine("1600", "Huỳnh Thị Như Ý"))
+            .Row(8, PortalLine(null, "Khách hàng không cung cấp thông tin"))
+            .Row(9, PortalLine(null, ""));
+        var posted = new WorkbookBuilder();
+        posted.Sheet("Ban_hang").Row(1, "DANH SÁCH BÁN HÀNG")
+            .Row(2, "Ngày hạch toán", "Ngày chứng từ", "Số chứng từ", "Số hóa đơn", "Mẫu số HĐ", "Ký hiệu HĐ", "Khách hàng")
+            .Row(3, 46209, 46209, "PT01770", "1452", null, "1C26MLV", "BÁN CHO NGƯỜI TIÊU DÙNG")
+            .Row(4, 46109, 46109, "PT00519", "199", null, "1C26MLV", "Khách lẻ")
+            .Row(5, 46176, 46176, "PT01261", "941", null, "1C26MLV", "Hoàng Trọng Tiếp (046085016878)")
+            .Row(6, "Số dòng = 3");
+        var reader = new WorkbookReader();
+        var store = Store();
+        store.Replace(await PostedInvoiceWorkbook.ReadAsync(reader, posted.Save(temp.Combine("Ban_hang.xlsx")), Token), "Ban_hang.xlsx");
+        var imported = await new InvoiceWorkbookImporter(reader).ImportAsync(invoices.Save(temp.Combine("DanhSachHoaDon.xlsx")), null, Token);
+
+        var (pending, hidden) = store.WithoutPosted(imported);
+
+        Assert.Equal((2, 3), (imported.SkippedUnnumberedRows, hidden));
+        Assert.Equal(["1425", "1600", "1824"], pending.Invoices.Select(invoice => invoice.Identity.Number).Order(StringComparer.Ordinal));
+        var negative = pending.Invoices.Single(invoice => invoice.Identity.Number == "1425");
+        Assert.True(negative.IsBlocked);
+        Assert.DoesNotContain(pending.Issues, issue => issue.Severity == IssueSeverity.Blocking && issue.InvoiceId != negative.InvoiceId);
+        Assert.False(pending.Invoices.Single(invoice => invoice.Identity.Number == "1600").IsBlocked);
+        Assert.Equal((imported, 0), new PostedInvoiceStore(temp.Combine("empty.json")).WithoutPosted(imported));
+    }
 }

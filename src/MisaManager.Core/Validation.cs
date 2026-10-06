@@ -54,7 +54,9 @@ public static class InvoiceValidation
             else if (BuyerCodes.IsAnonymous(invoice.Buyer.Name))
                 issues.Add(new("BUYER_TAX_OPTIONAL", IssueSeverity.Info,
                     $"MST người mua để trống; người mua không cung cấp thông tin nên nhập vào khách hàng '{BuyerCodes.RetailCustomerName}'."));
-            else Block("BUYER_TAX_STATUS", "Thiếu MST người mua cho giao dịch không phải bán cho người tiêu dùng.", "Bổ sung MST người mua trong workbook.");
+            else if (invoice.Buyer.Kind != PartyKind.Organization && !BuyerCodes.LooksLikeOrganization(invoice.Buyer.Name))
+                issues.Add(new("BUYER_TAX_OPTIONAL", IssueSeverity.Info, "MST người mua để trống; người mua là cá nhân nên không bắt buộc MST."));
+            else Block("BUYER_TAX_STATUS", "Thiếu MST của người mua là tổ chức/doanh nghiệp.", "Bổ sung MST người mua trong workbook.");
         }
         if (invoice.Buyer.TaxCodePresence == ValuePresence.Provided && string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode))
             Block("BUYER_TAX_STATUS", "Trạng thái MST người mua không phù hợp.", "Điền MST hoặc để trống cho người tiêu dùng.");
