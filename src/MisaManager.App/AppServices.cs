@@ -12,6 +12,7 @@ public sealed partial class AppServices : IAsyncDisposable
     public WorkbookReader WorkbookReader { get; } = new();
     public ItemCatalogStore ItemCatalog { get; } = LoadItemCatalog();
     public PartyCatalogStore PartyCatalog { get; } = LoadPartyCatalog();
+    public PostedInvoiceStore PostedInvoices { get; } = LoadPostedInvoices();
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
     private readonly NativeDispatcher nativeOwner = new();
@@ -97,6 +98,18 @@ public sealed partial class AppServices : IAsyncDisposable
         {
             File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
             return new PartyCatalogStore(path);
+        }
+    }
+
+    private static PostedInvoiceStore LoadPostedInvoices()
+    {
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            ProductIdentity.TechnicalName, "posted-invoices.json");
+        try { return new PostedInvoiceStore(path); }
+        catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
+        {
+            File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
+            return new PostedInvoiceStore(path);
         }
     }
 

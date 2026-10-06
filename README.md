@@ -147,6 +147,15 @@ Mã số thuế người mua được đối chiếu ở bước đối chiếu 
 selector của profile, tool lấy MST của đúng mã khách hàng đã chọn trong danh mục khách hàng làm bằng chứng (nguồn
 `PartyCatalog:<mã>`); MST trong danh mục khác Excel hoặc chưa nạp danh mục → không Cất.
 
+## Hóa đơn đã ghi sổ
+
+**••• → Bỏ hóa đơn đã ghi sổ…** nạp file danh sách chứng từ bán hàng xuất từ MISA (`Ban_hang.xlsx`: cột Số hóa đơn, Ký hiệu
+HĐ, Số chứng từ; bỏ dòng "Số dòng = N"). Mọi hóa đơn có trong file được coi như đã Cất: tab Hóa đơn hiện **Đã ghi sổ**
+(màu đã Cất), tool bỏ tick, **Chọn chưa nhập** không chọn và **Thêm vào MISA** bỏ qua chúng. Ghép theo số hóa đơn (bỏ số 0
+đầu) và ký hiệu (bỏ chữ số mẫu số đầu, `1C26MLV` = `C26MLV`); một bên không có ký hiệu thì chỉ cần trùng số. Lưu tại
+`%LOCALAPPDATA%\MisaManager\posted-invoices.json`; mỗi lần nạp thay toàn bộ danh sách cũ, **Xóa tất cả dữ liệu Excel đã
+nạp** xóa danh sách này. Lịch sử nhập của tool không bị ảnh hưởng.
+
 ## Đối chiếu hóa đơn
 
 Nút **Đối chiếu hóa đơn** đọc chứng từ bán hàng **đang mở trong MISA** (không cần tool vừa nhập, không cần nạp Excel):
