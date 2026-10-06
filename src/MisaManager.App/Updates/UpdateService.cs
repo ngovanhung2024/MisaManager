@@ -148,11 +148,11 @@ public sealed class UpdateService(UpdateSettings settings, Func<bool> hasUnresol
         catch (CryptographicException) { return null; }
     }
 
-    /// <summary>Refuses while an invoice is unresolved; otherwise starts msiexec after this process exits and restarts the app.</summary>
+    /// <summary>Refuses while a checkpoint is still attached (the caller releases it first); otherwise starts msiexec after this process exits and restarts the app.</summary>
     public void InstallAfterExit(string msiPath)
     {
         if (hasUnresolvedRun())
-            throw new UpdateException("Đang có hóa đơn dừng giữa chừng hoặc chưa rõ đã Cất chưa. Hãy xử lý xong trong MISA rồi mới cập nhật.");
+            throw new UpdateException("Không bỏ được checkpoint của phiên Thêm vào MISA cũ nên chưa cập nhật. Thử lại sau.");
         var directory = Path.GetDirectoryName(msiPath)!;
         var log = Path.Combine(directory, "install-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".log");
         var script = Path.Combine(directory, "install-update.cmd");

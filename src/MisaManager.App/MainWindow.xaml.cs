@@ -133,7 +133,8 @@ public partial class MainWindow : Window
             RefreshPartyLabel();
             await workflow.RestoreAsync();
             await RestoreImportSessionAsync();
-            _ = UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: false, status => StatusLabel.Text = status);
+            _ = UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: false, status => StatusLabel.Text = status,
+                workflow.ReleaseCheckpointForUpdateAsync);
         }
         catch (Exception error) { StatusLabel.Text = "Không khôi phục được phiên trước: " + error.Message; }
     }
@@ -784,7 +785,8 @@ public partial class MainWindow : Window
     }
 
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
-        => await UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: true, status => StatusLabel.Text = status);
+        => await UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: true, status => StatusLabel.Text = status,
+            workflow.ReleaseCheckpointForUpdateAsync);
 
     private void UpdateSettings_Click(object sender, RoutedEventArgs e)
         => UpdatePrompt.EditSettings(this, ((App)Application.Current).Services.Updates, status => StatusLabel.Text = status);

@@ -109,6 +109,24 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public bool IsStopping => running && stopRequested;
 
+    /// <summary>
+    /// Cập nhật app: releases the old checkpoint (lỗi, chưa rõ, tạm dừng) like a new Thêm vào MISA does. History keeps
+    /// the uncertainty, so that invoice still needs register proof before it is entered again. Returns an error or null.
+    /// </summary>
+    public async Task<string?> ReleaseCheckpointForUpdateAsync()
+    {
+        if (running) return "Đang chạy Thêm vào MISA. Bấm Dừng ngay, chờ dừng hẳn rồi mới cập nhật.";
+        batchStopped = false;
+        if (services.Workflow.Current is not { } old) { NotifyWorkflowChanged(); return null; }
+        var abandoned = await services.AbandonStoppedSessionAsync();
+        if (abandoned.Status != OperationStatuses.Completed) return abandoned.Message;
+        History = [old with { SessionDetached = true }, .. History.Where(run => run.Snapshot.RunId != old.Snapshot.RunId)];
+        lastError = null;
+        SessionReset?.Invoke(this, EventArgs.Empty);
+        NotifyWorkflowChanged();
+        return null;
+    }
+
     public async Task ResumeAsync()
     {
         if (running) return;
@@ -538,9 +556,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             var discarded = await services.DiscardStoppedVoucherAsync();
             if (discarded.Status != OperationStatuses.Completed)
             {
+                // Still release the checkpoint so the next Thêm vào MISA starts fresh; history keeps its uncertainty.
+                var detached = services.Workflow.Current ?? stopped;
+                if ((await services.AbandonStoppedSessionAsync()).Status == OperationStatuses.Completed)
+                    History = [detached with { SessionDetached = true }, .. History.Where(run => run.Snapshot.RunId != detached.Snapshot.RunId)];
                 FinishTrace(trace, "Không hoàn tất", discarded.Message);
-                Status = discarded.Message;
-                RaiseError(discarded.Message, Serialize(discarded.Data));
+                var message = discarded.Message + " Đã bỏ checkpoint cũ; sau khi Bỏ chứng từ đó trong MISA, bấm Thêm vào MISA để chạy phiên mới.";
+                Status = message;
+                RaiseError(message, Serialize(discarded.Data));
                 return false;
             }
         }
