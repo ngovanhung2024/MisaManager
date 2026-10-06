@@ -9,7 +9,9 @@ public static class UpdatePrompt
 {
     private static bool busy;
 
-    public static async Task CheckAsync(Window owner, UpdateService updates, bool interactive, Action<string> status)
+    /// <param name="releaseCheckpoint">Releases the old Thêm vào MISA checkpoint before installing; returns an error or null.</param>
+    public static async Task CheckAsync(Window owner, UpdateService updates, bool interactive, Action<string> status,
+        Func<Task<string?>> releaseCheckpoint)
     {
         if (busy || !interactive && !updates.Settings.CheckOnStartup) return;
         busy = true;
@@ -39,6 +41,7 @@ public static class UpdatePrompt
             status($"Đã tải và kiểm tra SHA-256 bản {update.Version}.");
             if (MessageBox.Show(owner, $"Đã tải bản {update.Version} và kiểm tra mã SHA-256.\nChữ ký số: {publisher ?? "chưa ký"}\n\nĐóng app và cài đặt ngay?",
                     "Cài đặt cập nhật", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+            if (await releaseCheckpoint() is { } blocked) throw new UpdateException(blocked);
             updates.InstallAfterExit(path);
             Application.Current.Shutdown();
         }
