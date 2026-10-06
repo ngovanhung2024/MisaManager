@@ -134,6 +134,10 @@ Tên hàng trong
 hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng trắng và chữ "bao" trong quy cách dạng `(bao 25kg)`;
 vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg hoặc HC-15/HC-16 không bị ghép chung. Database cũ tự đọc lại file
 danh mục gốc một lần để ghi nguồn mã; nếu file mất thì cần nạp lại. Mã đã tạo và bằng chứng Cất chưa rõ vẫn được giữ.
+Khi danh mục có nhiều mã cùng ĐVT mà tên chỉ khác dấu câu/khoảng trắng (`FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`),
+mã có tên viết đúng từng ký tự như hóa đơn được chọn; không có tên nào viết đúng thì dừng `ITEM_AMBIGUOUS`.
+File hóa đơn có thể thêm cột **Mã hàng** (không bắt buộc): dòng có mã dùng thẳng mã đó, không tra theo tên — cách xử lý
+tên trùng nhiều mã (`ITEM_AMBIGUOUS`) hoặc khác ĐVT (`ITEM_UNIT_CONFLICT`).
 Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.
 
 **••• → Thêm mã khách hàng…** / **Thêm mã nhà cung cấp…** nạp file danh sách xuất từ MISA (cột Mã, Tên, Mã số thuế; bỏ

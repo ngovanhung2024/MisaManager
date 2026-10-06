@@ -103,6 +103,24 @@ public sealed class ItemGroupTests : IDisposable
         Assert.Contains("'CM GOLD 20.10.10'", outside, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AuditTellsPunctuationOnlyDuplicatesApartFromRealDuplicates()
+    {
+        ItemCatalogEntry[] items =
+        [
+            new("HH_120", "FUJI ONE 40EC 100CC PET", "Chai"), new("HH_203", "FUJI ONE 40EC-100CC PET", "Chai"),
+            new("HH_03", "Phân kali", "kg"), new("HH_50", "Phân kali", "kg")
+        ];
+
+        var findings = CatalogAudit.Items(items, Store());
+
+        var spelling = Assert.Single(findings, finding => finding.Contains("HH_120", StringComparison.Ordinal));
+        Assert.StartsWith("Tên gần trùng", spelling, StringComparison.Ordinal);
+        Assert.Contains("HH_203 'FUJI ONE 40EC-100CC PET'", spelling, StringComparison.Ordinal);
+        var duplicate = Assert.Single(findings, finding => finding.Contains("HH_03", StringComparison.Ordinal));
+        Assert.Contains("cột 'Mã hàng' của file Excel hóa đơn", duplicate, StringComparison.Ordinal);
+    }
+
     /// <summary>Layout of MISA's "Danh sách nhóm vật tư, hàng hóa, dịch vụ" export (the attached Nhom_vat_tu__hang_hoa__dich_vu.xlsx).</summary>
     [Fact]
     public async Task GroupExportIsReadWithoutFooterAndStoppedGroups()

@@ -41,6 +41,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         ["buyerTaxPresence"] = ["trạng thái mst người mua", "buyer tax presence"],
         ["buyerKind"] = ["loại người mua", "buyer kind"],
         ["buyerContact"] = ["người liên hệ", "buyer contact"],
+        ["itemCode"] = ["mã hàng", "ma hang", "mã hàng hóa", "ma hang hoa", "mã vthh", "ma vthh", "mã vật tư", "ma vat tu", "item code"],
         ["name"] = ["tên hàng hóa", "ten hang hoa", "tên hàng", "ten hang", "hàng hóa", "hang hoa", "item name", "description"],
         ["unit"] = ["đơn vị tính", "don vi tinh", "dvt", "unit", "uom"],
         ["quantity"] = ["số lượng", "so luong", "quantity", "qty"],
@@ -63,7 +64,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         ["postedDate"] = ["ngày hạch toán", "ngay hach toan", "posted date"],
         ["notes"] = ["ghi chú", "ghi chu", "notes", "note"]
     };
-    private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
+    private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] Required = ["number", "issued", "buyer", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] IdentityFields = ["number", "buyerCode", "buyerTaxCode"];
     public static IReadOnlyList<string> Fields => SelectedFields;
@@ -193,12 +194,13 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
                         && Regex.IsMatch(cell.ParsedValue, @"^[0-9]{1,15}$", RegexOptions.CultureInvariant)))
                     issues.Add(new("IDENTITY_REQUIRES_TEXT", IssueSeverity.Blocking, $"{field}: mã/số phải là ô text để bảo toàn số 0 đầu và precision.", cell.Worksheet, cell.Address,
                         Resolution: "Xác nhận mã nguồn, định dạng Text rồi nhập lại giá trị chính xác."));
-            lines.Add(new InvoiceLine($"{id}:line:{record.Row.Number}", "", Text(cells, "name"), Text(cells, "unit"),
+            // Optional "Mã hàng": settles names that match several catalog codes (ITEM_AMBIGUOUS/ITEM_UNIT_CONFLICT).
+            lines.Add(new InvoiceLine($"{id}:line:{record.Row.Number}", Text(cells, "itemCode"), Text(cells, "name"), Text(cells, "unit"),
                 Number(cells, "quantity", locale, issues), Number(cells, "unitPrice", locale, issues), Number(cells, "amount", locale, issues), Number(cells, "discount", locale, issues),
                 Text(cells, "taxRate"), Number(cells, "taxAmount", locale, issues), Number(cells, "lineTotal", locale, issues), Number(cells, "discountRate", locale, issues),
                 Text(cells, "lineKind"), cells.ToImmutableDictionary()));
         }
-        var lineFields = new HashSet<string>(["name", "unit", "quantity", "unitPrice", "amount", "taxRate", "taxAmount", "lineTotal"], StringComparer.Ordinal);
+        var lineFields = new HashSet<string>(["itemCode", "name", "unit", "quantity", "unitPrice", "amount", "taxRate", "taxAmount", "lineTotal"], StringComparer.Ordinal);
         foreach (var field in first.Keys.Where(field => !lineFields.Contains(field)))
             if (records.Select(row => Text(row.Cells, field)).Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).Count() > 1)
                 issues.Add(new("METADATA_CONFLICT", IssueSeverity.Blocking, $"{field}: dữ liệu trong cùng nhóm hóa đơn không nhất quán.", source.Worksheet,

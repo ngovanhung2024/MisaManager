@@ -693,6 +693,7 @@ public partial class MainWindow : Window
         "buyerTaxPresence" => "Trạng thái MST",
         "buyerKind" => "Loại người mua",
         "buyerContact" => "Người liên hệ",
+        "itemCode" => "Mã hàng",
         "discount" => "Chiết khấu dòng",
         "discountRate" => "Tỷ lệ chiết khấu",
         "lineKind" => "Tính chất dòng",

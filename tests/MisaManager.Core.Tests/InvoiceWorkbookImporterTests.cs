@@ -200,6 +200,27 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
     }
 
     [Fact]
+    public async Task OptionalMaHangColumnSetsTheItemCodePerLine()
+    {
+        var book = new WorkbookBuilder();
+        var sheet = book.Sheet("HoaDon").Row(1, [.. PortalHeaders, "Mã hàng"]);
+        sheet.Row(2, [.. PortalLine(1, "1830", "Khách hàng không cung cấp thông tin", "", "", "Phân kali", "kg"), "HH_50"]);
+        sheet.Row(3, [.. PortalLine(2, "1830", "Khách hàng không cung cấp thông tin", "", "", "FUJI ONE 40EC-100CC PET"), " HH_203 "]);
+        sheet.Row(4, [.. PortalLine(3, "1830", "Khách hàng không cung cấp thông tin", "", "", "Chevin 5SC nano - 900ml (ĐN)"), ""]);
+        var path = Save(book);
+
+        var schema = importer.DescribeMapping(await new WorkbookReader().ReadAsync(path, Token), "HoaDon");
+        var invoice = Only(await importer.ImportAsync(path, null, Token));
+
+        Assert.Equal(18, schema.Fields.Single(field => field.Key == "itemCode").SuggestedColumn);
+        Assert.False(schema.Fields.Single(field => field.Key == "itemCode").Required);
+        // Codes differ per line, so they must not be treated as conflicting invoice metadata.
+        Assert.DoesNotContain(invoice.Issues, issue => issue.Code == "METADATA_CONFLICT");
+        Assert.False(invoice.IsBlocked);
+        Assert.Equal(["HH_50", "HH_203", ""], invoice.Lines.Select(line => line.ItemCode));
+    }
+
+    [Fact]
     public async Task DnMuaColumnAloneSatisfiesTheBuyerColumn()
     {
         var book = new WorkbookBuilder();

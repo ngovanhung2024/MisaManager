@@ -222,6 +222,32 @@ public sealed class ItemCatalogTests : IDisposable
         Assert.Contains("HH_11", error.Message);
     }
 
+    // Vat_tu__hang_hoa__dich_vu.xlsx holds both HH_120 and HH_203; the invoices print "FUJI ONE 40EC-100CC PET".
+    [Theory]
+    [InlineData("FUJI ONE 40EC-100CC PET", "HH_203")]
+    [InlineData("fuji one 40EC - 100CC PET", "HH_203")]
+    [InlineData("FUJI ONE 40EC 100CC PET", "HH_120")]
+    [InlineData("FUJI ONE 40EC.100CC PET", null)]
+    public void ExactSpellingPicksBetweenNamesThatDifferOnlyInPunctuation(string name, string? code)
+    {
+        var store = NewStore();
+        store.Merge([Item("HH_120", "FUJI ONE 40EC 100CC PET", "Chai"), Item("HH_203", "FUJI ONE 40EC-100CC PET", "Chai"),
+            Item("HH_204", "FUJI ONE 40EC-100CC PET-M", "Chai")], temp.Combine("export.xlsx"));
+
+        if (code is null)
+            Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find(name, "Chai")).Code);
+        else Assert.Equal(code, store.Find(name, "Chai")!.Code);
+    }
+
+    [Fact]
+    public void ExactSpellingAlsoDecidesTheKgToTonFallback()
+    {
+        var store = NewStore(Item("HH_60", "Phân NPK 16-16-8", "Tấn"), Item("HH_61", "Phân NPK 16.16.8", "Tấn"));
+
+        Assert.Equal("HH_61", store.Find("Phân NPK 16.16.8", "Kg", allowKgToTon: true)!.Code);
+        Assert.Equal("ITEM_UNIT_CONFLICT", Assert.Throws<AutomationException>(() => store.Find("Phân NPK 16 16 8", "Kg", allowKgToTon: true)).Code);
+    }
+
     [Fact]
     public void KnownNameWithOnlyOtherUnitsIsAConflictNotAMiss()
     {
