@@ -222,31 +222,55 @@ public sealed class ItemCatalogTests : IDisposable
         Assert.Contains("HH_11", error.Message);
     }
 
-    // Vat_tu__hang_hoa__dich_vu.xlsx holds both HH_120 and HH_203; the invoices print "FUJI ONE 40EC-100CC PET".
+    // Vat_tu__hang_hoa__dich_vu.xlsx holds both HH_120 and HH_203; the user confirmed they are the same item.
     [Theory]
-    [InlineData("FUJI ONE 40EC-100CC PET", "HH_203")]
-    [InlineData("fuji one 40EC - 100CC PET", "HH_203")]
-    [InlineData("FUJI ONE 40EC 100CC PET", "HH_120")]
-    [InlineData("FUJI ONE 40EC.100CC PET", null)]
-    public void ExactSpellingPicksBetweenNamesThatDifferOnlyInPunctuation(string name, string? code)
+    [InlineData("FUJI ONE 40EC-100CC PET")]
+    [InlineData("fuji one 40EC - 100CC PET")]
+    [InlineData("FUJI ONE 40EC 100CC PET")]
+    [InlineData("FUJI ONE 40EC.100CC PET")]
+    public void NamesThatDifferOnlyInPunctuationAreDuplicates(string name)
     {
         var store = NewStore();
         store.Merge([Item("HH_120", "FUJI ONE 40EC 100CC PET", "Chai"), Item("HH_203", "FUJI ONE 40EC-100CC PET", "Chai"),
             Item("HH_204", "FUJI ONE 40EC-100CC PET-M", "Chai")], temp.Combine("export.xlsx"));
 
-        if (code is null)
-            Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find(name, "Chai")).Code);
-        else Assert.Equal(code, store.Find(name, "Chai")!.Code);
+        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find(name, "Chai")).Code);
+        Assert.Equal(["HH_120", "HH_203"], store.Duplicates(name, "Chai").Select(item => item.Code));
+        Assert.Equal("HH_204", store.Find("FUJI ONE 40EC-100CC PET-M", "Chai")!.Code);
+        Assert.Empty(store.Duplicates("FUJI ONE 40EC-100CC PET-M", "Chai"));
     }
 
     [Fact]
-    public void ExactSpellingAlsoDecidesTheKgToTonFallback()
+    public void KgToTonFallbackWithTwoCodesIsAmbiguous()
     {
         var store = NewStore(Item("HH_60", "Phân NPK 16-16-8", "Tấn"), Item("HH_61", "Phân NPK 16.16.8", "Tấn"));
 
-        Assert.Equal("HH_61", store.Find("Phân NPK 16.16.8", "Kg", allowKgToTon: true)!.Code);
-        Assert.Equal("ITEM_UNIT_CONFLICT", Assert.Throws<AutomationException>(() => store.Find("Phân NPK 16 16 8", "Kg", allowKgToTon: true)).Code);
+        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Phân NPK 16 16 8", "Kg", allowKgToTon: true)).Code);
+        Assert.Equal(2, store.Duplicates("Phân NPK 16.16.8", "Kg", allowKgToTon: true).Count);
+        Assert.Empty(store.Duplicates("Phân NPK 16.16.8", "Kg"));
     }
+
+    // Spellings seen in DanhSachHoaDon_20261006224706.xlsx against Vat_tu__hang_hoa__dich_vu.xlsx.
+    [Theory]
+    [InlineData("Catex 3.6EC 450ml (ĐN)", "Catex 3.6EC 450ml")]
+    [InlineData("Kill Snail 10gr  500gr ĐN", "Kill Snail 10gr -500gr")]
+    [InlineData("Lịch 25x35 (Hàng khuyến mại, tặng không thu tiền)", "Lịch 25x35 (Hàng khuyến mãi, tặng không thu tiền)")]
+    [InlineData("Phân bón hữu cơ vi sinh Quế Lâm 01 (bao 25kg)", "Phân hữu cơ vi sinh Quế lâm 01(25kg)")]
+    public void InvoiceSpellingsMatchTheCatalogName(string invoice, string catalog)
+        => Assert.Equal(ItemCatalogStore.ItemNameKey(catalog), ItemCatalogStore.ItemNameKey(invoice));
+
+    [Theory]
+    [InlineData("Catex 3.6EC 450ml (ĐN - chai tím - nhãn tím - nước trong)", "Catex 3.6EC 450ml")]
+    [InlineData("MancoBgo 80WP - 100gr (xanh - ĐN)", "MancoBgo 80WP - 100gr (xanh)")]
+    [InlineData("Chani 300EC - 100ml (ĐN Nicotex)", "Chani 300EC - 100ml (ĐN)")]
+    [InlineData("Phân bón lá NPK", "Phân NPK")]
+    [InlineData("Fu-army 40EC 100ml (ĐN)", "Fuamy 40EC - 100ml")]
+    public void VariantWordingStaysDistinct(string first, string second)
+    {
+        // "Phân bón lá" keeps "lá"; only the bare "bón" is optional.
+        Assert.NotEqual(ItemCatalogStore.ItemNameKey(first), ItemCatalogStore.ItemNameKey(second));
+    }
+
 
     [Fact]
     public void KnownNameWithOnlyOtherUnitsIsAConflictNotAMiss()
@@ -291,12 +315,13 @@ public sealed class ItemCatalogTests : IDisposable
     }
 
     [Fact]
-    public void KilogramToTonConversionStaysConflictWhenTwoTonItemsExist()
+    public void KilogramToTonConversionIsAmbiguousWhenTwoTonItemsExist()
     {
         var store = NewStore(Item("HH_61", "Phân kali", "Tấn"), Item("HH_62", "Phân kali", "Tấn"));
 
         Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "Tấn")).Code);
-        Assert.Equal("ITEM_UNIT_CONFLICT", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "kg", allowKgToTon: true)).Code);
+        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "kg", allowKgToTon: true)).Code);
+        Assert.Equal("ITEM_UNIT_CONFLICT", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "kg")).Code);
     }
 
     [Fact]

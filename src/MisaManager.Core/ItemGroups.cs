@@ -53,7 +53,8 @@ public sealed partial class ItemGroupStore
     /// <summary>Loaded group whose "CODE_" prefix starts <paramref name="itemCode"/>, or null when the code follows no group.</summary>
     public string? GroupOfCode(string itemCode)
     {
-        var code = itemCode.Trim();
+        // "HH _CAI" is how some MISA codes are written; the space does not leave the HH group.
+        var code = Regex.Replace(itemCode.Trim(), @"\s+(?=_)", "");
         lock (gate)
             return groups.Select(group => group.Code).OrderByDescending(group => group.Length)
                 .FirstOrDefault(group => code.StartsWith(group + "_", StringComparison.OrdinalIgnoreCase));
