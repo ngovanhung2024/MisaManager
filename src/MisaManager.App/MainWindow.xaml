@@ -147,6 +147,8 @@
           <MenuItem Header="Thêm mã nhà cung cấp…" Click="ChooseSuppliers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách nhà cung cấp xuất từ MISA; dùng khi người mua chỉ có trong danh mục nhà cung cấp"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
+          <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, mã khách hàng và nhà cung cấp. Lịch sử chống nhập trùng được giữ lại."/>
           <Separator/>
           <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
           <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>

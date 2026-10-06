@@ -22,6 +22,24 @@ public sealed class ItemCatalogTests : IDisposable
     // ---- registered units ----
 
     [Fact]
+    public void ClearEmptiesTheWholeDatabase()
+    {
+        var export = temp.Combine("export.xlsx");
+        File.WriteAllText(export, "");
+        var store = NewStore();
+        store.Merge([Item("HH_1", "Xi măng", "Tấn"), Item("HH_2", "Cát", "m3")], export);
+        store.Add(Item("HH_3", "Đá", "m3"));
+
+        Assert.Equal(3, store.Clear());
+
+        var reloaded = new ItemCatalogStore(CatalogPath);
+        Assert.Empty(reloaded.Snapshot());
+        Assert.Equal(0, reloaded.PendingCount);
+        Assert.Null(reloaded.SourceFile);
+        Assert.True(reloaded.HasImportedProvenance);
+    }
+
+    [Fact]
     public void MainUnitOnlyReadCannotProveConversionUnitAbsent()
     {
         var store = NewStore(new("HH_111", "Phân NPK Cà Mau Gold", "Tấn", UnitListIncomplete: true),

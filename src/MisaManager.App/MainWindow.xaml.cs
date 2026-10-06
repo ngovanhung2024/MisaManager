@@ -962,6 +962,45 @@ public partial class MainWindow : Window
         catch (Exception error) { StatusLabel.Text = "Không xóa được lịch sử hồ sơ: " + error.Message; }
     }
 
+    private async void ClearImportedData_Click(object sender, RoutedEventArgs e)
+    {
+        if (!workflow.CanEditSource) return;
+        if (MessageBox.Show(this,
+                "Xóa toàn bộ dữ liệu đã nạp từ Excel?\n\n"
+                + "• Danh sách hóa đơn và các chỉnh sửa trên hóa đơn\n"
+                + "• Toàn bộ danh mục mã hàng (kể cả mã do tool đã tạo)\n"
+                + "• Danh sách mã khách hàng và nhà cung cấp\n\n"
+                + "Sau khi xóa, hãy nạp lại danh mục mới nhất xuất từ MISA. Lịch sử nhập (chống nhập trùng) và cấu hình cột "
+                + "được giữ lại. Không hoàn tác được.",
+                "Xóa tất cả dữ liệu", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var services = ((App)Application.Current).Services;
+        try
+        {
+            importModel.Reset();
+            ClearImportResult();
+            workflow.SetCheckedMany([]);
+            ResetMapping();
+            updatingSheet = true;
+            SheetChoice.ItemsSource = null;
+            updatingSheet = false;
+            SourcePopup.IsOpen = false;
+            WorkbookLabel.Text = "Chưa chọn file Excel hóa đơn";
+            WorkbookLabel.ToolTip = null;
+            ImportSessions.Clear();
+            await services.Drafts.ClearAsync();
+            var removedItems = await Task.Run(services.ItemCatalog.Clear);
+            await Task.Run(services.PartyCatalog.Clear);
+            RefreshCatalogLabel();
+            RefreshPartyLabel();
+            presentationInitialized = false;
+            RefreshWorkflowPanel();
+            RefreshRunSummary();
+            StatusLabel.Text = $"Đã xóa sạch dữ liệu: danh sách hóa đơn, {removedItems:N0} mã hàng, mã khách hàng và nhà cung cấp.";
+        }
+        catch (Exception error) { StatusLabel.Text = "Không xóa hết được dữ liệu Excel: " + error.Message; }
+    }
+
     // Deferred so the closing context menu does not immediately dismiss the StaysOpen=False popup.
     private void OpenSourceSettings()
         => Dispatcher.BeginInvoke(() => SourcePopup.IsOpen = true, System.Windows.Threading.DispatcherPriority.Background);
