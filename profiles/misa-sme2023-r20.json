@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-unpost-save-proof-20261007",
+  "revision": "r20-new-customer-20261007",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -90,6 +90,22 @@
         "save": { "name": "Cất", "controlType": "Button" }
       },
       "settings": { "defaultStock": "KHH" }
+    },
+    "customer_new": {
+      "title": "Thêm Khách hàng (F9 hoặc nút + trên ô Khách hàng của chứng từ)",
+      "scope": { "name": "Thêm Khách hàng", "controlType": "Window" },
+      "elements": {
+        "organization": { "name": "1. Tổ chức", "controlType": "RadioButton" },
+        "individual": { "name": "2. Cá nhân", "controlType": "RadioButton" },
+        "tax_code": { "label": "Mã số thuế", "controlType": "Edit" },
+        "code": { "label": "Mã (*)", "controlType": "Edit" },
+        "name": { "label": "Tên (*)", "controlType": "Edit", "required": false, "description": "Chỉ có ở 1. Tổ chức" },
+        "full_name": { "label": "Họ và tên (*)", "controlType": "Edit", "required": false, "description": "Chỉ có ở 2. Cá nhân" },
+        "address": { "label": "Địa chỉ", "controlType": "Edit" },
+        "id_number": { "label": "Số CMND", "controlType": "Edit", "required": false, "description": "Chỉ có ở 2. Cá nhân" },
+        "save": { "name": "Cất", "controlType": "Button" }
+      },
+      "settings": { "openKey": "F9" }
     },
     "tax_rounding_prompt": {
       "title": "Cảnh báo chênh lệch tổng tiền thuế khi Cất",

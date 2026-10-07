@@ -285,6 +285,72 @@ public sealed class PartyCatalogTests : IDisposable
             PartyCatalogWorkbook.ReadAsync(new WorkbookReader(), book.Save(temp.Combine("sai.xlsx")), PartyRole.Customer, Token));
         Assert.Equal("PARTY_CATALOG_HEADER_MISSING", error.Code);
     }
+
+    [Fact]
+    public void NewCustomerCodeIsTheMstForOrganisationsAndInitialsForPeople()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [.. Customers, new("LTH", "LÊ THANH HẢI")], "Khach_hang.xlsx");
+
+        Assert.Equal("3301747760", store.NewCustomerCode(new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", " 3301747760 ", "", "",
+            ValuePresence.Provided)));
+        Assert.Equal("0100101611-008", store.NewCustomerCode(new Party("CHI NHÁNH THỪA THIÊN HUẾ", "0100101611-008", "", "",
+            ValuePresence.Provided, PartyKind.Organization)));
+        Assert.Equal("HTT", store.NewCustomerCode(new Party("Hoàng Trọng Tiếp", "", "", "", ValuePresence.Missing)));
+        // Đ → D, text in brackets dropped, a used code gets a number.
+        Assert.Equal("DVA", store.NewCustomerCode(new Party("Đỗ Văn An (046085016878)", "046085016878", "", "", ValuePresence.Provided)));
+        Assert.Equal("LTH2", store.NewCustomerCode(new Party("Lê Thị Hương", "046172000663", "", "", ValuePresence.Provided)));
+        // An organisation without a usable MST falls back to initials; HTNY is taken.
+        Assert.Equal("HTNY2", store.NewCustomerCode(new Party("Huỳnh Thị Như Ý", "", "", "", ValuePresence.Missing)));
+    }
+
+    [Fact]
+    public void CreatedCustomerIsFoundUntilAFreshExportListsIt()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, Customers, "Khach_hang.xlsx");
+        var buyer = new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", "3301747760", "Xã Phú Lộc", "", ValuePresence.Provided);
+        Assert.Null(BuyerCodes.Resolve(buyer, store));
+        Assert.True(BuyerCodes.CanCreate(buyer, store));
+
+        store.AddCreated(new("3301747760", buyer.Name, buyer.TaxCode, buyer.Address));
+
+        Assert.Equal("3301747760", BuyerCodes.Resolve(buyer, store)?.Code);
+        Assert.Equal("Xã Phú Lộc", store.FindByCode("3301747760")?.Address);
+        // Survives a restart.
+        var reloaded = Store();
+        Assert.Equal("3301747760", BuyerCodes.Resolve(buyer, reloaded)?.Code);
+        Assert.Equal(Customers.Length, reloaded.CustomerCount);
+        Assert.Equal(1, reloaded.CreatedCount);
+
+        reloaded.Replace(PartyRole.Customer, [.. Customers, new("3301747760", buyer.Name, buyer.TaxCode)], "Khach_hang.xlsx");
+        Assert.Equal(0, reloaded.CreatedCount);
+        Assert.Equal("3301747760", BuyerCodes.Resolve(buyer, reloaded)?.Code);
+    }
+
+    [Fact]
+    public void CustomersAreCreatedOnlyAfterTheCustomerListWasSearched()
+    {
+        var empty = Store();
+        var person = new Party("Hoàng Trọng Tiếp", "", "", "", ValuePresence.Missing);
+        Assert.False(BuyerCodes.CanCreate(person, empty));
+        Assert.False(BuyerCodes.CanCreate(person, null));
+
+        var store = Store("loaded.json");
+        store.Replace(PartyRole.Customer, Customers, "Khach_hang.xlsx");
+        Assert.True(BuyerCodes.CanCreate(person, store));
+        Assert.False(BuyerCodes.CanCreate(person with { Code = "TIẾP" }, store));
+        Assert.False(BuyerCodes.CanCreate(new Party("BÁN CHO NGƯỜI TIÊU DÙNG", "", "", "", ValuePresence.Missing), store));
+        Assert.False(BuyerCodes.CanCreate(new Party("Khách hàng không cung cấp thông tin", "", "", "", ValuePresence.Missing), store));
+    }
+
+    [Theory]
+    [InlineData("046172000663", true)]
+    [InlineData("3301747760", false)]
+    [InlineData("0100101611-008", false)]
+    [InlineData("", false)]
+    public void TwelveDigitBuyerTaxCodeIsAPersonalId(string taxCode, bool personal)
+        => Assert.Equal(personal, BuyerCodes.IsPersonalId(taxCode));
 }
 
 public sealed class CompanyRedactionTests

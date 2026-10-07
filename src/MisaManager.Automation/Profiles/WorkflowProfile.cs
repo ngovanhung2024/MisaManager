@@ -1,6 +1,14 @@
 namespace MisaManager.Automation;
 
 /// <summary>
+/// "Thêm Khách hàng" (F9 = the + button on the voucher's customer field). <see cref="Title"/> is the dialog caption;
+/// the organisation layout has Name, the individual layout FullName and IdNumber ("Số CMND").
+/// </summary>
+public sealed record CustomerDialogProfile(string Title, NativeSelector Organization, NativeSelector Individual,
+    NativeSelector Code, NativeSelector Name, NativeSelector FullName, NativeSelector Address, NativeSelector TaxCode,
+    NativeSelector IdNumber, NativeSelector Save, string OpenKey);
+
+/// <summary>
 /// Typed view of the screens the sales-invoice workflow drives. Selectors come from the
 /// generic <see cref="ScreenProfile"/> data in profiles/*.json; other workflows read
 /// <see cref="Screens"/> directly instead of growing this class.
@@ -10,6 +18,7 @@ public sealed class WorkflowProfile
     public const string SalesList = "sales_list";
     public const string SalesVoucher = "sales_voucher";
     public const string ItemNew = "item_new";
+    public const string CustomerNew = "customer_new";
     public const string TaxRoundingPrompt = "tax_rounding_prompt";
 
     private static readonly string[] RequiredFields = ["customer", "customer_name", "customer_tax", "voucher_date", "posted_date",
@@ -59,6 +68,16 @@ public sealed class WorkflowProfile
         ItemNewTaxRate = item.Element("tax_rate").Selector;
         ItemNewSave = item.Element("save").Selector;
         DefaultItemStock = item.Setting("defaultStock", "KHH");
+        if (screens.TryGetValue(CustomerNew, out var customer))
+        {
+            var title = customer.Scope?.Name is { Length: > 0 } caption ? caption
+                : throw new InvalidDataException($"Màn hình '{CustomerNew}' cần scope.name (tiêu đề hộp thoại).");
+            NewCustomer = new(title, customer.Element("organization").Selector, customer.Element("individual").Selector,
+                customer.Element("code").Selector, customer.Element("name").Selector, customer.Element("full_name").Selector,
+                customer.Element("address").Selector, customer.Element("tax_code").Selector, customer.Element("id_number").Selector,
+                customer.Element("save").Selector, customer.Setting("openKey", "F9"));
+            if (NewCustomer.Save.ControlType != "Button") throw new InvalidDataException("Nút Cất của hộp Thêm Khách hàng phải có controlType Button.");
+        }
         var prompt = Screen(TaxRoundingPrompt);
         TaxPromptScopeId = Scope(prompt);
         TaxPromptMessage = prompt.Element("message").Selector;
@@ -98,6 +117,8 @@ public sealed class WorkflowProfile
     public NativeSelector ItemNewStock { get; }
     public NativeSelector ItemNewTaxRate { get; }
     public NativeSelector ItemNewSave { get; }
+    /// <summary>Null when the profile has no "customer_new" screen: buyers without a code then stay unfinished.</summary>
+    public CustomerDialogProfile? NewCustomer { get; }
     public IReadOnlyDictionary<string, NativeSelector> Fields { get; }
     /// <summary>Caption of the voucher tab that shows a field, for fields the profile places on a tab.</summary>
     public IReadOnlyDictionary<string, string> FieldTabs { get; }

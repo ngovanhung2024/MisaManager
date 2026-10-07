@@ -252,6 +252,13 @@ public sealed partial class NativeInputService
         var found = Snapshots(root, Live(condition, identity.ProcessId));
         return selectors.Select(selector =>
         {
+            if (selector.ByLabel)
+            {
+                var labelled = LabelledMatches(found, selector);
+                if (labelled.Length == 0) throw new AutomationException("TARGET_NOT_FOUND", $"Chưa có native target theo nhãn '{selector.Label}'.");
+                if (labelled.Length != 1) throw new AutomationException("TARGET_AMBIGUOUS", $"Cần đúng một ô cạnh nhãn '{selector.Label}'.");
+                return labelled[0].Element;
+            }
             var elements = found.Where(item => Matches(item, selector)).ToArray();
             if (elements.Length == 0) throw new AutomationException("TARGET_NOT_FOUND", $"Chưa có native target: {selector.AutomationId}/{selector.Name}.");
             if (elements.Length != 1) throw new AutomationException("TARGET_AMBIGUOUS", $"Cần đúng một native target: {selector.AutomationId}/{selector.Name}.");
@@ -262,6 +269,8 @@ public sealed partial class NativeInputService
     private ConditionBase SelectorCondition(NativeSelector selector)
     {
         var factory = automation.ConditionFactory;
+        if (selector.ByLabel)
+            return new OrCondition(factory.ByControlType(ControlType.Text), factory.ByControlType(LabelledType(selector)));
         ConditionBase condition = !string.IsNullOrWhiteSpace(selector.AutomationId) ? factory.ByAutomationId(selector.AutomationId)
             : !string.IsNullOrWhiteSpace(selector.Name) ? factory.ByName(selector.Name)
             : factory.ByControlType(Enum.Parse<ControlType>(selector.ControlType));
@@ -269,6 +278,37 @@ public sealed partial class NativeInputService
             && Enum.TryParse<ControlType>(selector.ControlType, out var type) && type.ToString() == selector.ControlType)
             condition = condition.And(factory.ByControlType(type));
         return condition;
+    }
+
+    private static ControlType LabelledType(NativeSelector selector)
+        => Enum.TryParse<ControlType>(selector.ControlType, out var type) && selector.ControlType.Length > 0 ? type : ControlType.Edit;
+
+    // Captions compare without the required-field mark, a trailing colon or markup: "Mã (*)" = "Mã".
+    private static string LabelKey(string? text) => TextKey.Compact(LabelNoise().Replace(text ?? "", ""));
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"<[^>]*>|\(\s*\*\s*\)|[*:]", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex LabelNoise();
+
+    /// <summary>
+    /// Controls of the selector's type on the row of its visible label, nearest to the right of it. A wrapper and its
+    /// inner editor share the left edge; the innermost one is the control. More than one result means ambiguous.
+    /// </summary>
+    private static ElementSnapshot[] LabelledMatches(IReadOnlyList<ElementSnapshot> found, NativeSelector selector)
+    {
+        var key = LabelKey(selector.Label);
+        var labels = found.Where(item => item.ControlType == ControlType.Text && !item.Offscreen && item.HasArea
+            && LabelKey(item.Name) == key).ToArray();
+        if (labels.Length != 1) return labels;
+        var label = labels[0].Bounds;
+        var middle = label.Top + label.Height / 2;
+        var type = LabelledType(selector);
+        var row = found.Where(item => item.ControlType == type && !item.Offscreen && item.HasArea
+                && item.Bounds.Top <= middle && item.Bounds.Bottom >= middle && item.Bounds.Left >= label.Left + label.Width / 2)
+            .OrderBy(item => item.Bounds.Left).ToArray();
+        if (row.Length == 0) return [];
+        var nearest = row.Where(item => item.Bounds.Left - row[0].Bounds.Left <= 2).ToArray();
+        return nearest.Where(item => !nearest.Any(other => !ReferenceEquals(other, item) && other.Bounds != item.Bounds
+            && item.Bounds.Contains(other.Bounds))).ToArray();
     }
 
     private static bool Matches(ElementSnapshot item, NativeSelector selector, bool requireVisible = true)

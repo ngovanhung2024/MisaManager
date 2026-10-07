@@ -179,7 +179,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         {
             new ImportIssue(BuyerCodes.MissingCode, IssueSeverity.Blocking, latest.Snapshot.LastMessage ?? RunOutcome.UnfinishedLabel,
                 InvoiceId: invoice.InvoiceId,
-                Resolution: "Tạo khách hàng trong MISA, xuất lại danh sách khách hàng rồi nạp lại ở menu •••, hoặc ghi mã vào cột Mã khách hàng của Excel; sau đó chạy lại.")
+                Resolution: "Nạp danh sách khách hàng xuất từ MISA ở menu ••• (người mua không có trong danh sách sẽ được tool tự tạo mới trong MISA), "
+                    + "hoặc ghi mã vào cột Mã khách hàng của Excel; sau đó chạy lại.")
         };
     }
 
@@ -212,9 +213,38 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// <summary>Invoices that can still be entered: not blocked or held and neither saved, already in MISA nor posted.</summary>
     public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice) && !IsHeld(invoice));
 
-    private bool IsDone(InvoiceDocument invoice) => services.PostedInvoices.Contains(invoice)
+    public bool IsDone(InvoiceDocument invoice) => services.PostedInvoices.Contains(invoice)
         || History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
-            && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot)));
+            && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot))
+            || WorkflowRunner.IsManualSavedFor(run, invoice));
+
+    public bool CanMarkSaved(InvoiceDocument invoice) => !running && !IsDone(invoice);
+
+    /// <summary>
+    /// The user entered these invoices in MISA by hand: records them as saved and deletes their old checkpoints.
+    /// Returns how many were marked and an error (null when everything went through).
+    /// </summary>
+    public async Task<(int Marked, string? Error)> MarkSavedManuallyAsync(IEnumerable<InvoiceDocument> targets)
+    {
+        if (running) return (0, "Đang chạy Thêm vào MISA. Bấm Dừng ngay, chờ dừng hẳn rồi mới đánh dấu hóa đơn đã lưu.");
+        var marked = 0;
+        string? error = null;
+        var hadSession = services.Workflow.Current is not null;
+        try
+        {
+            foreach (var invoice in targets.DistinctBy(invoice => invoice.Fingerprint).Where(invoice => !IsDone(invoice)))
+            {
+                await services.Workflow.MarkSavedManuallyAsync(invoice);
+                SetChecked(invoice.Fingerprint, false);
+                marked++;
+            }
+        }
+        catch (Exception exception) { error = exception.Message; }
+        History = await services.Workflow.ReadHistoryAsync();
+        if (hadSession && services.Workflow.Current is null) { lastError = null; SessionReset?.Invoke(this, EventArgs.Empty); }
+        NotifyWorkflowChanged();
+        return (marked, error);
+    }
 
     public IReadOnlyList<WorkflowContext> History { get; private set; } = [];
     public WorkflowActivity? Activity => services.Activity;

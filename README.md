@@ -148,8 +148,22 @@ dòng "Ngừng theo dõi" và dòng "Số dòng = N"). Lưu tại `%LOCALAPPDATA
 toàn bộ danh sách cùng loại. Khi Excel không có mã khách hàng, tool tìm mã theo thứ tự: trùng tên → trùng mã số thuế →
 tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MTV…), khách hàng trước nhà cung cấp. Mọi so sánh dùng
 `TextKey` (cách bỏ dấu cũ/mới, chữ Đ giả, khoảng trắng, ký tự ẩn, hoa/thường). Bán cho người tiêu dùng luôn dùng `NTD`;
-mã trong Excel luôn được ưu tiên. Không tìm được hoặc trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ**
-(`CUSTOMER_CODE_MISSING` / `CUSTOMER_AMBIGUOUS`).
+mã trong Excel luôn được ưu tiên. Trùng nhiều mã → hóa đơn dừng **trước khi mở chứng từ** (`CUSTOMER_AMBIGUOUS`).
+
+**Tạo khách hàng mới:** đã nạp danh mục khách hàng mà vẫn không tìm được mã thì tool tự tạo khách hàng trong MISA: ở bước
+khách hàng của chứng từ, tool nhấn F9 trên ô Khách hàng (tương đương nút **+**) để mở hộp **Thêm Khách hàng**, chọn
+**1. Tổ chức** hoặc **2. Cá nhân** (cá nhân = người mua không mang dấu hiệu tổ chức, xem `BUYER_TAX_OPTIONAL` bên dưới), điền
+Mã, Tên/Họ và tên, Địa chỉ (cột Địa chỉ người mua) và MST (cột MST người mua), đọc lại toàn bộ rồi bấm **Cất** của hộp. MISA
+đưa khách hàng mới vào chứng từ (nếu không, tool gõ mã), sau đó luồng chạy tiếp như bình thường. Quy tắc mã: tổ chức dùng
+**mã số thuế** (`3301747760`, `0100101611-008`); cá nhân (hoặc tổ chức không có MST) dùng **chữ cái đầu** của tên không dấu
+như cách đặt mã hiện có (`Hoàng Trọng Tiếp` → `HTT`); mã đã có trong danh mục thì thêm số (`HTT2`). MST 12 số của cá nhân
+là số CCCD nên được điền vào ô **Số CMND**, không vào ô Mã số thuế. Mã được ghi vào checkpoint trước khi bấm Cất; vì mã cố
+định theo người mua, nếu kết quả Cất không rõ thì lần chạy sau MISA báo trùng mã (`CUSTOMER_CODE_TAKEN`) thay vì tạo thêm
+khách hàng. Khách hàng đã tạo được lưu trong `party-catalog.json` (mục `created`) để các hóa đơn sau của cùng người mua dùng
+lại mã, đến khi file danh sách khách hàng nạp lại có mã đó. Chưa nạp danh mục khách hàng thì tool không tạo (mọi người mua
+sẽ bị coi là mới) và hóa đơn dừng trước khi mở chứng từ (`CUSTOMER_CODE_MISSING`, **Chưa hoàn thành**). Ô trong hộp Thêm
+Khách hàng được tìm theo **nhãn** bên trái (`"label": "Mã (*)"` trong `screens.customer_new` của profile) vì chưa có
+AutomationId; khi biết AutomationId thật, thêm `automationId` vào profile là được ưu tiên.
 Tên người mua lấy từ cột **DN mua** (đơn vị mua) của file hóa đơn nếu ô có dữ liệu; khi đó **Người mua** chỉ là người liên hệ.
 DN mua trống thì dùng Người mua; file chỉ có cột DN mua cũng nhập được. Người mua "Khách hàng không cung cấp thông tin"
 không cần MST và nhập vào khách hàng **Khách lẻ** của danh mục khách hàng (như các chứng từ đã ghi sổ); danh mục không có
@@ -207,6 +221,12 @@ một phiên mới, không tiếp tục checkpoint cũ. Hồ sơ đã Cất và 
 chính hóa đơn còn kết quả chưa rõ, tool chỉ đọc toàn bộ danh sách trong đúng phiên MISA đã nhập sau khi chứng từ được
 đóng: có số chứng từ + số hóa đơn → bỏ qua, không nhập lại; không có → cho phép chạy từ đầu. Hóa đơn khác dùng guard
 riêng của phiên mới; checkpoint cũ không chặn. Nếu vẫn có chứng từ đang mở thì guard báo cần xử lý editor đó.
+
+**Đánh dấu đã lưu (nhập tay):** đã tự nhập một hóa đơn vào MISA thì bấm chuột phải vào hóa đơn đó trong danh sách và chọn
+**Đánh dấu đã lưu (đã nhập tay trong MISA)**; có thể tick nhiều hóa đơn rồi chọn "Đánh dấu đã lưu cho … hóa đơn đang tick".
+Tool xóa checkpoint và lịch sử chạy cũ của hóa đơn (chưa hoàn thành, chưa rõ cần xác minh, lỗi…), ghi một bản ghi Saved
+(`MANUAL_SAVED`) hiện là **Đã lưu (nhập tay)** và không bao giờ nhập lại hóa đơn này. Tool không kiểm tra lại trong MISA và
+không hoàn tác được; không dùng được khi đang chạy Thêm vào MISA. Hóa đơn đã lưu/đã có trong MISA không cần đánh dấu.
 
 **Dừng ngay** không hủy giữa chừng: tool làm xong thao tác hiện tại (hóa đơn đang nhập vẫn được đối chiếu rồi Cất/Bỏ như
 bình thường, nên không để chứng từ dở và không báo lỗi), dừng trước hóa đơn kế tiếp, bỏ liên kết checkpoint và đồng hồ

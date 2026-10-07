@@ -15,6 +15,9 @@ public sealed class ProfileTests
         foreach (var key in new[] { WorkflowProfile.SalesList, WorkflowProfile.SalesVoucher, WorkflowProfile.ItemNew, WorkflowProfile.TaxRoundingPrompt, "item_lookup" })
             Assert.True(profile.Screens.ContainsKey(key), key);
         Assert.Equal("KHH", profile.DefaultItemStock);
+        var customer = Assert.IsType<CustomerDialogProfile>(profile.NewCustomer);
+        Assert.Equal(("Thêm Khách hàng", "F9", "Mã (*)"), (customer.Title, customer.OpenKey, customer.Code.Label));
+        Assert.True(customer.Code.ByLabel && customer.Address.ByLabel && !customer.Save.ByLabel);
     }
 
     [Fact]
