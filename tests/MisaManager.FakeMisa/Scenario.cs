@@ -69,4 +69,5 @@ public sealed record SavedVoucher(string VoucherNumber, string InvoiceNumber, st
     string CustomerName, string CustomerTaxCode, string PostedDate, string VoucherDate, string IssuedDate, string Payment,
     IReadOnlyList<SavedLine> Lines, decimal Subtotal, decimal TaxTotal, decimal GrandTotal);
 
-public sealed record StateFile(IReadOnlyList<SavedVoucher> Vouchers, IReadOnlyList<CatalogItem> CreatedItems);
+public sealed record StateFile(IReadOnlyList<SavedVoucher> Vouchers, IReadOnlyList<CatalogItem> CreatedItems,
+    IReadOnlyList<Customer> CreatedCustomers);

@@ -18,7 +18,10 @@ public sealed record FakeVoucher(string VoucherNumber, string InvoiceNumber, str
 
 public sealed record FakeItem(string Code, string Name, string Unit, string TaxRate, decimal Price = 0);
 
-public sealed record FakeState(IReadOnlyList<FakeVoucher> Vouchers, IReadOnlyList<FakeItem> CreatedItems);
+public sealed record FakeCustomer(string Code, string Name, string Address, string TaxCode, bool Individual = false, string IdNumber = "");
+
+public sealed record FakeState(IReadOnlyList<FakeVoucher> Vouchers, IReadOnlyList<FakeItem> CreatedItems,
+    IReadOnlyList<FakeCustomer>? CreatedCustomers = null);
 
 /// <summary>Scenario switches understood by MISA.SME.exe (see tests/MisaManager.FakeMisa/Scenario.cs).</summary>
 public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<FakeVoucher>? ExistingVouchers = null,

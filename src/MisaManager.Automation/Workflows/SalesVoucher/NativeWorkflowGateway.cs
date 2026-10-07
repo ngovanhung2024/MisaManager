@@ -271,8 +271,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             }
             if (transition.To is WorkflowStatus.PreflightPassed or WorkflowStatus.SalesSurface)
             {
-                // Fails before any input when the customer code cannot be determined.
-                _ = BuyerCode(context);
+                // Fails before any input when the customer code cannot be determined or created.
+                RequireCustomer(context);
                 if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                     throw new AutomationException("EXISTING_EDITOR", "Có editor chưa gắn với run; cần xử lý trước khi nhập mới.");
                 var current = await BindSales(context, token);
@@ -308,10 +308,21 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         await Tab(profile.ReceiptTab, token);
                         StopPoint();
                         Entering("customer");
-                        var buyerCode = BuyerCode(context);
-                        await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
-                            buyerCode, buyerCode, NativeValueKind.Exact,
-                            profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false), token);
+                        var buyerCode = CreatedCustomer(context) ?? BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code;
+                        var typeCode = true;
+                        if (buyerCode is null)
+                        {
+                            buyerCode = await CreateCustomerAsync(context, progress, token);
+                            sent = true;
+                            context = context with { NativeValues = (context.NativeValues
+                                ?? System.Collections.Immutable.ImmutableDictionary<string, string>.Empty).SetItem(CreatedCustomerKey, buyerCode) };
+                            // "Cất" in the dialog puts the new customer into the voucher; type the code only when MISA did not.
+                            typeCode = !await CustomerFilledAsync(token);
+                        }
+                        if (typeCode)
+                            await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
+                                buyerCode, buyerCode, NativeValueKind.Exact,
+                                profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false), token);
                         sent = true;
                         var customer = await VerifyCustomer(context, token, selecting: true);
                         await progress(new("customer_reference", customer.Values["customer"].Value!, Frame(customer.Frame)), token);
@@ -475,6 +486,104 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 Elapsed(checkpointStarted), checkpointFailed ? "failed" : "ok");
             RecordCheckpoint(transition.To.ToString(), checkpointStarted);
         }
+    }
+
+    /// <summary>
+    /// "Thêm Khách hàng" from the voucher's customer field (F9 = the + button): organisation or individual layout, code,
+    /// name, address and MST / personal ID from the invoice, read back, then the dialog's own "Cất". The code is kept in
+    /// the checkpoint before the click; MISA refuses a second customer with the same code, so a lost outcome never
+    /// creates a duplicate.
+    /// </summary>
+    private async Task<string> CreateCustomerAsync(WorkflowContext context, Func<WorkflowProgress, CancellationToken, Task> progress,
+        CancellationToken token)
+    {
+        var dialog = profile.NewCustomer;
+        var catalog = PartyCatalog;
+        var buyer = context.Invoice.Buyer;
+        if (dialog is null || catalog is null || !BuyerCodes.CanCreate(buyer, catalog)) throw MissingCustomer(context);
+        var individual = BuyerCodes.IsIndividual(buyer);
+        var code = catalog.NewCustomerCode(buyer);
+        var name = buyer.Name.Trim();
+        var address = buyer.Address.Trim();
+        var tax = buyer.TaxCode.Trim();
+        // A 12-digit CCCD on a person's invoice goes to "Số CMND"; MISA's MST field is for business tax codes.
+        var personalId = individual && BuyerCodes.IsPersonalId(tax) ? tax : "";
+        var mst = personalId.Length > 0 ? "" : tax;
+        var kind = individual ? dialog.Individual : dialog.Organization;
+        var nameField = individual ? dialog.FullName : dialog.Name;
+        Entering("customer:new");
+        await input.OpenNewCustomerAsync(await input.CaptureAsync(token), profile.Fields["customer"], dialog.OpenKey, token);
+        var frame = await input.BindNewCustomerAsync(dialog, token);
+        if (await input.SelectNewCustomerKindAsync(frame, kind, token))
+            await NativeWait.UntilAsync(async () => await input.ReadFieldAsync(await input.CaptureAsync(token), nameField, token), _ => true,
+                "CUSTOMER_KIND_NOT_SELECTED", $"Hộp Thêm Khách hàng chưa chuyển sang '{kind.Name}'. Bấm Hủy bỏ trên hộp rồi chạy lại.", token,
+                timeoutMilliseconds: 5000);
+        var fields = new List<(string Key, NativeSelector Selector, string Value, NativeValueKind Kind)>
+        {
+            ("code", dialog.Code, code, NativeValueKind.Exact),
+            ("name", nameField, name, NativeValueKind.Text)
+        };
+        if (address.Length > 0) fields.Add(("address", dialog.Address, address, NativeValueKind.Text));
+        if (mst.Length > 0) fields.Add(("tax_code", dialog.TaxCode, mst, NativeValueKind.Exact));
+        if (personalId.Length > 0) fields.Add(("id_number", dialog.IdNumber, personalId, NativeValueKind.Exact));
+        foreach (var field in fields)
+            await input.WriteFieldAsync(await input.CaptureAsync(token), field.Selector, field.Value, field.Value, field.Kind,
+                profile.Culture, "Tab", token, verifyAfterWrite: false);
+        var selectors = fields.ToDictionary(field => field.Key, field => field.Selector, StringComparer.Ordinal);
+        string[] Mismatches(NativeFields values) => fields
+            .Where(field => !Match(field.Value, values.Values[field.Key].Value, field.Kind)).Select(field => field.Key).ToArray();
+        var readback = await NativeWait.UntilAsync(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token), selectors, token,
+                preferDisplayText: true),
+            values => Mismatches(values).Length == 0,
+            "CUSTOMER_CREATE_READBACK_FAILED", $"Thông tin khách hàng mới '{name}' chưa khớp trước khi Cất.", token, returnLastMismatch: true);
+        if (Mismatches(readback) is { Length: > 0 } wrong)
+            throw new AutomationException("CUSTOMER_CREATE_READBACK_FAILED",
+                $"Hộp Thêm Khách hàng: ô '{wrong[0]}' đang là '{readback.Values[wrong[0]].Value}', khác '{fields.First(field => field.Key == wrong[0]).Value}'. "
+                + "Bấm Hủy bỏ trên hộp Thêm Khách hàng rồi chạy lại.", true);
+        await progress(new(CreatedCustomerKey, code, Frame(readback.Frame)), token);
+        var handle = await input.SaveNewCustomerAsync(await input.CaptureAsync(token), dialog.Save, token);
+        await WaitNewCustomerSavedAsync(handle, code, name, token);
+        catalog.AddCreated(new(code, name, mst, address));
+        await WaitEditor(context, visible: true, token);
+        await Tab(profile.ReceiptTab, token);
+        return code;
+    }
+
+    private async Task WaitNewCustomerSavedAsync(nint dialog, string code, string name, CancellationToken token)
+    {
+        var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 15;
+        while (true)
+        {
+            var state = await input.NewItemSaveStateAsync(dialog, token);
+            if (state.Message is { } message)
+            {
+                if (message.Contains("đã tồn tại", StringComparison.OrdinalIgnoreCase) || message.Contains("da ton tai", StringComparison.OrdinalIgnoreCase))
+                    throw new AutomationException("CUSTOMER_CODE_TAKEN",
+                        $"MISA báo mã khách hàng '{code}' đã tồn tại (có thể đã được tạo trước đó). Đóng thông báo, bấm Hủy bỏ trên hộp Thêm Khách hàng, "
+                        + "xuất lại danh sách khách hàng từ MISA và nạp lại ở menu ••• rồi chạy lại. Chi tiết: " + message, true);
+                throw new AutomationException("CUSTOMER_SAVE_BLOCKED",
+                    $"MISA hiện cảnh báo khi Cất khách hàng '{code}' ('{name}'): {message}. Xử lý cảnh báo trong MISA rồi chạy lại; "
+                    + "nếu khách hàng đã được tạo, MISA sẽ báo trùng mã thay vì tạo thêm.", true);
+            }
+            if (!state.DialogOpen) return;
+            if (Stopwatch.GetTimestamp() > deadline)
+                throw new AutomationException("CUSTOMER_CREATE_UNCERTAIN",
+                    $"Đã bấm Cất khách hàng '{code}' nhưng hộp Thêm Khách hàng chưa đóng sau 15 giây. Kiểm tra MISA; "
+                    + "lần chạy sau MISA sẽ báo trùng mã nếu khách hàng đã được tạo, không tạo thêm.", true);
+            await Task.Delay(100, token);
+        }
+    }
+
+    // Read-only: MISA fills the customer field asynchronously after the dialog closes.
+    private async Task<bool> CustomerFilledAsync(CancellationToken token)
+    {
+        try
+        {
+            await NativeWait.UntilAsync(() => Field("customer", token), read => !string.IsNullOrWhiteSpace(read.Value),
+                "CUSTOMER_NOT_FILLED", "MISA chưa điền khách hàng mới vào chứng từ.", token, timeoutMilliseconds: 3000);
+            return true;
+        }
+        catch (AutomationException error) when (error.Code == "CUSTOMER_NOT_FILLED" && !error.InputMayHaveBeenSent) { return false; }
     }
 
     private ItemCatalogStore RequireCatalog()

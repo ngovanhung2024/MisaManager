@@ -47,6 +47,11 @@ public static class RunOutcome
     public static bool IsUnfinished(WorkflowSnapshot snapshot)
         => snapshot.Status == WorkflowStatus.Failed && snapshot.LastErrorCode == BuyerCodes.MissingCode;
     public const string UnfinishedLabel = "Chưa hoàn thành";
+
+    /// <summary>Saved because the user entered the invoice in MISA by hand (menu chuột phải ở danh sách hóa đơn).</summary>
+    public static bool IsManualSaved(WorkflowSnapshot snapshot) => WorkflowRunner.IsManualSaved(snapshot);
+    public const string ManualSavedLabel = "Đã lưu (nhập tay)";
+    public const string ManualSavedOutcome = "Đã nhập tay trong MISA, tool không nhập lại";
     public const string UnfinishedColor = "#B45309";
 }
 
@@ -100,6 +105,7 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
     };
     public static string StatusLabel(WorkflowSnapshot snapshot)
         => RunOutcome.IsExisting(snapshot) ? RunOutcome.ExistingLabel
+            : RunOutcome.IsManualSaved(snapshot) ? RunOutcome.ManualSavedLabel
             : RunOutcome.IsUnfinished(snapshot) ? RunOutcome.UnfinishedLabel
             : RunOutcome.IsStoppedDiscard(snapshot) ? RunOutcome.StoppedDiscardLabel : StatusLabel(snapshot.Status);
     public static string StatusLabel(WorkflowStatus status) => status switch
@@ -281,6 +287,7 @@ public partial class MainWindow
             ProfileHistory.SelectedItem = null;
             ProfileOutcome.Text = record.Context.Snapshot.Status switch
             {
+                WorkflowStatus.Saved when RunOutcome.IsManualSaved(record.Context.Snapshot) => RunOutcome.ManualSavedOutcome,
                 WorkflowStatus.Saved => "Đã Cất thành công",
                 WorkflowStatus.Discarded when RunOutcome.IsExisting(record.Context.Snapshot) => "Số hóa đơn đã tồn tại trong MISA, không nhập lại",
                 WorkflowStatus.Discarded => "Hóa đơn đã được bỏ",
@@ -304,6 +311,7 @@ public partial class MainWindow
         var comparison = choice.Attempt?.Result;
         ProfileOutcome.Text = context.Snapshot.Status switch
         {
+            WorkflowStatus.Saved when RunOutcome.IsManualSaved(context.Snapshot) => RunOutcome.ManualSavedOutcome,
             WorkflowStatus.Saved => "Đã Cất thành công",
             WorkflowStatus.Discarded when RunOutcome.IsExisting(context.Snapshot) => "Số hóa đơn đã tồn tại trong MISA, không nhập lại",
             WorkflowStatus.Discarded when comparison is { Matched: false } => "Đã bỏ vì thông tin không khớp",
@@ -400,7 +408,9 @@ public partial class MainWindow
             {
                 { Source: "Excel" } code => code.Code,
                 { } code => $"{code.Code} · {code.Source}",
-                null => Parties.CustomerCount + Parties.SupplierCount == 0
+                null when BuyerCodes.CanCreate(invoice.Buyer, Parties)
+                    => $"{Parties.NewCustomerCode(invoice.Buyer)} · tạo khách hàng mới trong MISA ({(BuyerCodes.IsIndividual(invoice.Buyer) ? "cá nhân" : "tổ chức")})",
+                null => Parties.CustomerCount == 0
                     ? "(chưa có – nạp mã khách hàng ở menu •••)" : "(không tìm thấy trong danh mục khách hàng/nhà cung cấp)"
             };
         }

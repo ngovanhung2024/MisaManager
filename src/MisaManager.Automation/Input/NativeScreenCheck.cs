@@ -48,6 +48,18 @@ public sealed partial class NativeInputService
         var checks = new List<ElementCheck>();
         foreach (var (key, element) in screen.Elements)
         {
+            if (element.Selector.ByLabel)
+            {
+                var labelled = LabelledMatches(all, element.Selector);
+                checks.Add(labelled.Length switch
+                {
+                    1 => new(key, element.ToString(), ScreenCheckStatus.Ok, element.Required, "tìm thấy"),
+                    > 1 => new(key, element.ToString(), ScreenCheckStatus.Ambiguous, element.Required, $"{labelled.Length} control/nhãn cùng selector đang hiển thị"),
+                    _ => new(key, element.ToString(), ScreenCheckStatus.Missing, element.Required,
+                        "KHÔNG tìm thấy nhãn hoặc ô bên phải nhãn – cần cập nhật profile")
+                });
+                continue;
+            }
             var matches = all.Where(item => Matches(item, element.Selector, requireVisible: false)).ToArray();
             // R20's module tab strip sits above the module panel (the scope), so look in the whole window
             // for elements the scope does not contain.

@@ -9,8 +9,10 @@ public enum PartyRole { Customer, Supplier }
 
 public sealed record PartyCatalogEntry(string Code, string Name, string TaxCode = "", string Address = "");
 
+/// <param name="Created">Customers the tool created in MISA ("Thêm Khách hàng") that the loaded export does not list yet.</param>
 public sealed record PartyCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? CustomerSource, string? SupplierSource,
-    IReadOnlyList<PartyCatalogEntry> Customers, IReadOnlyList<PartyCatalogEntry> Suppliers);
+    IReadOnlyList<PartyCatalogEntry> Customers, IReadOnlyList<PartyCatalogEntry> Suppliers,
+    IReadOnlyList<PartyCatalogEntry>? Created = null);
 
 /// <summary>A catalog code found for a name; <paramref name="Method"/> says how (shown to the user).</summary>
 public sealed record PartyMatch(string Code, string Name, PartyRole Role, string Method);
@@ -26,6 +28,9 @@ public sealed partial class PartyCatalogStore
     private readonly object gate = new();
     private Index customers = Index.Empty;
     private Index suppliers = Index.Empty;
+    private IReadOnlyList<PartyCatalogEntry> created = [];
+    // Export plus created customers: what MISA has as far as the tool knows.
+    private Index customerLookup = Index.Empty;
 
     public PartyCatalogStore(string path)
     {
@@ -37,6 +42,8 @@ public sealed partial class PartyCatalogStore
         SupplierSource = file.SupplierSource;
         customers = new(file.Customers ?? []);
         suppliers = new(file.Suppliers ?? []);
+        created = (file.Created ?? []).Where(entry => !string.IsNullOrWhiteSpace(entry.Code)).ToArray();
+        RebuildLookup();
     }
 
     public string FilePath { get; }
@@ -44,6 +51,8 @@ public sealed partial class PartyCatalogStore
     public string? SupplierSource { get; private set; }
     public int CustomerCount { get { lock (gate) return customers.Entries.Count; } }
     public int SupplierCount { get { lock (gate) return suppliers.Entries.Count; } }
+    public int CreatedCount { get { lock (gate) return created.Count; } }
+    public IReadOnlyList<PartyCatalogEntry> CreatedSnapshot() { lock (gate) return created.ToArray(); }
     public event EventHandler? Changed;
 
     /// <summary>Exact comparison key: <see cref="TextKey.Compact"/>.</summary>
@@ -70,7 +79,7 @@ public sealed partial class PartyCatalogStore
         var key = (code ?? "").Trim();
         if (key.Length == 0) return null;
         Index[] lists;
-        lock (gate) lists = [customers, suppliers];
+        lock (gate) lists = [customerLookup, suppliers];
         return lists.SelectMany(list => list.Entries)
             .FirstOrDefault(entry => string.Equals(entry.Code, key, StringComparison.OrdinalIgnoreCase));
     }
@@ -84,13 +93,21 @@ public sealed partial class PartyCatalogStore
             .GroupBy(entry => entry.Code, StringComparer.OrdinalIgnoreCase).Select(group => group.First()).ToArray();
         lock (gate)
         {
-            var (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource) = (customers, suppliers, CustomerSource, SupplierSource);
-            if (role == PartyRole.Customer) (customers, CustomerSource) = (new Index(cleaned), sourceFile);
+            var (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource, oldCreated) = (customers, suppliers, CustomerSource, SupplierSource, created);
+            if (role == PartyRole.Customer)
+            {
+                (customers, CustomerSource) = (new Index(cleaned), sourceFile);
+                // A created customer listed by the new export is now plain catalog data.
+                var listed = cleaned.Select(entry => entry.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                created = created.Where(entry => !listed.Contains(entry.Code)).ToArray();
+            }
             else (suppliers, SupplierSource) = (new Index(cleaned), sourceFile);
+            RebuildLookup();
             try { SaveLocked(); }
             catch
             {
-                (customers, suppliers, CustomerSource, SupplierSource) = (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource);
+                (customers, suppliers, CustomerSource, SupplierSource, created) = (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource, oldCreated);
+                RebuildLookup();
                 throw;
             }
         }
@@ -102,16 +119,75 @@ public sealed partial class PartyCatalogStore
     {
         lock (gate)
         {
-            var (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource) = (customers, suppliers, CustomerSource, SupplierSource);
-            (customers, suppliers, CustomerSource, SupplierSource) = (Index.Empty, Index.Empty, null, null);
+            var (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource, oldCreated) = (customers, suppliers, CustomerSource, SupplierSource, created);
+            (customers, suppliers, CustomerSource, SupplierSource, created) = (Index.Empty, Index.Empty, null, null, []);
+            RebuildLookup();
             try { SaveLocked(); }
             catch
             {
-                (customers, suppliers, CustomerSource, SupplierSource) = (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource);
+                (customers, suppliers, CustomerSource, SupplierSource, created) = (oldCustomers, oldSuppliers, oldCustomerSource, oldSupplierSource, oldCreated);
+                RebuildLookup();
                 throw;
             }
         }
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Records a customer MISA accepted from the tool's "Thêm Khách hàng" dialog, so later invoices of the same buyer use
+    /// its code until a fresh customer export lists it.
+    /// </summary>
+    public void AddCreated(PartyCatalogEntry entry)
+    {
+        var clean = entry with { Code = entry.Code.Trim(), Name = entry.Name.Trim(), TaxCode = (entry.TaxCode ?? "").Trim(),
+            Address = (entry.Address ?? "").Trim() };
+        if (clean.Code.Length == 0 || clean.Name.Length == 0) throw new ArgumentException("Khách hàng tạo mới cần mã và tên.", nameof(entry));
+        lock (gate)
+        {
+            var old = created;
+            created = [.. created.Where(item => !string.Equals(item.Code, clean.Code, StringComparison.OrdinalIgnoreCase)), clean];
+            RebuildLookup();
+            try { SaveLocked(); }
+            catch
+            {
+                created = old;
+                RebuildLookup();
+                throw;
+            }
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Code for a buyer the tool creates in MISA: an organisation's MST (unique by law, so a repeated attempt is refused by
+    /// MISA as a duplicate code instead of creating a second customer); otherwise the initials of the name, like the
+    /// accountants' own codes (HTT = Hoàng Trọng Tiếp). A number is appended when the code is already used.
+    /// </summary>
+    public string NewCustomerCode(Party buyer)
+    {
+        var tax = new string((buyer.TaxCode ?? "").Normalize(NormalizationForm.FormKC)
+            .Where(c => char.IsLetterOrDigit(c) || c == '-').Select(char.ToUpperInvariant).ToArray()).Trim('-');
+        var stem = !BuyerCodes.IsIndividual(buyer) && TaxKey(tax).Length >= 10 ? tax : Initials(buyer.Name);
+        if (stem.Length == 0) stem = "KH";
+        if (FindByCode(stem) is null) return stem;
+        for (var number = 2; ; number++)
+            if (FindByCode(stem + number.ToString(CultureInfo.InvariantCulture)) is null)
+                return stem + number.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string Initials(string? name)
+    {
+        var words = BuyerCodes.Ascii(Brackets().Replace(name ?? "", " ")).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var initials = new string(words.Select(word => word[0]).ToArray());
+        // MISA codes are at most 20 characters in the accountants' lists; keep generated ones short.
+        return initials.Length > 20 ? initials[..20] : initials;
+    }
+
+    private void RebuildLookup()
+    {
+        var listed = customers.Entries.Select(entry => entry.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var extra = created.Where(entry => !listed.Contains(entry.Code)).ToArray();
+        customerLookup = extra.Length == 0 ? customers : new Index([.. customers.Entries, .. extra]);
     }
 
     /// <summary>
@@ -122,7 +198,7 @@ public sealed partial class PartyCatalogStore
     public PartyMatch? FindCode(string name, string? taxCode = null)
     {
         Index[] lists;
-        lock (gate) lists = [customers, suppliers];
+        lock (gate) lists = [customerLookup, suppliers];
         var tax = TaxKey(taxCode);
         var tiers = new (string Method, Func<Index, PartyCatalogEntry[]> Find)[]
         {
@@ -157,7 +233,7 @@ public sealed partial class PartyCatalogStore
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 JsonSerializer.Serialize(stream, new PartyCatalogFile(1, DateTimeOffset.UtcNow, CustomerSource, SupplierSource,
-                    customers.Entries, suppliers.Entries), Json);
+                    customers.Entries, suppliers.Entries, created.Count == 0 ? null : created), Json);
                 stream.Flush(flushToDisk: true);
             }
             StateFiles.Commit(temporary, FilePath);
@@ -242,6 +318,23 @@ public static class BuyerCodes
     /// <summary>A person rather than an organisation; individuals may carry no MST.</summary>
     public static bool IsIndividual(Party buyer)
         => buyer.Kind != PartyKind.Organization && !LooksLikeOrganization(buyer.Name);
+
+    /// <summary>
+    /// The buyer has no MISA code even after the customer list was searched, so the tool may create it ("Thêm Khách hàng").
+    /// Requires a loaded customer list: without it every buyer would look new and be created twice.
+    /// </summary>
+    public static bool CanCreate(Party buyer, PartyCatalogStore? catalog)
+        => catalog is { CustomerCount: > 0 } && buyer.Code.Trim().Length == 0 && buyer.Name.Trim().Length > 0
+            && !IsConsumer(buyer.Name) && !IsAnonymous(buyer.Name);
+
+    /// <summary>A 12-digit personal ID (CCCD) rather than a business MST; MISA keeps it in "Số CMND" for individuals.</summary>
+    public static bool IsPersonalId(string? taxCode)
+        => PartyCatalogStore.TaxKey(taxCode) is { Length: 12 } key && key.All(char.IsAsciiDigit);
+
+    /// <summary>Upper-case ASCII letters, digits and spaces (tone marks removed, Đ → D).</summary>
+    public static string Ascii(string? value) => new(TextKey.Canonical(value).Normalize(NormalizationForm.FormD)
+        .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+        .Select(c => c == 'Đ' ? 'D' : c).Where(c => c == ' ' || char.IsAsciiLetterOrDigit(c)).ToArray());
 
     /// <summary>
     /// The Excel code wins; consumer sales always use NTD; anonymous buyers use the catalog's "Khách lẻ"; otherwise the

@@ -76,6 +76,90 @@ public sealed class NewItemWindow : Window
     }
 }
 
+/// <summary>
+/// "Thêm Khách hàng" opened with F9 (the + button) from the voucher's customer field. Like R20 the editors have no
+/// known AutomationId: the automation finds them by the form label on their left. The two layouts swap with the radio.
+/// </summary>
+public sealed class NewCustomerWindow : Window
+{
+    private const string Prompt = "MISA SME 2023";
+    private readonly FakeStore store;
+    private readonly RadioButton individual;
+    private readonly TextBox orgTax, orgCode, orgName, orgAddress, personCode, personName, personAddress, personTax, personId;
+
+    public NewCustomerWindow(FakeProfile profile, FakeStore store)
+    {
+        this.store = store;
+        Title = profile.ScopeName("customer_new");
+        Width = 680;
+        Height = 560;
+        ResizeMode = ResizeMode.NoResize;
+        ShowInTaskbar = false;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Background = Ui.Chrome;
+        this.IgnoreBareAlt();
+        (orgTax, orgCode, orgName, orgAddress) = (Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text());
+        (personCode, personName, personAddress, personTax, personId) = (Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text());
+        var organizationForm = Ui.Form(120, ("Mã số thuế", orgTax), ("Mã (*)", orgCode), ("Tên (*)", orgName), ("Địa chỉ", orgAddress),
+            ("Diễn giải", Ui.Text()), ("Điện thoại", Ui.Text()), ("Email", Ui.Text()));
+        var personForm = Ui.Form(120, ("Mã (*)", personCode), ("Họ và tên (*)", personName), ("Địa chỉ", personAddress),
+            ("Diễn giải", Ui.Text()), ("Mã số thuế", personTax), ("ĐT di động", Ui.Text()), ("Số CMND", personId));
+        personForm.Visibility = Visibility.Collapsed;
+        var organization = new RadioButton { Content = profile.Caption("customer_new", "organization"), IsChecked = true, Margin = new Thickness(6) };
+        individual = new RadioButton { Content = profile.Caption("customer_new", "individual"), Margin = new Thickness(6) };
+        individual.Checked += (_, _) => (organizationForm.Visibility, personForm.Visibility) = (Visibility.Collapsed, Visibility.Visible);
+        organization.Checked += (_, _) => (organizationForm.Visibility, personForm.Visibility) = (Visibility.Visible, Visibility.Collapsed);
+        var kinds = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6) };
+        kinds.Children.Add(organization);
+        kinds.Children.Add(individual);
+        var forms = new Grid();
+        forms.Children.Add(organizationForm);
+        forms.Children.Add(personForm);
+        var tabs = new TabControl { Margin = new Thickness(6) };
+        tabs.Items.Add(new TabItem { Header = "1. Thông tin chung", Content = forms });
+        tabs.Items.Add(new TabItem { Header = "2. Khác" });
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(8) };
+        var save = Ui.Button(profile.Caption("customer_new", "save"), width: 80);
+        save.Click += (_, _) => Save();
+        var cancel = Ui.Button("Hủy bỏ", width: 80);
+        cancel.Click += (_, _) => DialogResult = false;
+        buttons.Children.Add(save);
+        buttons.Children.Add(Ui.Button("Cất & Thêm", width: 90));
+        buttons.Children.Add(cancel);
+        var root = new DockPanel();
+        DockPanel.SetDock(kinds, Dock.Top);
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        root.Children.Add(kinds);
+        root.Children.Add(buttons);
+        root.Children.Add(tabs);
+        Content = root;
+    }
+
+    public Customer? Created { get; private set; }
+
+    private void Save()
+    {
+        var person = individual.IsChecked == true;
+        var code = (person ? personCode : orgCode).Text.Trim();
+        var name = (person ? personName : orgName).Text.Trim();
+        if (code.Length == 0 || name.Length == 0)
+        {
+            MessageBox.Show(this, "Mã và Tên không được để trống.", Prompt, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (store.FindCustomer(code) is not null)
+        {
+            MessageBox.Show(this, $"Mã <{code}> đã tồn tại trong danh mục Khách hàng. Vui lòng kiểm tra lại.", Prompt,
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        Created = new Customer(code, name, (person ? personAddress : orgAddress).Text.Trim(), (person ? personTax : orgTax).Text.Trim(),
+            person, person ? personId.Text.Trim() : "");
+        store.AddCustomer(Created);
+        DialogResult = true;
+    }
+}
+
 /// <summary>MISA's warning when the voucher VAT total differs from the per-rate calculation.</summary>
 public sealed class TaxPromptWindow : Window
 {

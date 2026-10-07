@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace MisaManager.FakeMisa;
 
-public sealed record Customer(string Code, string Name, string Address, string TaxCode);
+public sealed record Customer(string Code, string Name, string Address, string TaxCode, bool Individual = false, string IdNumber = "");
 public sealed record CatalogItem(string Code, string Name, string Unit, string TaxRate, decimal Price = 0);
 
 /// <summary>In-memory "database" of the fake; saved vouchers are mirrored to the --state file.</summary>
@@ -57,6 +57,7 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
 
     public List<SavedVoucher> Vouchers { get; } = [.. scenario.ExistingVouchers];
     private readonly List<CatalogItem> created = [];
+    private readonly List<Customer> createdCustomers = [];
     private int voucherSequence = 2320;
 
     public Customer? FindCustomer(string code) => Customers.FirstOrDefault(customer => string.Equals(customer.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -87,6 +88,13 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
         Persist();
     }
 
+    public void AddCustomer(Customer customer)
+    {
+        Customers.Add(customer);
+        createdCustomers.Add(customer);
+        Persist();
+    }
+
     public void Save(SavedVoucher voucher)
     {
         Vouchers.Add(voucher);
@@ -96,7 +104,7 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
     private void Persist()
     {
         if (statePath is null) return;
-        var state = new StateFile(Vouchers.Except(scenario.ExistingVouchers).ToArray(), created);
+        var state = new StateFile(Vouchers.Except(scenario.ExistingVouchers).ToArray(), created, createdCustomers);
         var temp = statePath + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(state, Scenario.Json));
         File.Move(temp, statePath, overwrite: true);
