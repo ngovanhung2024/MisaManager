@@ -7,7 +7,14 @@ using MisaManager.Core;
 
 namespace MisaManager.Automation;
 
-public sealed record NativeSelector(string AutomationId = "", string Name = "", string ControlType = "");
+/// <param name="Label">
+/// Caption of the form label left of the control, for MISA dialogs whose editors have no known AutomationId: the
+/// control is the nearest one of <paramref name="ControlType"/> (default Edit) to the right of that label.
+/// </param>
+public sealed record NativeSelector(string AutomationId = "", string Name = "", string ControlType = "", string Label = "")
+{
+    public bool ByLabel => AutomationId.Length == 0 && Label.Length > 0;
+}
 public sealed record NativeCell(string GridId, int Row, string Column, string CodeColumn, string ExpectedCode);
 public sealed record NativeCellWrite(string Column, string Text);
 public sealed record NativeTable(IReadOnlyList<IReadOnlyDictionary<string, string>> Rows, NativeFrame Frame,

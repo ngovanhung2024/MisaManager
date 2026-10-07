@@ -544,7 +544,7 @@ public sealed class SalesVoucherTests : UiTest
     }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628"), new("HPL", "TRUNG TÂM DỊCH VỤ NÔNG NGHIỆP HUYỆN PHÚ LỘC", "3301638391")]);
 
     [Fact]
-    public Task CustomerWithoutAnyKnownCodeStopsBeforeTheVoucherIsOpened() => WithFakeAsync(async (misa, harness, token) =>
+    public Task CustomerWithoutCodeAndWithoutACustomerListStopsBeforeTheVoucherIsOpened() => WithFakeAsync(async (misa, harness, token) =>
     {
         var buyer = new Party("CÔNG TY TNHH CHƯA CÓ MÃ", "3300999999", "", "", ValuePresence.Provided, PartyKind.Organization);
         var invoice = Invoices.Build(TempDirectory(misa), "1010", buyer,
@@ -556,6 +556,47 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal("CUSTOMER_CODE_MISSING", result.Context.Snapshot.LastErrorCode);
         Assert.True(result.MisaClean, Describe(result));
         Assert.Empty(misa.State().Vouchers);
+        Assert.Empty(misa.State().CreatedCustomers ?? []);
+    });
+
+    // Invoice 1475: the buyer is not in the customer list, so the tool adds it with F9 (+) on "Khách hàng".
+    [Fact]
+    public Task OrganisationMissingFromTheCustomerListIsCreatedAndSelectedOnTheVoucher() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var buyer = new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", "3301747760", "Đường Lương Định Của, Xã Phú Lộc, Thành Phố Huế", "",
+            ValuePresence.Provided);
+        var first = Invoices.Build(TempDirectory(misa), "1475", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+        var second = Invoices.Build(TempDirectory(misa), "1476", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+
+        var one = await harness.RunAsync(first, misa, token);
+        var two = await harness.RunAsync(second, misa, token);
+
+        Assert.True(one.Outcome == "saved", Describe(one));
+        Assert.True(two.Outcome == "saved", Describe(two));
+        var created = Assert.Single(misa.State().CreatedCustomers ?? []);
+        Assert.Equal(new FakeCustomer("3301747760", buyer.Name, buyer.Address, "3301747760"), created);
+        Assert.All(misa.State().Vouchers, voucher =>
+            Assert.Equal(("3301747760", buyer.Name, "3301747760"), (voucher.CustomerCode, voucher.CustomerName, voucher.CustomerTaxCode)));
+        Assert.Equal("3301747760", one.Context.NativeValues?.GetValueOrDefault("customer_created"));
+        Assert.Null(two.Context.NativeValues?.GetValueOrDefault("customer_created"));
+        Assert.Equal(buyer.Address, harness.Parties.FindByCode("3301747760")?.Address);
+    }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
+
+    [Fact]
+    public Task IndividualMissingFromTheCustomerListIsCreatedOnTheIndividualLayout() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var buyer = new Party("Hoàng Văn Tư", "046085016878", "9/4 Kiệt 266 Bùi Thị Xuân, Phường Đúc, Tp Huế", "", ValuePresence.Provided);
+        var invoice = Invoices.Build(TempDirectory(misa), "1477", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        // The 12-digit personal ID goes to "Số CMND", not the business MST field.
+        Assert.Equal(new FakeCustomer("HVT", buyer.Name, buyer.Address, "", true, "046085016878"), Assert.Single(misa.State().CreatedCustomers ?? []));
+        Assert.Equal(("HVT", buyer.Name), (Assert.Single(misa.State().Vouchers).CustomerCode, misa.State().Vouchers[0].CustomerName));
     }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
 
     [Fact]

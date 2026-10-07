@@ -24,6 +24,8 @@ public sealed class FakeProfile
 
     public string ScopeId(string screen) => screens.GetProperty(screen).GetProperty("scope").GetProperty("automationId").GetString()!;
 
+    public string ScopeName(string screen) => screens.GetProperty(screen).GetProperty("scope").GetProperty("name").GetString()!;
+
     /// <summary>AutomationId of an element, or "" when the profile selects it by caption.</summary>
     public string Id(string screen, string element)
         => screens.GetProperty(screen).GetProperty("elements").GetProperty(element).TryGetProperty("automationId", out var id)

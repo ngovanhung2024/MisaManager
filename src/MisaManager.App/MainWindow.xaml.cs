@@ -394,7 +394,8 @@ public partial class MainWindow : Window
             catch (AutomationException) { ambiguous.Add(buyer.Name); }
         }
         PartyDetail.Text = (missing.Count == 0 ? $"Đủ mã cho {buyers.Length} người mua chưa ghi mã trong Excel."
-                : $"{missing.Count}/{buyers.Length} người mua chưa tìm được mã: {string.Join("; ", missing.Take(3))}{(missing.Count > 3 ? "…" : "")}")
+                : $"{missing.Count}/{buyers.Length} người mua chưa có mã{(parties.CustomerCount > 0 ? " (sẽ tạo mới trong MISA khi nhập)" : "")}: "
+                    + $"{string.Join("; ", missing.Take(3))}{(missing.Count > 3 ? "…" : "")}")
             + (ambiguous.Count == 0 ? "" : $" Trùng tên nhiều mã: {string.Join("; ", ambiguous)}.");
         PartyDetail.ToolTip = string.Join(Environment.NewLine, missing.Concat(ambiguous));
         PartyDetail.Visibility = Visibility.Visible;
@@ -420,6 +421,71 @@ public partial class MainWindow : Window
 
     private void CheckPending_Click(object sender, RoutedEventArgs e)
         => workflow.SetCheckedMany(workflow.PendingInvoices.Select(invoice => invoice.Fingerprint));
+
+    private InvoiceRow? contextRow;
+
+    private void InvoiceList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        contextRow = null;
+        if (e.OriginalSource is DependencyObject source
+            && ItemsControl.ContainerFromElement(InvoiceList, source) is ListBoxItem { DataContext: InvoiceRow row } item)
+        {
+            contextRow = row;
+            item.IsSelected = true;
+        }
+    }
+
+    private void InvoiceList_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (contextRow is not { } row || workflow.IsRunning) { e.Handled = true; return; }
+        var canMark = workflow.CanMarkSaved(row.Invoice);
+        MarkSavedItem.IsEnabled = canMark;
+        MarkSavedItem.ToolTip = canMark
+            ? "Dùng khi bạn đã tự nhập hóa đơn này vào MISA: tool sẽ không nhập lại và xóa checkpoint cũ của hóa đơn"
+            : "Hóa đơn này đã lưu hoặc đã có trong MISA.";
+        var ticked = TickedMarkable();
+        MarkTickedSavedItem.Header = $"Đánh dấu đã lưu cho {ticked.Length} hóa đơn đang tick";
+        MarkTickedSavedItem.Visibility = ticked.Length > 1 || ticked.Length == 1 && !ReferenceEquals(ticked[0], row.Invoice)
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private InvoiceDocument[] TickedMarkable() => [.. invoices
+        .Where(row => workflow.IsChecked(row.Invoice.Fingerprint) && workflow.CanMarkSaved(row.Invoice)).Select(row => row.Invoice)];
+
+    private async void MarkSaved_Click(object sender, RoutedEventArgs e)
+    {
+        if (contextRow is { } row) await MarkSavedAsync([row.Invoice]);
+    }
+
+    private async void MarkTickedSaved_Click(object sender, RoutedEventArgs e) => await MarkSavedAsync(TickedMarkable());
+
+    private async Task MarkSavedAsync(IReadOnlyList<InvoiceDocument> targets)
+    {
+        if (workflow.IsRunning)
+        {
+            StatusLabel.Text = "Đang chạy Thêm vào MISA. Bấm Dừng ngay, chờ dừng hẳn rồi mới đánh dấu hóa đơn đã lưu.";
+            return;
+        }
+        var pending = targets.Where(workflow.CanMarkSaved).ToArray();
+        if (pending.Length == 0) return;
+        var numbers = string.Join(", ", pending.Take(8).Select(invoice => invoice.Identity.Number)) + (pending.Length > 8 ? "…" : "");
+        if (MessageBox.Show(this,
+                $"Đánh dấu {pending.Length} hóa đơn ({numbers}) là ĐÃ LƯU?\n\n"
+                + "Chỉ làm khi bạn đã tự nhập hóa đơn này vào MISA bằng tay.\n\n"
+                + "• Tool sẽ không nhập lại hóa đơn này nữa.\n"
+                + "• Checkpoint và lịch sử chạy cũ của hóa đơn này (chưa hoàn thành, chưa rõ, lỗi…) bị xóa.\n"
+                + "• Tool không kiểm tra lại trong MISA. Không hoàn tác được.",
+                "Đánh dấu đã lưu", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var (marked, error) = await workflow.MarkSavedManuallyAsync(pending);
+        foreach (var row in invoices) row.Refresh();
+        if (InvoiceList.SelectedItem is InvoiceRow selected) ShowIssues(selected.Invoice);
+        RefreshWorkflowPanel();
+        RefreshRunSummary();
+        StatusLabel.Text = error is null
+            ? $"Đã đánh dấu {marked} hóa đơn là đã lưu (nhập tay) và xóa checkpoint cũ."
+            : $"Đã đánh dấu {marked}/{pending.Length} hóa đơn. Lỗi: {error}";
+    }
 
     private void RefreshRunSummary()
     {
@@ -1179,9 +1245,10 @@ public partial class MainWindow : Window
         private WorkflowContext? LatestRun()
         {
             var current = ((App)Application.Current).Services.Workflow.Current;
+            var history = (Application.Current.MainWindow as MainWindow)?.workflow.History;
             return current?.Invoice.Fingerprint == Invoice.Fingerprint ? current
-                : (Application.Current.MainWindow as MainWindow)?.workflow.History
-                    .FirstOrDefault(run => run.Invoice.Fingerprint == Invoice.Fingerprint);
+                : history?.FirstOrDefault(run => run.Invoice.Fingerprint == Invoice.Fingerprint)
+                    ?? history?.FirstOrDefault(run => WorkflowRunner.IsManualSavedFor(run, Invoice));
         }
     }
 }

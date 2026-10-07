@@ -37,6 +37,7 @@
 | Kiểm tra dữ liệu hóa đơn | `src/MisaManager.Core/Validation.cs` |
 | Đọc Excel | `src/MisaManager.Import/InvoiceWorkbookImporter.cs` |
 | Mã khách hàng/nhà cung cấp (danh mục, tìm theo tên) | `src/MisaManager.Core/PartyCatalog.cs`, `src/MisaManager.Import/PartyCatalogWorkbook.cs` |
+| Tạo khách hàng mới (hộp Thêm Khách hàng, quy tắc mã) | `Automation/Screens/Dialogs/NativeCustomerCatalog.cs`, `CreateCustomerAsync` trong `NativeWorkflowGateway.cs`, `PartyCatalogStore.NewCustomerCode` |
 | Nhóm VTHH, tiền tố mã hàng mới, kiểm tra danh mục | `src/MisaManager.Core/ItemGroups.cs`, `Core/CatalogAudit.cs`, `src/MisaManager.Import/ItemGroupWorkbook.cs` |
 | Hóa đơn đã ghi sổ (bỏ khỏi lượt nhập) | `src/MisaManager.Core/PostedInvoices.cs`, `src/MisaManager.Import/PostedInvoiceWorkbook.cs` |
 | Đối chiếu chứng từ đang mở (ngoài phiên nhập) | `src/MisaManager.Automation/Workflows/SalesVoucher/OpenVoucherComparison.cs` |

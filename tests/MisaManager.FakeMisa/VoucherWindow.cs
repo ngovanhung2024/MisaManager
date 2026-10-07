@@ -216,6 +216,12 @@ public sealed class VoucherWindow : Window, IGridSource
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var code = Field("customer", profile.Id("sales_voucher", "customer"));
+        code.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.F9) return;
+            e.Handled = true;
+            QuickAddCustomer(code);
+        };
         var name = Field("customer_name", profile.Id("sales_voucher", "customer_name"));
         Grid.SetColumn(name, 1);
         row.Children.Add(code);
@@ -389,6 +395,17 @@ public sealed class VoucherWindow : Window, IGridSource
         subtotal.Text = Ui.Money(amount);
         taxTotal.Text = Ui.Money(tax);
         grandTotal.Text = Ui.Money(amount + tax);
+    }
+
+    private void QuickAddCustomer(TextBox box)
+    {
+        if (saved || header["customer"].Length > 0) return;
+        FakeLog.Write("F9 new customer");
+        var dialog = new NewCustomerWindow(profile, store) { Owner = main };
+        if (dialog.ShowDialog() != true || dialog.Created is not { } customer) return;
+        // Like R20, "Cất" in the dialog selects the new customer on the voucher.
+        CommitField("customer", customer.Code);
+        box.Text = header["customer"];
     }
 
     private void QuickAddItem(int? row)

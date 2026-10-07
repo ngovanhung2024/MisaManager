@@ -203,8 +203,14 @@
               </WrapPanel>
             </DockPanel>
             <ListBox x:Name="InvoiceList" MaxHeight="198" Margin="0,2,0,0" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"
+                     PreviewMouseRightButtonDown="InvoiceList_PreviewMouseRightButtonDown" ContextMenuOpening="InvoiceList_ContextMenuOpening"
                      Background="Transparent" BorderThickness="0" Padding="0" ItemContainerStyle="{StaticResource InvoiceItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True">
+              <ListBox.ContextMenu><ContextMenu>
+                <MenuItem x:Name="MarkSavedItem" Header="Đánh dấu đã lưu (đã nhập tay trong MISA)" Click="MarkSaved_Click" ToolTipService.ShowOnDisabled="True"/>
+                <MenuItem x:Name="MarkTickedSavedItem" Click="MarkTickedSaved_Click" ToolTipService.ShowOnDisabled="True"
+                          ToolTip="Đánh dấu đã lưu cho mọi hóa đơn đang được tick (chỉ những hóa đơn chưa lưu)"/>
+              </ContextMenu></ListBox.ContextMenu>
               <ListBox.ItemTemplate><DataTemplate>
                 <Border x:Name="Row" CornerRadius="5" Background="White" BorderBrush="#E4E8EF" BorderThickness="1">
                   <DockPanel>

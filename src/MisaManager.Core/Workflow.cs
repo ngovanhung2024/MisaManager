@@ -147,23 +147,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             var deletedRuns = new HashSet<string>(StringComparer.Ordinal);
             foreach (var record in records)
             {
-                var workflowPath = StateFiles.UnderRoot(stateStore.RootPath,
-                    Path.Combine("runs", record.Snapshot.RunId, "workflow.json"));
-                var readbacks = StateFiles.UnderRoot(stateStore.RootPath,
-                    Path.Combine("reconciliation", "runs", record.Snapshot.RunId, "readbacks.json"));
-                var verification = StateFiles.UnderRoot(stateStore.RootPath,
-                    Path.Combine("verification", "runs", record.Snapshot.RunId + ".json"));
-                if (File.Exists(workflowPath)) File.Delete(workflowPath);
-                if (File.Exists(readbacks)) File.Delete(readbacks);
-                if (File.Exists(verification)) File.Delete(verification);
-                var runDirectory = StateFiles.UnderRoot(stateStore.RootPath,
-                    Path.Combine("runs", record.Snapshot.RunId));
-                if (Directory.Exists(runDirectory) && !Directory.EnumerateFileSystemEntries(runDirectory).Any())
-                    Directory.Delete(runDirectory);
-                var readbackDirectory = StateFiles.UnderRoot(stateStore.RootPath,
-                    Path.Combine("reconciliation", "runs", record.Snapshot.RunId));
-                if (Directory.Exists(readbackDirectory) && !Directory.EnumerateFileSystemEntries(readbackDirectory).Any())
-                    Directory.Delete(readbackDirectory);
+                DeleteRunFiles(record.Snapshot.RunId);
                 deletedRuns.Add(record.Snapshot.RunId);
             }
 
@@ -187,6 +171,82 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 activeOperation = null;
             }
             return Math.Max(deletedRuns.Count, deletedSessions);
+        }
+        finally { transitionGate.Release(); }
+    }
+
+    private void DeleteRunFiles(string runId)
+    {
+        var workflowPath = StateFiles.UnderRoot(stateStore.RootPath, Path.Combine("runs", runId, "workflow.json"));
+        var readbacks = StateFiles.UnderRoot(stateStore.RootPath,
+            Path.Combine("reconciliation", "runs", runId, "readbacks.json"));
+        var verification = StateFiles.UnderRoot(stateStore.RootPath, Path.Combine("verification", "runs", runId + ".json"));
+        if (File.Exists(workflowPath)) File.Delete(workflowPath);
+        if (File.Exists(readbacks)) File.Delete(readbacks);
+        if (File.Exists(verification)) File.Delete(verification);
+        var runDirectory = StateFiles.UnderRoot(stateStore.RootPath, Path.Combine("runs", runId));
+        if (Directory.Exists(runDirectory) && !Directory.EnumerateFileSystemEntries(runDirectory).Any())
+            Directory.Delete(runDirectory);
+        var readbackDirectory = StateFiles.UnderRoot(stateStore.RootPath, Path.Combine("reconciliation", "runs", runId));
+        if (Directory.Exists(readbackDirectory) && !Directory.EnumerateFileSystemEntries(readbackDirectory).Any())
+            Directory.Delete(readbackDirectory);
+    }
+
+    /// <summary>LastErrorCode of a Saved run the user entered by hand in MISA; the tool never typed it.</summary>
+    public const string ManualSavedCode = "MANUAL_SAVED";
+    public const string ManualSavedMessage = "Đã nhập tay trong MISA; tool không nhập lại hóa đơn này.";
+
+    public static bool IsManualSaved(WorkflowSnapshot snapshot)
+        => snapshot.Status == WorkflowStatus.Saved && snapshot.LastErrorCode == ManualSavedCode;
+
+    /// <summary>Same invoice for the purpose of a manual Saved mark: it survives edits of the invoice (same InvoiceId).</summary>
+    public static bool IsManualSavedFor(WorkflowContext run, InvoiceDocument invoice)
+        => IsManualSaved(run.Snapshot)
+            && (run.Invoice.InvoiceId == invoice.InvoiceId || run.Invoice.Fingerprint == invoice.Fingerprint);
+
+    /// <summary>
+    /// The user entered this invoice in MISA by hand: stores a Saved record (MANUAL_SAVED) so the tool never enters it,
+    /// then deletes the invoice's older run checkpoints (chưa rõ, chưa hoàn thành, lỗi…) and its active session.
+    /// Other invoices' records are untouched. Refuses an invoice that already has a Saved or already-in-MISA run.
+    /// </summary>
+    public async Task<WorkflowContext> MarkSavedManuallyAsync(InvoiceDocument invoice, CancellationToken token = default)
+    {
+        await InitializeAsync(token);
+        await transitionGate.WaitAsync(token);
+        try
+        {
+            bool Same(WorkflowContext run) => run.Invoice.InvoiceId == invoice.InvoiceId
+                || run.Invoice.Fingerprint == invoice.Fingerprint;
+            var records = (await ReadHistoryAsync(token)).Where(Same).ToList();
+            var current = Current;
+            var currentMatches = current is not null && Same(current);
+            if (currentMatches && records.All(record => record.Snapshot.RunId != current!.Snapshot.RunId)) records.Add(current!);
+            if (records.Any(record => record.Snapshot.Status == WorkflowStatus.Saved
+                    || record.Snapshot is { Status: WorkflowStatus.Discarded, LastErrorCode: ExistingInvoiceCode }))
+                throw new InvalidOperationException($"Hóa đơn {invoice.Identity.Number} đã lưu hoặc đã có trong MISA; không cần đánh dấu.");
+
+            var marked = Replace(NewContext(invoice, records.FirstOrDefault()?.CompanyIdentity ?? "", "", null, null),
+                WorkflowStatus.Saved, null, message: ManualSavedMessage);
+            marked = marked with { SessionDetached = true,
+                Snapshot = marked.Snapshot with { LastErrorCode = ManualSavedCode, LastInputDisposition = InputDisposition.NotSent } };
+            // The new record lands first: a crash midway leaves the invoice marked, never unprotected.
+            await stateStore.WriteAsync("workflow-context", Path.Combine("runs", marked.Snapshot.RunId, "workflow.json"), marked, token);
+
+            foreach (var record in records) DeleteRunFiles(record.Snapshot.RunId);
+            if (currentMatches)
+            {
+                var session = StateFiles.UnderRoot(stateStore.RootPath, SessionPath(current!.ExecutionMode));
+                if (File.Exists(session)) File.Delete(session);
+                lock (gate)
+                {
+                    context = null;
+                    cancellation?.Cancel();
+                    cancellation = null;
+                    activeOperation?.Cancel();
+                    activeOperation = null;
+                }
+            }
+            return marked;
         }
         finally { transitionGate.Release(); }
     }

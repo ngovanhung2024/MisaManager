@@ -10,15 +10,35 @@ public sealed record OpenVoucherComparison(ReconciliationResult Result, string V
 
 public sealed partial class NativeWorkflowGateway
 {
+    /// <summary>Checkpoint value: code of the customer this run created in MISA for the buyer.</summary>
+    internal const string CreatedCustomerKey = "customer_created";
+
+    private static string? CreatedCustomer(WorkflowContext context)
+        => context.NativeValues?.GetValueOrDefault(CreatedCustomerKey) is { Length: > 0 } code ? code : null;
+
     // MISA fills in its own name for a code found in the customer/supplier list; that is what readback must show.
+    // A customer created by this run carries the invoice name the tool typed.
     private string ExpectedCustomerName(WorkflowContext context)
-        => BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.CatalogName ?? context.Invoice.Buyer.Name;
+        => CreatedCustomer(context) is not null ? context.Invoice.Buyer.Name.Trim()
+            : BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.CatalogName ?? context.Invoice.Buyer.Name;
 
     private string BuyerCode(WorkflowContext context)
-        => BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
-            ?? throw new AutomationException(BuyerCodes.MissingCode,
-                $"Hóa đơn {context.Invoice.Identity.Number}: chưa có mã khách hàng cho '{context.Invoice.Buyer.Name}'. "
-                + "Ghi mã vào cột Mã khách hàng của file Excel, hoặc nạp danh mục khách hàng/nhà cung cấp ở menu ••• rồi chạy lại.");
+        => CreatedCustomer(context) ?? BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
+            ?? throw MissingCustomer(context);
+
+    private AutomationException MissingCustomer(WorkflowContext context)
+        => new(BuyerCodes.MissingCode, $"Hóa đơn {context.Invoice.Identity.Number}: chưa có mã khách hàng cho '{context.Invoice.Buyer.Name}'. "
+            + (PartyCatalog is { CustomerCount: > 0 }
+                ? "Ghi mã vào cột Mã khách hàng của file Excel rồi chạy lại."
+                : "Nạp danh mục khách hàng ở menu ••• (tool tra mã, không có thì tự tạo khách hàng mới trong MISA) hoặc ghi mã vào cột Mã khách hàng của file Excel, rồi chạy lại."));
+
+    /// <summary>Before any input: the buyer has a code, or the tool can create it in MISA during the customer step.</summary>
+    private void RequireCustomer(WorkflowContext context)
+    {
+        if (CreatedCustomer(context) is not null || BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog) is not null) return;
+        if (profile.NewCustomer is not null && BuyerCodes.CanCreate(context.Invoice.Buyer, PartyCatalog)) return;
+        throw MissingCustomer(context);
+    }
 
     /// <summary>
     /// Read-only "Đối chiếu hóa đơn": reads the sales voucher currently open in MISA (header, every grid row on both

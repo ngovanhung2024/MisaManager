@@ -3,12 +3,16 @@ using MisaManager.Core;
 
 namespace MisaManager.Automation;
 
-/// <summary>One UI element of a MISA screen. AutomationId wins over Name; ControlType narrows either.</summary>
+/// <summary>
+/// One UI element of a MISA screen. AutomationId wins over Name; ControlType narrows either. Label (form caption left
+/// of the control) is used only without an AutomationId.
+/// </summary>
 public sealed record ScreenElement(string AutomationId = "", string Name = "", string ControlType = "",
-    string? Tab = null, bool Required = true, string? Description = null)
+    string? Tab = null, bool Required = true, string? Description = null, string Label = "")
 {
-    public NativeSelector Selector => new(AutomationId, Name, ControlType);
-    public override string ToString() => AutomationId.Length > 0 ? AutomationId : $"{Name} ({ControlType})";
+    public NativeSelector Selector => new(AutomationId, Name, ControlType, Label);
+    public override string ToString() => AutomationId.Length > 0 ? AutomationId
+        : Name.Length == 0 && Label.Length > 0 ? $"nhãn '{Label}' ({(ControlType.Length > 0 ? ControlType : "Edit")})" : $"{Name} ({ControlType})";
 }
 
 public sealed record ScreenGrid(string AutomationId, IReadOnlyDictionary<string, string> Columns);
@@ -85,8 +89,8 @@ public static class ProfileLoader
 
     private static void Validate(string screen, string name, ScreenElement element)
     {
-        if (string.IsNullOrWhiteSpace(element.AutomationId) && string.IsNullOrWhiteSpace(element.Name))
-            throw new InvalidDataException($"Element '{screen}.{name}' cần automationId hoặc name.");
+        if (string.IsNullOrWhiteSpace(element.AutomationId) && string.IsNullOrWhiteSpace(element.Name) && string.IsNullOrWhiteSpace(element.Label))
+            throw new InvalidDataException($"Element '{screen}.{name}' cần automationId, name hoặc label.");
         if (element.ControlType.Length > 0 && !Enum.TryParse<FlaUI.Core.Definitions.ControlType>(element.ControlType, out _))
             throw new InvalidDataException($"Element '{screen}.{name}' có controlType '{element.ControlType}' không hợp lệ.");
     }
