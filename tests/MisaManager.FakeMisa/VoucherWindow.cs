@@ -441,7 +441,8 @@ public sealed class VoucherWindow : Window, IGridSource
         {
             var source = lines.Sum(line => line.TaxAmount);
             var difference = scenario.TaxRoundingDifference;
-            var prompt = new TaxPromptWindow(profile, source, source + difference, scenario.TaxPromptAsLabel) { Owner = this };
+            var prompt = new TaxPromptWindow(profile, source, source + difference, scenario.TaxPromptAsLabel,
+                scenario.TaxPromptBusyMilliseconds) { Owner = this };
             prompt.ShowDialog();
             if (prompt.Adjust) lines[0].TaxAmount += difference;
         }
