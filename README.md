@@ -135,6 +135,9 @@ hóa đơn và danh mục được so cùng quy tắc: bỏ dấu câu, khoảng
 tag nhà phân phối đứng riêng (`(ĐN)`, `ĐN` cuối tên), chữ "bón" của "phân bón"; "khuyến mãi" = "khuyến mại";
 vẫn giữ khối lượng và đặc tính hàng nên 10kg/25kg, HC-15/HC-16 hoặc `(ĐN - chai tím …)` không bị ghép chung. Database cũ tự đọc lại file
 danh mục gốc một lần để ghi nguồn mã; nếu file mất thì cần nạp lại. Mã đã tạo và bằng chứng Cất chưa rõ vẫn được giữ.
+Mọi lần nạp file (hóa đơn, mã hàng, nhóm VTHH, khách hàng, nhà cung cấp, hóa đơn đã ghi sổ) xóa dữ liệu cũ cùng loại rồi
+thay bằng toàn bộ dữ liệu trong file, không chèn thêm; mã hàng/khách hàng tool tạo trước đó cũng bị bỏ nên hãy nạp file xuất
+mới nhất từ MISA. Chỉ mã hàng đang chờ xác nhận Cất bắt đầu sau thời điểm xuất file được giữ lại để không tạo trùng.
 Khi danh mục có nhiều mã cùng ĐVT trùng tên hoặc gần trùng theo quy tắc trên (`Phân kali` = HH_03/HH_50,
 `FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`), hóa đơn có dòng không ghi mã dùng tên đó được đánh dấu
 **Tạm hoãn** ở tab Hóa đơn: không tick được, không nhập, không ghi lỗi; lý do hiện khi chọn hóa đơn. Ngừng theo dõi mã thừa
@@ -143,7 +146,7 @@ File hóa đơn có thể thêm cột **Mã hàng** (không bắt buộc): dòng
 tên trùng nhiều mã (`ITEM_AMBIGUOUS`) hoặc khác ĐVT (`ITEM_UNIT_CONFLICT`).
 Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.
 
-**••• → Thêm mã khách hàng…** / **Thêm mã nhà cung cấp…** nạp file danh sách xuất từ MISA (cột Mã, Tên, Mã số thuế; bỏ
+**••• → Nạp mã khách hàng…** / **Nạp mã nhà cung cấp…** nạp file danh sách xuất từ MISA (cột Mã, Tên, Mã số thuế; bỏ
 dòng "Ngừng theo dõi" và dòng "Số dòng = N"). Lưu tại `%LOCALAPPDATA%\MisaManager\party-catalog.json`; mỗi lần nạp thay
 toàn bộ danh sách cùng loại. Khi Excel không có mã khách hàng, tool tìm mã theo thứ tự: trùng tên → trùng mã số thuế →
 tên gần đúng (bỏ phần trong ngoặc, viết đầy đủ CTY/CP/TNHH/MTV…), khách hàng trước nhà cung cấp. Mọi so sánh dùng

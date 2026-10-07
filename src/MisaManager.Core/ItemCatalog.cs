@@ -248,11 +248,17 @@ public sealed partial class ItemCatalogStore
     }
 
     /// <summary>
-    /// File rows override the same code; codes created earlier by the tool are kept.
+    /// Loads a MISA export as the whole catalog: every earlier row (including codes created by the tool) is dropped.
     /// A fresh MISA export also settles pending creations: present codes are known,
-    /// absent ones started before the export was written were never created.
+    /// absent ones started before the export was written were never created. Later ones stay pending (unclear Cất).
     /// </summary>
+    public int Import(IEnumerable<ItemCatalogEntry> imported, string sourceFile) => Load(imported, sourceFile, true, keepExisting: false);
+
+    /// <summary>Like <see cref="Import"/> but keeps rows absent from the file; only for upgrading legacy databases.</summary>
     public int Merge(IEnumerable<ItemCatalogEntry> imported, string sourceFile, bool reconcilePending = true)
+        => Load(imported, sourceFile, reconcilePending, keepExisting: true);
+
+    private int Load(IEnumerable<ItemCatalogEntry> imported, string sourceFile, bool reconcilePending, bool keepExisting)
     {
         DateTimeOffset? exportedAt = File.Exists(sourceFile) ? new DateTimeOffset(File.GetLastWriteTimeUtc(sourceFile), TimeSpan.Zero) : null;
         lock (gate)
@@ -264,7 +270,8 @@ public sealed partial class ItemCatalogStore
             {
                 if (reconcilePending)
                     pending.RemoveAll(item => codes.Contains(item.Code) || exportedAt is { } at && at > item.StartedAt);
-                Replace([.. incoming, .. items.Where(item => !codes.Contains(item.Code))]);
+                Replace(keepExisting ? [.. incoming, .. items.Where(item => !codes.Contains(item.Code))] : incoming);
+                if (!keepExisting) verifiedCodes = new(StringComparer.OrdinalIgnoreCase);
                 importedCodes = codes.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 SourceFile = sourceFile;
             });

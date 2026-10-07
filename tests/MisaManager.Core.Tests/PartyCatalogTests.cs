@@ -322,7 +322,7 @@ public sealed class PartyCatalogTests : IDisposable
     }
 
     [Fact]
-    public void CreatedCustomerIsFoundUntilAFreshExportListsIt()
+    public void CreatedCustomerIsFoundUntilTheCustomerListIsLoadedAgain()
     {
         var store = Store();
         store.Replace(PartyRole.Customer, Customers, "Khach_hang.xlsx");
@@ -340,9 +340,11 @@ public sealed class PartyCatalogTests : IDisposable
         Assert.Equal(Customers.Length, reloaded.CustomerCount);
         Assert.Equal(1, reloaded.CreatedCount);
 
-        reloaded.Replace(PartyRole.Customer, [.. Customers, new("3301747760", buyer.Name, buyer.TaxCode)], "Khach_hang.xlsx");
+        // A new import replaces everything, including created customers the file does not list.
+        reloaded.Replace(PartyRole.Customer, Customers, "Khach_hang.xlsx");
         Assert.Equal(0, reloaded.CreatedCount);
-        Assert.Equal("3301747760", BuyerCodes.Resolve(buyer, reloaded)?.Code);
+        Assert.Null(BuyerCodes.Resolve(buyer, reloaded));
+        Assert.Null(reloaded.FindByCode("3301747760"));
     }
 
     [Fact]

@@ -9,7 +9,7 @@ public enum PartyRole { Customer, Supplier }
 
 public sealed record PartyCatalogEntry(string Code, string Name, string TaxCode = "", string Address = "");
 
-/// <param name="Created">Customers the tool created in MISA ("Thêm Khách hàng") that the loaded export does not list yet.</param>
+/// <param name="Created">Customers the tool created in MISA ("Thêm Khách hàng") since the customer list was last loaded.</param>
 public sealed record PartyCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? CustomerSource, string? SupplierSource,
     IReadOnlyList<PartyCatalogEntry> Customers, IReadOnlyList<PartyCatalogEntry> Suppliers,
     IReadOnlyList<PartyCatalogEntry>? Created = null);
@@ -84,7 +84,10 @@ public sealed partial class PartyCatalogStore
             .FirstOrDefault(entry => string.Equals(entry.Code, key, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>A MISA export is the complete list of that kind, so it replaces the previous one.</summary>
+    /// <summary>
+    /// A MISA export is the complete list of that kind, so it replaces the previous one; for customers that includes
+    /// the customers the tool created earlier.
+    /// </summary>
     public int Replace(PartyRole role, IEnumerable<PartyCatalogEntry> entries, string sourceFile)
     {
         var cleaned = entries.Where(entry => !string.IsNullOrWhiteSpace(entry.Code) && !string.IsNullOrWhiteSpace(entry.Name))
@@ -97,9 +100,7 @@ public sealed partial class PartyCatalogStore
             if (role == PartyRole.Customer)
             {
                 (customers, CustomerSource) = (new Index(cleaned), sourceFile);
-                // A created customer listed by the new export is now plain catalog data.
-                var listed = cleaned.Select(entry => entry.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                created = created.Where(entry => !listed.Contains(entry.Code)).ToArray();
+                created = [];
             }
             else (suppliers, SupplierSource) = (new Index(cleaned), sourceFile);
             RebuildLookup();
