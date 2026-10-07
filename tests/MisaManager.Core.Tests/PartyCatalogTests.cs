@@ -287,15 +287,32 @@ public sealed class PartyCatalogTests : IDisposable
     }
 
     [Fact]
-    public void NewCustomerCodeIsTheMstForOrganisationsAndInitialsForPeople()
+    public void NewCustomerCodeIsTheDistinctiveNameForOrganisationsAndInitialsForPeople()
     {
         var store = Store();
         store.Replace(PartyRole.Customer, [.. Customers, new("LTH", "LÊ THANH HẢI")], "Khach_hang.xlsx");
 
-        Assert.Equal("3301747760", store.NewCustomerCode(new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", " 3301747760 ", "", "",
+        // Like the accountants' list (Khach_hang.xlsx: HƯNG LỘC, LINH NGỌC, BẠCH MÃ, A&V): never the MST.
+        Assert.Equal("PHÚ LỘC", store.NewCustomerCode(new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", " 3301747760 ", "", "",
             ValuePresence.Provided)));
-        Assert.Equal("0100101611-008", store.NewCustomerCode(new Party("CHI NHÁNH THỪA THIÊN HUẾ", "0100101611-008", "", "",
+        Assert.Equal("THỪA THIÊN HUẾ", store.NewCustomerCode(new Party("CHI NHÁNH THỪA THIÊN HUẾ", "0100101611-008", "", "",
             ValuePresence.Provided, PartyKind.Organization)));
+        Assert.Equal("LINH NGỌC", store.NewCustomerCode(new Party("CÔNG TY TNHH MỘT THÀNH VIÊN LINH NGỌC", "3301247101", "", "",
+            ValuePresence.Provided)));
+        Assert.Equal("BẠCH MÃ", store.NewCustomerCode(new Party("VƯỜN QUỐC GIA BẠCH MÃ", "3300305784", "", "", ValuePresence.Provided)));
+        Assert.Equal("A&V", store.NewCustomerCode(new Party("CÔNG TY CỔ PHẦN ĐẦU TƯ VÀ PHÁT TRIỂN LÂM NGHIỆP A&V", "0107286506", "", "",
+            ValuePresence.Provided)));
+        Assert.Equal("LỘC TIẾN", store.NewCustomerCode(new Party("Trường Mầm non Lộc Tiến", "3301493428", "", "", ValuePresence.Provided,
+            PartyKind.Organization)));
+        Assert.Equal("NAM HÒA", store.NewCustomerCode(new Party("CÔNG TY TNHH NHÀ NƯỚC MỘT THÀNH VIÊN LÂM NGHIỆP NAM HÒA", "3300100096",
+            "", "", ValuePresence.Provided)));
+        // A long remainder becomes initials; a used multi-word code gets " 2"; nothing distinctive left falls back to initials.
+        Assert.Equal("CTGVPTLS", store.NewCustomerCode(new Party("VIỆN CẢI THIỆN GIỐNG VÀ PHÁT TRIỂN LÂM SẢN", "0101483843", "", "",
+            ValuePresence.Provided, PartyKind.Organization)));
+        store.AddCreated(new("PHÚ LỘC", "TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", "3301747760", ""));
+        Assert.Equal("PHÚ LỘC 2", store.NewCustomerCode(new Party("KHO BẠC NHÀ NƯỚC PHÚ LỘC", "3300498416-003", "", "", ValuePresence.Provided,
+            PartyKind.Organization)));
+        Assert.Equal("CTCPNN", store.NewCustomerCode(new Party("CÔNG TY CỔ PHẦN NÔNG NGHIỆP", "3300000000", "", "", ValuePresence.Provided)));
         Assert.Equal("HTT", store.NewCustomerCode(new Party("Hoàng Trọng Tiếp", "", "", "", ValuePresence.Missing)));
         // Đ → D, text in brackets dropped, a used code gets a number.
         Assert.Equal("DVA", store.NewCustomerCode(new Party("Đỗ Văn An (046085016878)", "046085016878", "", "", ValuePresence.Provided)));
