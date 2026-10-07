@@ -72,31 +72,79 @@ public sealed partial class NativeInputService
         }, token), _ => true, "NEW_CUSTOMER_DIALOG_MISSING",
             "Hộp Thêm Khách hàng không mở được (F9 / nút + trên ô Khách hàng).", token, timeoutMilliseconds: 10000);
 
-    /// <summary>Selects "1. Tổ chức" / "2. Cá nhân"; returns false when it was already selected (nothing sent).</summary>
-    public Task<bool> SelectNewCustomerKindAsync(NativeFrame frame, NativeSelector kind, CancellationToken token)
+    /// <summary>
+    /// Shows the "1. Tổ chức" / "2. Cá nhân" layout whose name field is <paramref name="layoutField"/>. R20 does not expose
+    /// these options as UIA RadioButtons, so the option is found by its caption whatever its control type, and the
+    /// layout is proven by the visible name-field label instead of a selection state. Returns false when the layout was
+    /// already shown (nothing sent).
+    /// </summary>
+    public Task<bool> EnsureNewCustomerKindAsync(NativeFrame frame, NativeSelector kind, NativeSelector layoutField, CancellationToken token)
         => dispatcher.RunAsync(() =>
         {
             RecordInput();
             GuardWorkflow(frame, forInput: true);
             RequireNewCustomerScope();
             ThrowIfBlockingDialog();
-            var target = Resolve(kind);
-            var selection = target.Patterns.SelectionItem;
-            if (selection.IsSupported && selection.Pattern.IsSelected.ValueOrDefault) return false;
-            var bounds = target.BoundingRectangle;
-            if (bounds.Width <= 0 || bounds.Height <= 0)
-                throw new AutomationException("BOUNDS_UNREADABLE", $"Lựa chọn '{kind.Name}' không có vị trí hiển thị.");
+            var pid = identity!.ProcessId;
+            if (LabelledMatches(Snapshots(root!, Live(SelectorCondition(layoutField), pid)), layoutField).Length == 1) return false;
+            var visible = Snapshots(root!, Live(automation.ConditionFactory.ByProcessId(pid), pid))
+                .Where(item => !item.Offscreen && item.HasArea).ToArray();
+            var key = LabelKey(kind.Name);
+            var named = visible.Where(item => LabelKey(item.Name) == key).ToArray();
+            var preferred = named.Where(item => item.ControlType is ControlType.RadioButton or ControlType.CheckBox or ControlType.Button).ToArray();
+            var candidates = preferred.Length > 0 ? preferred : named;
+            // A wrapper and its caption can both carry the name; the outermost one is the clickable option.
+            candidates = candidates.Where(item => !candidates.Any(other => !ReferenceEquals(other, item) && other.Bounds != item.Bounds
+                && other.Bounds.Contains(item.Bounds))).ToArray();
+            if (candidates.Length != 1)
+                throw new AutomationException(candidates.Length == 0 ? "CUSTOMER_KIND_NOT_FOUND" : "CUSTOMER_KIND_AMBIGUOUS",
+                    $"Hộp Thêm Khách hàng: {(candidates.Length == 0 ? "không thấy" : $"có {candidates.Length}")} lựa chọn '{kind.Name}'. "
+                    + "Control đang hiển thị: " + string.Join("; ", visible.Where(item => item.Name.Length > 0 || item.AutomationId.Length > 0)
+                        .Take(80).Select(item => $"{item.ControlType} '{item.Name}' #{item.AutomationId}")));
+            var target = candidates[0];
             token.ThrowIfCancellationRequested();
             try
             {
                 MarkWorkflowInput();
-                if (selection.IsSupported) selection.Pattern.Select();
-                else NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                    identity!.WindowHandle, identity.ProcessId, WorkflowTargetHandle(target));
+                var selection = target.Element.Patterns.SelectionItem;
+                if (target.ControlType == ControlType.RadioButton && selection.IsSupported) selection.Pattern.Select();
+                else NativeKeyboard.Click(target.Bounds.X + target.Bounds.Width / 2, target.Bounds.Y + target.Bounds.Height / 2,
+                    identity.WindowHandle, pid, WorkflowTargetHandle(target.Element));
                 epoch++;
                 return true;
             }
             catch (Exception error) { throw new AutomationException("INPUT_UNCERTAIN", $"Không xác nhận được thao tác chọn '{kind.Name}'.", true, error); }
+        }, token, maySendInput: true);
+
+    /// <summary>
+    /// Closes the bound dialog with its own "Hủy bỏ" before anything was saved, so the voucher underneath can be discarded.
+    /// MISA's "dữ liệu đã bị thay đổi, có muốn cất" prompt is answered No. Best effort: returns false when the dialog stays open.
+    /// </summary>
+    public Task<bool> CancelNewCustomerAsync(NativeSelector cancel, CancellationToken token)
+        => dispatcher.RunAsync(() =>
+        {
+            var dialogHandle = newCustomerHandle;
+            if (identity is null || dialogHandle == nint.Zero || !PInvoke.IsWindow((HWND)dialogHandle)) return true;
+            RecordInput();
+            var dialog = automation.FromHandle(dialogHandle);
+            var buttons = Snapshots(dialog, Live(SelectorCondition(cancel), identity.ProcessId)).Where(item => Matches(item, cancel)).ToArray();
+            if (buttons.Length != 1) return false;
+            var bounds = buttons[0].Bounds;
+            MarkWorkflowInput();
+            NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
+                identity.WindowHandle, identity.ProcessId, WorkflowTargetHandle(buttons[0].Element));
+            epoch++;
+            DismissDirtyVoucherPrompt(dialogHandle, token, waitMilliseconds: 1200);
+            var deadline = Environment.TickCount64 + 3000;
+            while (PInvoke.IsWindow((HWND)dialogHandle) && PInvoke.IsWindowVisible((HWND)dialogHandle) && Environment.TickCount64 < deadline)
+                Thread.Sleep(50);
+            var closed = !PInvoke.IsWindow((HWND)dialogHandle) || !PInvoke.IsWindowVisible((HWND)dialogHandle);
+            if (closed)
+            {
+                root = automation.FromHandle(identity.WindowHandle);
+                newCustomerHandle = nint.Zero;
+            }
+            return closed;
         }, token, maySendInput: true);
 
     /// <summary>

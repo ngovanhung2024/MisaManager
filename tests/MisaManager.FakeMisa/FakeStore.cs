@@ -63,6 +63,9 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
     public Customer? FindCustomer(string code) => Customers.FirstOrDefault(customer => string.Equals(customer.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
     public CatalogItem? FindItem(string code) => Items.FirstOrDefault(item => string.Equals(item.Code, code.Trim(), StringComparison.Ordinal));
 
+    public string NextCustomerCode()
+        => "NTD" + Customers.Count(customer => customer.Code.StartsWith("NTD", StringComparison.Ordinal)).ToString(CultureInfo.InvariantCulture);
+
     public string NextVoucherNumber() => "PT0" + (voucherSequence++).ToString(CultureInfo.InvariantCulture);
 
     public string NextInvoiceNumber()

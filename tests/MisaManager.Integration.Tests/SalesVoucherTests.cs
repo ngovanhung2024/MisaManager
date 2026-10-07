@@ -584,6 +584,24 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(buyer.Address, harness.Parties.FindByCode("3301747760")?.Address);
     }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
 
+    // Report 0.2.103 (invoice 1475): a failure inside "Thêm Khách hàng" left the dialog open, so the voucher could not be discarded.
+    [Fact]
+    public Task NewCustomerDialogIsCancelledWhenEntryFailsBeforeItsSave() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var buyer = new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", "3301747760", "Đường Lương Định Của, Xã Phú Lộc", "",
+            ValuePresence.Provided);
+        var invoice = Invoices.Build(TempDirectory(misa), "1475", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.NotEqual("saved", result.Outcome);
+        Assert.True(result.MisaClean, Describe(result));
+        Assert.Empty(misa.State().CreatedCustomers ?? []);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Equal(0, harness.Parties.CreatedCount);
+    }, new FakeScenario(NewCustomerAddressReadOnly: true), customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
+
     [Fact]
     public Task IndividualMissingFromTheCustomerListIsCreatedOnTheIndividualLayout() => WithFakeAsync(async (misa, harness, token) =>
     {

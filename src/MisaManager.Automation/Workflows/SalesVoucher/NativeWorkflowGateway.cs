@@ -514,9 +514,33 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         Entering("customer:new");
         await input.OpenNewCustomerAsync(await input.CaptureAsync(token), profile.Fields["customer"], dialog.OpenKey, token);
         var frame = await input.BindNewCustomerAsync(dialog, token);
-        if (await input.SelectNewCustomerKindAsync(frame, kind, token))
+        try
+        {
+            await FillNewCustomerAsync(dialog, frame, kind, nameField, code, name, address, mst, personalId, progress, token);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            // Nothing was saved yet: close the dialog so the runner can discard the voucher underneath.
+            try { await input.CancelNewCustomerAsync(dialog.Cancel, CancellationToken.None); }
+            catch (Exception cancel) { Trace.TraceWarning("Cancel new-customer dialog failed: " + cancel.Message); }
+            throw;
+        }
+        var handle = await input.SaveNewCustomerAsync(await input.CaptureAsync(token), dialog.Save, token);
+        await WaitNewCustomerSavedAsync(handle, code, name, token);
+        catalog.AddCreated(new(code, name, mst, address));
+        await WaitEditor(context, visible: true, token);
+        await Tab(profile.ReceiptTab, token);
+        return code;
+    }
+
+    // Layout, fields and readback in the bound dialog; no "Cất" yet.
+    private async Task FillNewCustomerAsync(CustomerDialogProfile dialog, NativeFrame frame, NativeSelector kind, NativeSelector nameField,
+        string code, string name, string address, string mst, string personalId,
+        Func<WorkflowProgress, CancellationToken, Task> progress, CancellationToken token)
+    {
+        if (await input.EnsureNewCustomerKindAsync(frame, kind, nameField, token))
             await NativeWait.UntilAsync(async () => await input.ReadFieldAsync(await input.CaptureAsync(token), nameField, token), _ => true,
-                "CUSTOMER_KIND_NOT_SELECTED", $"Hộp Thêm Khách hàng chưa chuyển sang '{kind.Name}'. Bấm Hủy bỏ trên hộp rồi chạy lại.", token,
+                "CUSTOMER_KIND_NOT_SELECTED", $"Hộp Thêm Khách hàng chưa chuyển sang '{kind.Name}' (không thấy ô '{nameField.Label}').", token,
                 timeoutMilliseconds: 5000);
         var fields = new List<(string Key, NativeSelector Selector, string Value, NativeValueKind Kind)>
         {
@@ -538,15 +562,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             "CUSTOMER_CREATE_READBACK_FAILED", $"Thông tin khách hàng mới '{name}' chưa khớp trước khi Cất.", token, returnLastMismatch: true);
         if (Mismatches(readback) is { Length: > 0 } wrong)
             throw new AutomationException("CUSTOMER_CREATE_READBACK_FAILED",
-                $"Hộp Thêm Khách hàng: ô '{wrong[0]}' đang là '{readback.Values[wrong[0]].Value}', khác '{fields.First(field => field.Key == wrong[0]).Value}'. "
-                + "Bấm Hủy bỏ trên hộp Thêm Khách hàng rồi chạy lại.", true);
+                $"Hộp Thêm Khách hàng: ô '{wrong[0]}' đang là '{readback.Values[wrong[0]].Value}', khác '{fields.First(field => field.Key == wrong[0]).Value}'.", true);
         await progress(new(CreatedCustomerKey, code, Frame(readback.Frame)), token);
-        var handle = await input.SaveNewCustomerAsync(await input.CaptureAsync(token), dialog.Save, token);
-        await WaitNewCustomerSavedAsync(handle, code, name, token);
-        catalog.AddCreated(new(code, name, mst, address));
-        await WaitEditor(context, visible: true, token);
-        await Tab(profile.ReceiptTab, token);
-        return code;
     }
 
     private async Task WaitNewCustomerSavedAsync(nint dialog, string code, string name, CancellationToken token)
