@@ -210,6 +210,10 @@
                 <MenuItem x:Name="MarkSavedItem" Header="Đánh dấu đã lưu (đã nhập tay trong MISA)" Click="MarkSaved_Click" ToolTipService.ShowOnDisabled="True"/>
                 <MenuItem x:Name="MarkTickedSavedItem" Click="MarkTickedSaved_Click" ToolTipService.ShowOnDisabled="True"
                           ToolTip="Đánh dấu đã lưu cho mọi hóa đơn đang được tick (chỉ những hóa đơn chưa lưu)"/>
+                <Separator/>
+                <MenuItem x:Name="ResetReadyItem" Header="Chuyển về sẵn sàng nhập (đã xóa trong MISA)" Click="ResetReady_Click" ToolTipService.ShowOnDisabled="True"/>
+                <MenuItem x:Name="ResetTickedReadyItem" Click="ResetTickedReady_Click" ToolTipService.ShowOnDisabled="True"
+                          ToolTip="Chuyển về sẵn sàng nhập cho mọi hóa đơn đang được tick (chỉ những hóa đơn đã lưu)"/>
               </ContextMenu></ListBox.ContextMenu>
               <ListBox.ItemTemplate><DataTemplate>
                 <Border x:Name="Row" CornerRadius="5" Background="White" BorderBrush="#E4E8EF" BorderThickness="1">
