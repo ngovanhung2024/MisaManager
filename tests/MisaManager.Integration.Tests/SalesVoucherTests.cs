@@ -834,6 +834,35 @@ public sealed class SalesVoucherTests : UiTest
     });
 
     [Fact]
+    public Task UncertainCheckpointOfAnOlderProfileRevisionIsSettledByTheRegisterAndTheInvoiceIsEntered() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // The report: Thêm vào MISA after an app update stopped at "Checkpoint thuộc profile khác" for invoice 1475.
+        var invoice = Invoices.Build(TempDirectory(misa), "1475", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+        var entered = await harness.EnterWithoutSavingAsync(invoice, misa, token);
+        await misa.CloseVoucherAsUserAsync(token);
+        var uncertain = entered.Context with
+        {
+            ProfileRevision = harness.Profile.Revision + "-older",
+            Snapshot = entered.Context.Snapshot with
+            {
+                Status = WorkflowStatus.SaveUncertain, InputMayHaveBeenSent = true,
+                LastInputDisposition = InputDisposition.Uncertain
+            }
+        };
+        await new JsonStateStore(Path.Combine(misa.Root, "state")).WriteAsync("workflow-session", "session.json", uncertain, token);
+        await using var reopened = new AutomationHarness(misa.Root);
+
+        var result = await reopened.RunNewSessionAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.NotEqual(uncertain.Snapshot.RunId, result.Context.Snapshot.RunId);
+        Assert.Equal("1475", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+        var history = await reopened.Runner.ReadHistoryAsync(token);
+        Assert.Equal(WorkflowStatus.Discarded, history.Single(run => run.Snapshot.RunId == uncertain.Snapshot.RunId).Snapshot.Status);
+    });
+
+    [Fact]
     public Task KgLineOfATonOnlyItemIsConvertedWithoutOpeningTheUnitList() => WithFakeAsync(async (misa, harness, token) =>
     {
         // The fake's unit list does contain "kg": a saved Tấn line proves the list was never opened.
