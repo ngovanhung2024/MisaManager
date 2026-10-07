@@ -556,18 +556,34 @@ public sealed class ItemCatalogTests : IDisposable
     }
 
     [Fact]
-    public void MergeLetsFileRowsOverrideSameCodeAndKeepsToolCreatedCodes()
+    public void ImportReplacesTheWholeCatalogIncludingToolCreatedCodes()
     {
         var store = NewStore(Item("HH_01", "Chery 15g", "Gói"), Item("HH_90", "Tool đã tạo", "kg"));
         var source = temp.WriteText("export.xlsx", "x");
+        store.BeginPending(new PendingItemCreation("HH_91", "Đã xác nhận", "kg", DateTimeOffset.UtcNow));
+        store.ConfirmPending("HH_91");
 
-        var count = store.Merge([Item("HH_01", "Chery 15g (đã đổi tên)", "Gói"), Item("HH_02", "Phân NPK 16.16.813S QN", "kg")], source);
+        var count = store.Import([Item("HH_01", "Chery 15g (đã đổi tên)", "Gói"), Item("HH_02", "Phân NPK 16.16.813S QN", "kg")], source);
 
-        Assert.Equal(3, count);
-        Assert.Equal(3, store.Count);
+        Assert.Equal(2, count);
+        Assert.Equal(["HH_01", "HH_02"], new ItemCatalogStore(CatalogPath).Snapshot().Select(item => item.Code).Order());
         Assert.Equal("Chery 15g (đã đổi tên)", store.Snapshot().Single(item => item.Code == "HH_01").Name);
-        Assert.Contains(store.Snapshot(), item => item.Code == "HH_90");
+        Assert.Null(store.Find("Đã xác nhận", "kg"));
         Assert.Equal(Path.GetFullPath(source), Path.GetFullPath(store.SourceFile!));
+    }
+
+    [Fact]
+    public void ImportKeepsPendingCodesStartedAfterTheExportWasWritten()
+    {
+        var store = NewStore(Item("HH_01", "Chery 15g", "Gói"));
+        var source = temp.WriteText("export.xlsx", "x");
+        File.SetLastWriteTimeUtc(source, DateTime.UtcNow.AddHours(-2));
+        store.BeginPending(new PendingItemCreation("HH_07", "Hesman 60WG 18g", "Gói", DateTimeOffset.UtcNow));
+
+        store.Import([Item("HH_02", "Phân kali", "kg")], source);
+
+        Assert.Equal("HH_07", Assert.Single(store.PendingSnapshot()).Code);
+        Assert.Equal("HH_02", Assert.Single(store.Snapshot()).Code);
     }
 
     [Fact]

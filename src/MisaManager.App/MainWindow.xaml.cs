@@ -279,9 +279,9 @@ public partial class MainWindow : Window
         try
         {
             var items = await ItemCatalogWorkbook.ReadAsync(services.WorkbookReader, dialog.FileName);
-            var total = await Task.Run(() => services.ItemCatalog.Merge(items, dialog.FileName));
+            var total = await Task.Run(() => services.ItemCatalog.Import(items, dialog.FileName));
             RefreshCatalogLabel();
-            StatusLabel.Text = $"Đã nạp {items.Count:N0} mã hàng từ {Path.GetFileName(dialog.FileName)}; database có {total:N0} mã.";
+            StatusLabel.Text = $"Đã xóa danh mục cũ và nạp {total:N0} mã hàng từ {Path.GetFileName(dialog.FileName)}.";
             ShowCatalogAudit(onlyWhenFindings: true);
         }
         catch (Exception error) { StatusLabel.Text = "Không nạp được file mã hàng: " + error.Message; }
@@ -370,7 +370,7 @@ public partial class MainWindow : Window
             RefreshPartyLabel();
             presentationInitialized = false;
             RefreshWorkflowPanel();
-            StatusLabel.Text = $"Đã nạp {count:N0} mã {label} từ {Path.GetFileName(dialog.FileName)}.";
+            StatusLabel.Text = $"Đã xóa danh sách cũ và nạp {count:N0} mã {label} từ {Path.GetFileName(dialog.FileName)}.";
         }
         catch (Exception error) { StatusLabel.Text = $"Không nạp được file mã {label}: " + error.Message; }
     }

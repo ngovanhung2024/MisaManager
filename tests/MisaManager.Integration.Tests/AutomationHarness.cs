@@ -14,7 +14,7 @@ public sealed class AutomationHarness : IAsyncDisposable
         Profile = WorkflowProfile.Load(Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json"));
         Input = new NativeInputService();
         Catalog = new ItemCatalogStore(Path.Combine(root, "item-catalog.json"));
-        if (catalog is not null) Catalog.Merge(catalog, Path.Combine(root, "catalog.xlsx"));
+        if (catalog is not null) Catalog.Import(catalog, Path.Combine(root, "catalog.xlsx"));
         Parties = new PartyCatalogStore(Path.Combine(root, "party-catalog.json"));
         if (customers is not null) Parties.Replace(PartyRole.Customer, customers, Path.Combine(root, "Khach_hang.xlsx"));
         Groups = new ItemGroupStore(Path.Combine(root, "item-groups.json"));
