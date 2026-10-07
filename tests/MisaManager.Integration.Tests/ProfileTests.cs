@@ -18,6 +18,9 @@ public sealed class ProfileTests
         var customer = Assert.IsType<CustomerDialogProfile>(profile.NewCustomer);
         Assert.Equal(("Thêm Khách hàng", "F9", "Mã (*)"), (customer.Title, customer.OpenKey, customer.Code.Label));
         Assert.True(customer.Code.ByLabel && customer.Address.ByLabel && !customer.Save.ByLabel);
+        // R20 does not expose the kind options as RadioButtons: they must be found by caption only.
+        Assert.Equal(("", ""), (customer.Organization.ControlType, customer.Individual.ControlType));
+        Assert.Equal("Hủy bỏ", customer.Cancel.Name);
     }
 
     [Fact]

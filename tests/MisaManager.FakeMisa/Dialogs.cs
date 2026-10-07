@@ -78,16 +78,17 @@ public sealed class NewItemWindow : Window
 
 /// <summary>
 /// "Thêm Khách hàng" opened with F9 (the + button) from the voucher's customer field. Like R20 the editors have no
-/// known AutomationId: the automation finds them by the form label on their left. The two layouts swap with the radio.
+/// known AutomationId: the automation finds them by the form label on their left. The two layouts swap with the
+/// "1. Tổ chức" / "2. Cá nhân" options, which (as in R20, report of invoice 1475) are not UIA RadioButtons.
 /// </summary>
 public sealed class NewCustomerWindow : Window
 {
     private const string Prompt = "MISA SME 2023";
     private readonly FakeStore store;
-    private readonly RadioButton individual;
+    private bool individual;
     private readonly TextBox orgTax, orgCode, orgName, orgAddress, personCode, personName, personAddress, personTax, personId;
 
-    public NewCustomerWindow(FakeProfile profile, FakeStore store)
+    public NewCustomerWindow(FakeProfile profile, FakeStore store, Scenario scenario)
     {
         this.store = store;
         Title = profile.ScopeName("customer_new");
@@ -98,20 +99,31 @@ public sealed class NewCustomerWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Ui.Chrome;
         this.IgnoreBareAlt();
-        (orgTax, orgCode, orgName, orgAddress) = (Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text());
-        (personCode, personName, personAddress, personTax, personId) = (Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text());
+        // R20 proposes its next code (e.g. "NTD1"); the tool overwrites it.
+        var proposed = store.NextCustomerCode();
+        (orgTax, orgCode, orgName, orgAddress) = (Ui.Text(), Ui.Text(value: proposed), Ui.Text(), Ui.Text(readOnly: scenario.NewCustomerAddressReadOnly));
+        (personCode, personName, personAddress, personTax, personId) = (Ui.Text(value: proposed), Ui.Text(), Ui.Text(), Ui.Text(), Ui.Text());
         var organizationForm = Ui.Form(120, ("Mã số thuế", orgTax), ("Mã (*)", orgCode), ("Tên (*)", orgName), ("Địa chỉ", orgAddress),
             ("Diễn giải", Ui.Text()), ("Điện thoại", Ui.Text()), ("Email", Ui.Text()));
         var personForm = Ui.Form(120, ("Mã (*)", personCode), ("Họ và tên (*)", personName), ("Địa chỉ", personAddress),
             ("Diễn giải", Ui.Text()), ("Mã số thuế", personTax), ("ĐT di động", Ui.Text()), ("Số CMND", personId));
         personForm.Visibility = Visibility.Collapsed;
-        var organization = new RadioButton { Content = profile.Caption("customer_new", "organization"), IsChecked = true, Margin = new Thickness(6) };
-        individual = new RadioButton { Content = profile.Caption("customer_new", "individual"), Margin = new Thickness(6) };
-        individual.Checked += (_, _) => (organizationForm.Visibility, personForm.Visibility) = (Visibility.Collapsed, Visibility.Visible);
-        organization.Checked += (_, _) => (organizationForm.Visibility, personForm.Visibility) = (Visibility.Visible, Visibility.Collapsed);
         var kinds = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6) };
-        kinds.Children.Add(organization);
-        kinds.Children.Add(individual);
+        kinds.Children.Add(Option(profile.Caption("customer_new", "organization"), false));
+        kinds.Children.Add(Option(profile.Caption("customer_new", "individual"), true));
+        void Show(bool person)
+        {
+            individual = person;
+            (organizationForm.Visibility, personForm.Visibility) = person ? (Visibility.Collapsed, Visibility.Visible) : (Visibility.Visible, Visibility.Collapsed);
+            FakeLog.Write("customer kind " + (person ? "individual" : "organization"));
+        }
+        // Owner-drawn option: UIA sees only a Text with the caption.
+        TextBlock Option(string caption, bool person)
+        {
+            var option = new TextBlock { Text = caption, Margin = new Thickness(6, 2, 12, 2), Cursor = System.Windows.Input.Cursors.Hand };
+            option.MouseLeftButtonUp += (_, _) => Show(person);
+            return option;
+        }
         var forms = new Grid();
         forms.Children.Add(organizationForm);
         forms.Children.Add(personForm);
@@ -139,7 +151,7 @@ public sealed class NewCustomerWindow : Window
 
     private void Save()
     {
-        var person = individual.IsChecked == true;
+        var person = individual;
         var code = (person ? personCode : orgCode).Text.Trim();
         var name = (person ? personName : orgName).Text.Trim();
         if (code.Length == 0 || name.Length == 0)

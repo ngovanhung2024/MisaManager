@@ -162,7 +162,10 @@ là số CCCD nên được điền vào ô **Số CMND**, không vào ô Mã s�
 khách hàng. Khách hàng đã tạo được lưu trong `party-catalog.json` (mục `created`) để các hóa đơn sau của cùng người mua dùng
 lại mã, đến khi file danh sách khách hàng nạp lại có mã đó. Chưa nạp danh mục khách hàng thì tool không tạo (mọi người mua
 sẽ bị coi là mới) và hóa đơn dừng trước khi mở chứng từ (`CUSTOMER_CODE_MISSING`, **Chưa hoàn thành**). Ô trong hộp Thêm
-Khách hàng được tìm theo **nhãn** bên trái (`"label": "Mã (*)"` trong `screens.customer_new` của profile) vì chưa có
+Khách hàng được tìm theo **nhãn** bên trái. Hai lựa chọn 1. Tổ chức/2. Cá nhân của R20 không phải RadioButton trong UIA nên
+được tìm theo chữ; layout đúng được xác nhận bằng nhãn ô tên đang hiện (`Tên (*)` / `Họ và tên (*)`), layout mặc định
+(Tổ chức) thì không bấm gì. Lỗi xảy ra trước khi bấm Cất của hộp thì tool bấm **Hủy bỏ** để đóng hộp rồi mới Bỏ chứng từ.
+Ô được tìm theo nhãn bên trái (`"label": "Mã (*)"` trong `screens.customer_new` của profile) vì chưa có
 AutomationId; khi biết AutomationId thật, thêm `automationId` vào profile là được ưu tiên.
 Tên người mua lấy từ cột **DN mua** (đơn vị mua) của file hóa đơn nếu ô có dữ liệu; khi đó **Người mua** chỉ là người liên hệ.
 DN mua trống thì dùng Người mua; file chỉ có cột DN mua cũng nhập được. Người mua "Khách hàng không cung cấp thông tin"

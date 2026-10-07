@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-new-customer-20261007",
+  "revision": "r20-new-customer-kind-20261007",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -95,15 +95,16 @@
       "title": "Thêm Khách hàng (F9 hoặc nút + trên ô Khách hàng của chứng từ)",
       "scope": { "name": "Thêm Khách hàng", "controlType": "Window" },
       "elements": {
-        "organization": { "name": "1. Tổ chức", "controlType": "RadioButton" },
-        "individual": { "name": "2. Cá nhân", "controlType": "RadioButton" },
+        "organization": { "name": "1. Tổ chức", "description": "Lựa chọn loại khách hàng; R20 không lộ dạng RadioButton nên không ghi controlType" },
+        "individual": { "name": "2. Cá nhân", "description": "Lựa chọn loại khách hàng; R20 không lộ dạng RadioButton nên không ghi controlType" },
         "tax_code": { "label": "Mã số thuế", "controlType": "Edit" },
         "code": { "label": "Mã (*)", "controlType": "Edit" },
         "name": { "label": "Tên (*)", "controlType": "Edit", "required": false, "description": "Chỉ có ở 1. Tổ chức" },
         "full_name": { "label": "Họ và tên (*)", "controlType": "Edit", "required": false, "description": "Chỉ có ở 2. Cá nhân" },
         "address": { "label": "Địa chỉ", "controlType": "Edit" },
         "id_number": { "label": "Số CMND", "controlType": "Edit", "required": false, "description": "Chỉ có ở 2. Cá nhân" },
-        "save": { "name": "Cất", "controlType": "Button" }
+        "save": { "name": "Cất", "controlType": "Button" },
+        "cancel": { "name": "Hủy bỏ", "controlType": "Button" }
       },
       "settings": { "openKey": "F9" }
     },

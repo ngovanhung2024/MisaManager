@@ -43,6 +43,8 @@ public sealed record Scenario
     public int SaveBusyMilliseconds { get; init; }
     /// <summary>With the editor kept open after Cất, Cất stays enabled; only "Bỏ ghi" shows the voucher was posted.</summary>
     public bool SaveKeepsCatEnabled { get; init; }
+    /// <summary>The "Địa chỉ" box of "Thêm Khách hàng" (organisation) refuses input, so the tool fails before the dialog's Cất.</summary>
+    public bool NewCustomerAddressReadOnly { get; init; }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {

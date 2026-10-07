@@ -401,7 +401,7 @@ public sealed class VoucherWindow : Window, IGridSource
     {
         if (saved || header["customer"].Length > 0) return;
         FakeLog.Write("F9 new customer");
-        var dialog = new NewCustomerWindow(profile, store) { Owner = main };
+        var dialog = new NewCustomerWindow(profile, store, scenario) { Owner = main };
         if (dialog.ShowDialog() != true || dialog.Created is not { } customer) return;
         // Like R20, "Cất" in the dialog selects the new customer on the voucher.
         CommitField("customer", customer.Code);
