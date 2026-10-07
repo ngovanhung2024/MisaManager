@@ -1334,7 +1334,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             if (context.NativeValues?.GetValueOrDefault("voucher_number") is not { Length: > 0 } voucher)
                 return new(true, WorkflowStatus.Discarded, Frame(await input.CaptureAsync(token)),
                     $"Lần chạy trước của hóa đơn {number} dừng trước khi có chứng từ; chứng từ đã đóng.");
-            var sales = await BindSales(context, token, activate: false);
+            // Reuse the window bound without the profile-revision guard; BindSales would re-apply it.
+            var sales = await input.TryBindWorkflowScopeAsync(window, profile.SalesScopeId, null, token)
+                ?? throw new AutomationException("SALES_SURFACE_MISSING", "Mở màn hình Bán hàng của dữ liệu đã chọn.");
             var register = await input.ReadCompleteTableAsync(sales, profile.SalesGridId, SalesFinishedColumns(), token);
             var saved = register.Rows.Any(row =>
                 Match(voucher, row[profile.SalesColumns["voucher_number"]], NativeValueKind.Exact)
