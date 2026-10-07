@@ -307,4 +307,11 @@ public sealed class CompanyRedactionTests
         // Invoice data (buyers) is kept.
         Assert.Contains("CÔNG TY CỔ PHẦN DỆT MAY HUẾ", redacted);
     }
+
+    [Theory]
+    [InlineData("Lê Thị Hương", PartyKind.Unspecified, true)]
+    [InlineData("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", PartyKind.Unspecified, false)]
+    [InlineData("Nguyễn Văn A", PartyKind.Organization, false)]
+    public void IndividualBuyerIsAPersonNotAnOrganization(string name, PartyKind kind, bool individual)
+        => Assert.Equal(individual, BuyerCodes.IsIndividual(new Party(name, "046172000663", "", "", ValuePresence.Provided, kind)));
 }

@@ -39,6 +39,10 @@ public sealed record Scenario
     public bool UserSwitchesTabs { get; init; }
     /// <summary>The first "Đóng" after Cất is swallowed (a stray user click took it).</summary>
     public bool CloseSwallowedOnceAfterSave { get; init; }
+    /// <summary>MISA is busy posting right after Cất: the UI thread stops answering (UIA times out) for this long.</summary>
+    public int SaveBusyMilliseconds { get; init; }
+    /// <summary>With the editor kept open after Cất, Cất stays enabled; only "Bỏ ghi" shows the voucher was posted.</summary>
+    public bool SaveKeepsCatEnabled { get; init; }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {

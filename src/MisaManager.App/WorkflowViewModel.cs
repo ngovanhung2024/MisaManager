@@ -170,6 +170,19 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public bool IsHeld(InvoiceDocument invoice) => HoldIssues(invoice).Count > 0;
 
+    /// <summary>Why the latest run left the invoice unfinished (no MISA customer code yet); empty otherwise.</summary>
+    public IReadOnlyList<ImportIssue> UnfinishedIssues(InvoiceDocument invoice)
+    {
+        var latest = History.FirstOrDefault(run => run.Invoice.Fingerprint == invoice.Fingerprint);
+        if (latest is null || IsDone(invoice) || !RunOutcome.IsUnfinished(latest.Snapshot)) return Array.Empty<ImportIssue>();
+        return new[]
+        {
+            new ImportIssue(BuyerCodes.MissingCode, IssueSeverity.Blocking, latest.Snapshot.LastMessage ?? RunOutcome.UnfinishedLabel,
+                InvoiceId: invoice.InvoiceId,
+                Resolution: "Tạo khách hàng trong MISA, xuất lại danh sách khách hàng rồi nạp lại ở menu •••, hoặc ghi mã vào cột Mã khách hàng của Excel; sau đó chạy lại.")
+        };
+    }
+
     /// <summary>Raised when the set of invoices ticked for the next run changes.</summary>
     public event EventHandler? CheckedChanged;
     public int CheckedCount => InvoiceQueue.Count(invoice => checkedFingerprints.Contains(invoice.Fingerprint));
@@ -323,6 +336,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var mismatched = 0;
         var skipped = 0;
         var held = 0;
+        var unfinishedNumbers = new List<string>();
         var blockedNumbers = new List<string>();
         var failedNumbers = new List<string>();
         var consecutiveFailures = 0;
@@ -464,7 +478,11 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 }
                 Status = response.Message;
                 NotifyWorkflowChanged();
-                if (response.Status != "completed")
+                // No customer code yet: nothing was typed, so the invoice is recorded as unfinished, not raised as an error.
+                var unfinished = response.Status != "completed" && !stopRequested
+                    && services.Workflow.LastLiveRun is { MisaClean: true } skippedRun
+                    && skippedRun.Context.Invoice.Fingerprint == fingerprint && RunOutcome.IsUnfinished(skippedRun.Context.Snapshot);
+                if (response.Status != "completed" && !unfinished)
                 {
                     performanceOutcome = response.Status;
                     if (!stopRequested) RaiseError(response.Message, Serialize(response.Data));
@@ -474,6 +492,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 {
                     History = [finished, .. History.Where(run => run.Snapshot.RunId != finished.Snapshot.RunId)];
                     NotifyWorkflowChanged();
+                }
+                if (unfinished)
+                {
+                    handledInBatch.Add(fingerprint);
+                    unfinishedNumbers.Add(invoice.Identity.Number);
+                    Status = $"{position} · chưa hoàn thành (chưa có mã khách hàng), đã lưu hồ sơ; chuyển sang hóa đơn kế tiếp.";
+                    NotifyWorkflowChanged();
+                    continue;
                 }
                 // A completed run (saved, verified discard, or number already in MISA) advances the queue.
                 // A failed invoice that left MISA clean is set aside so one bad invoice does not block the
@@ -523,6 +549,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (existing > 0) parts.Add($"{existing} đã tồn tại trong MISA");
                     if (skipped > 0) parts.Add($"{skipped} bỏ qua (đã nhập trước đó)");
                     if (held > 0) parts.Add($"{held} tạm hoãn (mặt hàng trùng tên nhiều mã)");
+                    if (unfinishedNumbers.Count > 0)
+                        parts.Add($"{unfinishedNumbers.Count} chưa hoàn thành, chưa có mã khách hàng ({string.Join(", ", unfinishedNumbers.Take(5))})");
                     if (failedNumbers.Count > 0) parts.Add($"{failedNumbers.Count} lỗi, đã bỏ chứng từ, cần xem lại ({string.Join(", ", failedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
                     Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy trong danh sách đã tick."
@@ -930,6 +958,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                             ErrorHints.For(snapshot.Status == WorkflowStatus.SaveUncertain ? "SAVE_UNCERTAIN" : "INPUT_UNCERTAIN")!);
                     case WorkflowStatus.Blocked:
                         return new(ToolStateKind.NeedsAction, ToolState.LabelOf(ToolStateKind.NeedsAction), message, Hint());
+                    case WorkflowStatus.Failed when RunOutcome.IsUnfinished(snapshot):
+                        return new(ToolStateKind.NeedsAction, RunOutcome.UnfinishedLabel, message, Hint());
                     case WorkflowStatus.Failed:
                         return new(ToolStateKind.Error, ToolState.LabelOf(ToolStateKind.Error), message, Hint());
                     case WorkflowStatus.Paused:

@@ -38,6 +38,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private bool closeSwallowed;
     private readonly TextBox subtotal, discount, taxTotal, grandTotal;
     private readonly Button save;
+    private readonly Button post;
     private readonly List<Button> readOnlyCommands = [];
     private IReadOnlyList<GridColumn> itemLayout = [];
     private IReadOnlyList<GridColumn> taxLayout = [];
@@ -87,7 +88,7 @@ public sealed class VoucherWindow : Window, IGridSource
         Command("Trước", false); Command("Sau", false);
         Command("Thêm", false, editOnly: true); Command("Sửa", false, editOnly: true); Command("Sửa nhanh", false);
         save = Command(profile.Caption("sales_voucher", "save"), true, Save);
-        Command("Xóa", false); Command("Hoãn", true); Command("Ghi sổ", false); Command("Lập phiếu xuất", false);
+        Command("Xóa", false); Command("Hoãn", true); post = Command("Ghi sổ", false); Command("Lập phiếu xuất", false);
         Command("Nạp", false); Command("Tiện ích", true); Command("Mẫu", true); Command("In", false);
         Command("Gửi email, Zalo", false); Command("Giúp", true);
         Command(profile.Caption("sales_voucher", "close"), true, CloseVoucher);
@@ -447,8 +448,16 @@ public sealed class VoucherWindow : Window, IGridSource
         UserMouse.Saved = true;
         dirty = false;
         main.RefreshList();
+        if (scenario.SaveBusyMilliseconds > 0)
+        {
+            FakeLog.Write($"MISA bận {scenario.SaveBusyMilliseconds} ms sau Cất");
+            Thread.Sleep(scenario.SaveBusyMilliseconds);
+        }
         if (scenario.SaveClosesEditor) { Close(); return; }
-        save.IsEnabled = false;
+        save.IsEnabled = scenario.SaveKeepsCatEnabled;
+        // R20 turns "Ghi sổ" into an enabled "Bỏ ghi" once the voucher is saved and posted.
+        post.Content = profile.Caption("sales_voucher", "unpost");
+        post.IsEnabled = true;
         foreach (var command in readOnlyCommands) command.IsEnabled = true;
         foreach (var (box, _) in bound) box.IsReadOnly = true;
         grid.ShowInsertionRow = false;

@@ -16,7 +16,7 @@ public sealed partial class NativeWorkflowGateway
 
     private string BuyerCode(WorkflowContext context)
         => BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
-            ?? throw new AutomationException("CUSTOMER_CODE_MISSING",
+            ?? throw new AutomationException(BuyerCodes.MissingCode,
                 $"Hóa đơn {context.Invoice.Identity.Number}: chưa có mã khách hàng cho '{context.Invoice.Buyer.Name}'. "
                 + "Ghi mã vào cột Mã khách hàng của file Excel, hoặc nạp danh mục khách hàng/nhà cung cấp ở menu ••• rồi chạy lại.");
 
@@ -135,7 +135,7 @@ public sealed partial class NativeWorkflowGateway
         try { resolved = BuyerCodes.Resolve(invoice.Buyer, PartyCatalog); }
         catch (AutomationException) { resolved = null; }
         var expectedCode = resolved?.Code;
-        if (taxCode.Length > 0) values.Add(CustomerTaxComparison(taxCode, expectedCode, read.Tax));
+        if (taxCode.Length > 0) values.Add(CustomerTaxComparison(taxCode, expectedCode, read.Tax, BuyerCodes.IsIndividual(invoice.Buyer)));
         // R20 exposes the selected customer's internal GUID instead of its code; the name identifies it then.
         var customer = receipt["customer"];
         if (expectedCode is not null && !Guid.TryParse(customer.Value, out _))

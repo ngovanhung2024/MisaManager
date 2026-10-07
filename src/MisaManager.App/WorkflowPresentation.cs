@@ -42,6 +42,12 @@ public static class RunOutcome
     public const string StoppedDiscardLabel = "Tạm dừng · đã bỏ chứng từ dở";
     /// <summary>Listed in the MISA sales export loaded by "Bỏ hóa đơn đã ghi sổ".</summary>
     public const string PostedLabel = "Đã ghi sổ";
+
+    /// <summary>Stopped before any input because no MISA customer code is known; not an error, the invoice waits for its code.</summary>
+    public static bool IsUnfinished(WorkflowSnapshot snapshot)
+        => snapshot.Status == WorkflowStatus.Failed && snapshot.LastErrorCode == BuyerCodes.MissingCode;
+    public const string UnfinishedLabel = "Chưa hoàn thành";
+    public const string UnfinishedColor = "#B45309";
 }
 
 /// <param name="SourceOnlyMisa">The voucher's invoice is not in the loaded Excel: only the MISA side exists, nothing is compared.</param>
@@ -82,6 +88,7 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
         : Context.Snapshot.Status == WorkflowStatus.Discarded && Context.Reconciliations?.Any(attempt => attempt.Result is { Matched: false }) == true
         ? "Lệch · Đã bỏ" : StatusLabel(Context.Snapshot);
     public string StatusColor => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingColor
+        : RunOutcome.IsUnfinished(Context.Snapshot) ? RunOutcome.UnfinishedColor
         : RunOutcome.IsStoppedDiscard(Context.Snapshot) ? "#617B70" : Context.Snapshot.Status switch
     {
         WorkflowStatus.Saved => "#15803D",
@@ -93,6 +100,7 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
     };
     public static string StatusLabel(WorkflowSnapshot snapshot)
         => RunOutcome.IsExisting(snapshot) ? RunOutcome.ExistingLabel
+            : RunOutcome.IsUnfinished(snapshot) ? RunOutcome.UnfinishedLabel
             : RunOutcome.IsStoppedDiscard(snapshot) ? RunOutcome.StoppedDiscardLabel : StatusLabel(snapshot.Status);
     public static string StatusLabel(WorkflowStatus status) => status switch
     {
@@ -331,7 +339,8 @@ public partial class MainWindow
         if (!failed) return;
         var message = snapshot!.LastMessage ?? "Không có mô tả lỗi.";
         var code = snapshot.LastErrorCode ?? ErrorHints.FindCode(snapshot.ErrorChain, message);
-        ProfileErrorTitle.Text = $"Lỗi lúc {snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss}" + (code is null ? "" : " · " + code);
+        ProfileErrorTitle.Text = (RunOutcome.IsUnfinished(snapshot) ? RunOutcome.UnfinishedLabel : "Lỗi")
+            + $" lúc {snapshot.UpdatedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss}" + (code is null ? "" : " · " + code);
         ProfileErrorMessage.Text = message;
         var details = ((App)Application.Current).Services.ErrorDetails(context!);
         ProfileErrorDetails.Text = ErrorPrompt.DiagnosticSummary(message, details, []);

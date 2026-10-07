@@ -358,6 +358,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         sent = true;
                         string? duplicate = null;
                         var taxPromptAnswered = false;
+                        var readRetries = 0;
                         for (var attempt = 0; ; attempt++)
                         {
                             try
@@ -371,6 +372,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                             }
                             catch (Exception error) when (error is not OperationCanceledException && !token.IsCancellationRequested)
                             {
+                                // MISA can stop answering UIA for a moment while it posts the voucher. Only reads
+                                // are repeated (prompt check, saved proof); Cất itself is never sent again.
+                                if (IsTransientRead(error) && readRetries++ < SaveReadRetries)
+                                {
+                                    await Task.Delay(1000, token);
+                                    continue;
+                                }
                                 // A slow prompt makes the editor modal, so the saved-proof reads fail first
                                 // (as AutomationException or a raw UIA/COM error); look for it before failing.
                                 var late = await AnswerSavePromptsAsync(editorHandle, 3000, token);
@@ -413,6 +421,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                                 break;
                             await BindEditor(context, token);
                             await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
+                            if (await ShowsUnpostAsync(token))
+                                throw new AutomationException("DISCARD_SAVE_PROOF_PRESENT", "Editor shows Bỏ ghi (voucher posted); verify Saved instead of discarding.");
                             await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), profile.SaveVoucher, true, token);
                         }
                         if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
@@ -962,9 +972,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
         // Invoice tab first: entry ends there, and Cất needs the receipt tab, so each header tab is selected once.
         await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
-        if (taxField is { } tax && !taxOnReceipt) values.Add(await CompareCustomerTaxAsync(tax.Expected, BuyerCode(context), token));
+        var individual = BuyerCodes.IsIndividual(context.Invoice.Buyer);
+        if (taxField is { } tax && !taxOnReceipt) values.Add(await CompareCustomerTaxAsync(tax.Expected, BuyerCode(context), individual, token));
         await CompareFields(profile.ReceiptTab, [.. receiptFields]);
-        if (taxField is { } receiptTax && taxOnReceipt) values.Add(await CompareCustomerTaxAsync(receiptTax.Expected, BuyerCode(context), token));
+        if (taxField is { } receiptTax && taxOnReceipt) values.Add(await CompareCustomerTaxAsync(receiptTax.Expected, BuyerCode(context), individual, token));
         // BindEditor/ValidateDocument require the exact domestic cash editor.
         // R20 has no currency control on this VND-only surface.
         values.Add(new("currency", context.Invoice.Currency, "VND",
@@ -1044,14 +1055,14 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var window = BindTarget(context, activate: false);
         if (afterSave && await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is not null) taxPromptAnswered = true;
         // R20 closes the editor itself only after a successful Save; an unsaved editor never closes silently.
-        if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+        if (!await EditorExistsAsync(window, token))
         {
             await BindSales(context, token, activate: false);
             return;
         }
         var savedEditor = await BindEditor(context, token);
         if (!afterSave) await VerifyVoucherIdentity(context, savedEditor, token);
-        // Saved proof without reading the sales list: the voucher turns read-only (Cất disabled).
+        // Saved proof without reading the sales list: "Bỏ ghi" appears, or the voucher turns read-only (Cất disabled).
         await NativeWait.UntilAsync(async () =>
             {
                 // A late tax-difference prompt keeps Cất enabled until it is answered.
@@ -1060,10 +1071,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     taxPromptAnswered = true;
                     return false;
                 }
-                try { await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token); return true; }
-                catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
-            }, disabled => disabled, "SAVE_UNCERTAIN",
-            "Nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
+                return await ShowsSavedAsync(token);
+            }, saved => saved, "SAVE_UNCERTAIN",
+            "Chưa thấy nút Bỏ ghi và nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
         if (taxPromptAnswered)
         {
             // "Không" must have kept the source tax; MISA's "Có" would have moved the difference into line 1.
@@ -1084,13 +1094,39 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             catch (AutomationException error) when (error.Code == "EDITOR_STILL_OPEN" && attempt < 2)
             {
                 // A stray user click can swallow Đóng. Closing again is not a data input, but only
-                // while the same voucher still proves saved (Cất disabled); Cất itself is never resent.
+                // while the same voucher still proves saved (Bỏ ghi / Cất disabled); Cất itself is never resent.
                 var editor = await BindEditor(context, token);
                 await VerifyVoucherIdentity(context, editor, token);
-                await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token);
+                if (!await ShowsSavedAsync(token))
+                    throw new AutomationException("COMMAND_STATE_MISMATCH", "Chứng từ chưa thể hiện đã Cất; không bấm Đóng lại.");
                 Trace.TraceInformation("Đóng chưa đóng editor đã Cất; bấm lại Đóng lần " + (attempt + 2));
             }
         }
+    }
+
+    private const int SaveReadRetries = 5;
+    private static readonly string[] TransientReadCodes = ["NATIVE_READ_TIMEOUT", "NATIVE_ELEMENT_UNAVAILABLE"];
+
+    private static bool IsTransientRead(Exception error)
+        => error is AutomationException { InputMayHaveBeenSent: false } fault && TransientReadCodes.Contains(fault.Code);
+
+    // A completed UIA read that timed out says nothing about the editor; poll until MISA answers.
+    private Task<bool> EditorExistsAsync(WindowIdentity window, CancellationToken token)
+        => NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token), _ => true,
+            "NATIVE_READ_TIMEOUT", "MISA chưa trả lời khi kiểm tra chứng từ sau Cất.", token, timeoutMilliseconds: 30000);
+
+    private async Task<bool> ShowsUnpostAsync(CancellationToken token)
+    {
+        if (profile.UnpostVoucher is not { } unpost) return false;
+        try { await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), unpost, true, token); return true; }
+        catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
+    }
+
+    private async Task<bool> ShowsSavedAsync(CancellationToken token)
+    {
+        if (await ShowsUnpostAsync(token)) return true;
+        try { await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token); return true; }
+        catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
     }
 
     private (string Key, string Expected, NativeValueKind Kind)[] CustomerFields(WorkflowContext context) =>
@@ -1113,8 +1149,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     /// when this R20 build shows no control matching the profile selector, the customer list (exported from MISA) is
     /// the proof: the verified customer code must carry the source MST there. A readable MISA value always decides.
     /// </summary>
-    private async Task<ValueComparison> CompareCustomerTaxAsync(string expected, string? customerCode, CancellationToken token)
-        => CustomerTaxComparison(expected, customerCode, await ReadCustomerTaxAsync(token));
+    private async Task<ValueComparison> CompareCustomerTaxAsync(string expected, string? customerCode, bool individual, CancellationToken token)
+        => CustomerTaxComparison(expected, customerCode, await ReadCustomerTaxAsync(token), individual);
 
     private async Task<Readback?> ReadCustomerTaxAsync(CancellationToken token)
     {
@@ -1130,12 +1166,26 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         return read;
     }
 
-    private ValueComparison CustomerTaxComparison(string expected, string? customerCode, Readback? read)
+    /// <param name="individual">
+    /// The buyer is a person: MISA customers for individuals are often kept without an MST (the invoice carries a personal
+    /// ID), so an empty MISA MST is accepted for them. A different, non-empty MST still mismatches.
+    /// </param>
+    private ValueComparison CustomerTaxComparison(string expected, string? customerCode, Readback? read, bool individual)
     {
+        var entry = PartyCatalog?.FindByCode(customerCode);
         if (read is not null)
-            return new("customer_tax", expected, read.Value,
-                PartyCatalogStore.TaxKey(expected) == PartyCatalogStore.TaxKey(read.Value), read.Source);
-        var listed = PartyCatalog?.FindByCode(customerCode)?.TaxCode ?? "";
+        {
+            if (PartyCatalogStore.TaxKey(expected) == PartyCatalogStore.TaxKey(read.Value))
+                return new("customer_tax", expected, read.Value, true, read.Source);
+            // An MST in the customer list means MISA has one that is not filled in yet; only an MST-less customer passes.
+            var withoutMst = individual && PartyCatalogStore.TaxKey(read.Value).Length == 0
+                && PartyCatalogStore.TaxKey(entry?.TaxCode).Length == 0;
+            return new("customer_tax", expected, read.Value, withoutMst,
+                withoutMst ? read.Source + " (cá nhân: MISA không lưu MST)" : read.Source);
+        }
+        var listed = entry?.TaxCode ?? "";
+        if (individual && entry is not null && PartyCatalogStore.TaxKey(listed).Length == 0)
+            return new("customer_tax", expected, "", true, $"PartyCatalog:{customerCode} (cá nhân: MISA không lưu MST)");
         return new("customer_tax", expected, listed.Length == 0 ? null : listed,
             listed.Length > 0 && PartyCatalogStore.TaxKey(expected) == PartyCatalogStore.TaxKey(listed),
             $"PartyCatalog:{customerCode} (MISA không hiện ô MST theo profile)");
