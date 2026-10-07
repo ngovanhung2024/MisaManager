@@ -159,20 +159,49 @@ public sealed partial class PartyCatalogStore
     }
 
     /// <summary>
-    /// Code for a buyer the tool creates in MISA: an organisation's MST (unique by law, so a repeated attempt is refused by
-    /// MISA as a duplicate code instead of creating a second customer); otherwise the initials of the name, like the
-    /// accountants' own codes (HTT = Hoàng Trọng Tiếp). A number is appended when the code is already used.
+    /// Code for a buyer the tool creates in MISA, following the accountants' own lists (never the MST): an organisation
+    /// gets the distinctive part of its name, without legal form or line of business, in upper case with diacritics
+    /// (CÔNG TY TNHH MỘT THÀNH VIÊN LINH NGỌC = LINH NGỌC); a person gets initials (HTT = Hoàng Trọng Tiếp).
+    /// A number is appended when the code is already used. The code depends only on the buyer and the catalog, so a
+    /// repeated attempt after an unclear Cất gets the same code and MISA refuses it as a duplicate.
     /// </summary>
     public string NewCustomerCode(Party buyer)
     {
-        var tax = new string((buyer.TaxCode ?? "").Normalize(NormalizationForm.FormKC)
-            .Where(c => char.IsLetterOrDigit(c) || c == '-').Select(char.ToUpperInvariant).ToArray()).Trim('-');
-        var stem = !BuyerCodes.IsIndividual(buyer) && TaxKey(tax).Length >= 10 ? tax : Initials(buyer.Name);
+        var stem = BuyerCodes.IsIndividual(buyer) ? Initials(buyer.Name) : OrganisationCode(buyer.Name);
         if (stem.Length == 0) stem = "KH";
+        // Multi-word codes take " 2" like the lists (TH PHÚ XUÂN 2); initials take "2" (LTH2).
+        var separator = stem.Contains(' ') ? " " : "";
         if (FindByCode(stem) is null) return stem;
         for (var number = 2; ; number++)
-            if (FindByCode(stem + number.ToString(CultureInfo.InvariantCulture)) is null)
-                return stem + number.ToString(CultureInfo.InvariantCulture);
+            if (FindByCode(stem + separator + number.ToString(CultureInfo.InvariantCulture)) is null)
+                return stem + separator + number.ToString(CultureInfo.InvariantCulture);
+    }
+
+    // Leading words that name the kind of organisation, its line of business or an administrative unit (ASCII-folded).
+    private static readonly string[][] OrganisationPrefixes = new[]
+    {
+        "CONG TY", "CTY", "TONG CONG TY", "CO PHAN", "CP", "TRACH NHIEM HUU HAN", "TNHH", "MOT THANH VIEN", "MTV",
+        "HAI THANH VIEN TRO LEN", "NHA NUOC", "DOANH NGHIEP TU NHAN", "DNTN", "DOANH NGHIEP", "HOP TAC XA", "HTX",
+        "CHI NHANH", "TAP DOAN", "TRUNG TAM", "VUON QUOC GIA", "VIEN", "TRUONG", "MAM NON", "TIEU HOC",
+        "TRUNG HOC CO SO", "TRUNG HOC PHO THONG", "THCS", "THPT", "UBND", "UY BAN NHAN DAN", "NGAN HANG", "KHO BAC",
+        "BAN QUAN LY", "SU NGHIEP CONG", "DICH VU", "NONG NGHIEP", "LAM NGHIEP", "SAN XUAT", "THUONG MAI", "XAY DUNG",
+        "XAY LAP", "DAU TU", "KINH DOANH", "VAT TU", "XUAT NHAP KHAU", "PHAT TRIEN", "SXTM", "TMDV", "VA",
+        "XA", "THI XA", "THI TRAN", "HUYEN", "PHUONG", "QUAN", "TINH", "THANH PHO", "TP"
+    }.Select(phrase => phrase.Split(' ')).OrderByDescending(words => words.Length).ToArray();
+
+    private static string OrganisationCode(string? name)
+    {
+        var words = CodeSeparators().Split(Brackets().Replace((name ?? "").Normalize(NormalizationForm.FormC), " ").ToUpperInvariant())
+            .Where(word => word.Length > 0).ToArray();
+        var folded = words.Select(word => BuyerCodes.Ascii(word).Replace(" ", "", StringComparison.Ordinal)).ToArray();
+        var start = 0;
+        while (OrganisationPrefixes.FirstOrDefault(phrase => start + phrase.Length <= words.Length
+                   && phrase.Select((word, index) => folded[start + index] == word).All(same => same)) is { } matched)
+            start += matched.Length;
+        var rest = words[start..];
+        if (rest.Length == 0) return Initials(name);
+        var code = string.Join(' ', rest);
+        return rest.Length <= 3 && code.Length <= 20 ? code : Initials(code);
     }
 
     private static string Initials(string? name)
@@ -254,6 +283,10 @@ public sealed partial class PartyCatalogStore
 
     [GeneratedRegex(@"[^\p{L}\p{Mn}\p{Nd}]+", RegexOptions.CultureInvariant)]
     private static partial Regex Separators();
+
+    // Like Separators but keeps "&" inside a word (A&V).
+    [GeneratedRegex(@"[^\p{L}\p{Mn}\p{Nd}&]+", RegexOptions.CultureInvariant)]
+    private static partial Regex CodeSeparators();
 
     private sealed class Index
     {
