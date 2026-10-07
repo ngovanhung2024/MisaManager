@@ -16,7 +16,7 @@ public sealed class WorkflowProfile
         "issued_date", "number", "series", "currency", "payment", "voucher_number", "subtotal", "tax_total", "grand_total"];
     private static readonly string[] RequiredColumns = ["code", "name", "unit", "debit_account", "quantity", "unit_price", "amount", "tax_rate", "tax_amount"];
     private static readonly string[] RequiredSalesColumns = ["voucher_number", "number", "customer", "subtotal", "voucher_date"];
-    private static readonly string[] NonFieldElements = ["save", "close"];
+    private static readonly string[] NonFieldElements = ["save", "close", "unpost"];
 
     private WorkflowProfile(ProfileDocument document, IReadOnlyDictionary<string, ScreenProfile> screens)
     {
@@ -35,8 +35,9 @@ public sealed class WorkflowProfile
         OpenVoucher = list.Element("add").Selector;
         SaveVoucher = voucher.Element("save").Selector;
         DiscardVoucher = voucher.Element("close").Selector;
-        foreach (var button in new[] { OpenVoucher, SaveVoucher, DiscardVoucher })
-            if (button.ControlType != "Button") throw new InvalidDataException("Nút chứng từ (add/save/close) phải có controlType Button.");
+        UnpostVoucher = voucher.Elements.TryGetValue("unpost", out var unpost) ? unpost.Selector : null;
+        foreach (var button in new[] { OpenVoucher, SaveVoucher, DiscardVoucher, UnpostVoucher ?? SaveVoucher })
+            if (button.ControlType != "Button") throw new InvalidDataException("Nút chứng từ (add/save/close/unpost) phải có controlType Button.");
         ReceiptTab = voucher.Tab("receipt");
         InvoiceTab = voucher.Tab("invoice");
         ItemTab = voucher.Tab("items");
@@ -89,6 +90,8 @@ public sealed class WorkflowProfile
     public NativeSelector OpenVoucher { get; }
     public NativeSelector SaveVoucher { get; }
     public NativeSelector DiscardVoucher { get; }
+    /// <summary>"Bỏ ghi": enabled only once MISA has saved and posted the voucher; null when the profile has none.</summary>
+    public NativeSelector? UnpostVoucher { get; }
     public NativeSelector ItemNewCode { get; }
     public NativeSelector ItemNewName { get; }
     public NativeSelector ItemNewUnit { get; }

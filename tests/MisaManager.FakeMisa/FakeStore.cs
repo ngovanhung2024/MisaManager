@@ -21,6 +21,7 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
         new("HT", "TRUNG TÂM DỊCH VỤ NÔNG NGHIỆP THỊ XÃ HƯƠNG THỦY", "05 Hà Thế Hạnh, Phường Tứ Hạ", "3301641845"),
         new("KHAC", "KHÁC", "", ""),
         new("KL", "Khách lẻ", "", ""),
+        new("LÊ THỊ HƯƠNG", "LÊ THỊ HƯƠNG", "Thôn Phú Thuận, Xã Nam Đông", ""),
         new("NTD", "BÁN CHO NGƯỜI TIÊU DÙNG", "", "")
     ];
 

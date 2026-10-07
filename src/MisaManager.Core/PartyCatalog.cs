@@ -212,6 +212,8 @@ public sealed record BuyerCode(string Code, string Source, string? CatalogName =
 public static class BuyerCodes
 {
     public const string ConsumerCode = "NTD";
+    /// <summary>No MISA customer code is known for the buyer: the invoice is left unfinished, not reported as an error.</summary>
+    public const string MissingCode = "CUSTOMER_CODE_MISSING";
     /// <summary>MISA customer used for buyers who gave no details (accountants' convention in the posted vouchers).</summary>
     public const string RetailCustomerName = "Khách lẻ";
     private static readonly string ConsumerKey = TextKey.LettersAndDigits("BÁN CHO NGƯỜI TIÊU DÙNG");
@@ -236,6 +238,10 @@ public static class BuyerCodes
             .Select(word => Plain(word)).Where(word => word.Length > 0)) + " ";
         return OrganizationWords.Any(phrase => words.Contains(" " + phrase + " ", StringComparison.Ordinal));
     }
+
+    /// <summary>A person rather than an organisation; individuals may carry no MST.</summary>
+    public static bool IsIndividual(Party buyer)
+        => buyer.Kind != PartyKind.Organization && !LooksLikeOrganization(buyer.Name);
 
     /// <summary>
     /// The Excel code wins; consumer sales always use NTD; anonymous buyers use the catalog's "Khách lẻ"; otherwise the

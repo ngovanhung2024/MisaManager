@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-imported-item-catalog-priority-20261005",
+  "revision": "r20-unpost-save-proof-20261007",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -32,6 +32,7 @@
       "tabs": { "receipt": "Phiếu thu", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế" },
       "elements": {
         "save": { "name": "Cất", "controlType": "Button" },
+        "unpost": { "name": "Bỏ ghi", "controlType": "Button", "required": false, "description": "Chỉ hiện (bật) sau khi Cất xong: bằng chứng chứng từ đã ghi sổ" },
         "close": { "name": "Đóng", "controlType": "Button" },
         "customer": { "automationId": "cboAccountObjectID", "description": "Mã khách hàng" },
         "customer_name": { "automationId": "txtAccountObjectName", "description": "Tên khách hàng" },

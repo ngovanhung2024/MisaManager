@@ -439,6 +439,37 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (saved=False", StringComparison.Ordinal)));
     }, new FakeScenario(SaveClosesEditor: false, CloseSwallowedOnceAfterSave: true));
 
+    // Invoice 1544 (0.2.97): MISA stopped answering UIA right after Cất; the editor check timed out and the run
+    // ended SaveUncertain although the voucher was saved.
+    [Fact]
+    public Task SaveWhileMisaStopsAnsweringIsConfirmedWithoutASecondCat() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1544", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 21, 10_476.19m, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Single(misa.State().Vouchers);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("MISA bận", log, StringComparison.Ordinal);
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (", StringComparison.Ordinal)));
+    }, new FakeScenario(SaveBusyMilliseconds: 4000));
+
+    [Fact]
+    public Task SaveIsProvenByBoGhiWhileCatStaysEnabled() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1545", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Single(misa.State().Vouchers);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (", StringComparison.Ordinal)));
+    }, new FakeScenario(SaveClosesEditor: false, SaveKeepsCatEnabled: true));
+
     [Fact]
     public Task TaxRoundingPromptIsAnsweredNoAndSourceTaxIsKept() => WithFakeAsync(async (misa, harness, token) =>
     {
@@ -555,6 +586,39 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Empty(misa.State().Vouchers);
     }, new FakeScenario(CustomerTaxUnlisted: true),
         customers: [new("A&V", "CÔNG TY CỔ PHẦN ĐẦU TƯ VÀ PHÁT TRIỂN A&V", "0100000000")]);
+
+    // Invoice 1454 (0.2.97): the buyer's personal ID is on the invoice, but MISA keeps this individual customer without MST.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task IndividualCustomerKeptWithoutMstInMisaIsAccepted(bool taxControlUnlisted) => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var buyer = new Party("Lê Thị Hương", "046172000663", "Thôn Phú Thuận, Xã Nam Đông", "", ValuePresence.Provided);
+        var invoice = Invoices.Build(TempDirectory(misa), "1454", buyer,
+            Invoices.Line(0, "HH_08", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "kg", 500, 15_428.57m, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var tax = Assert.Single(result.Verification.Comparison!.Values, value => value.Field == "customer_tax");
+        Assert.True(tax.Matched);
+        Assert.Contains("cá nhân", tax.Source, StringComparison.Ordinal);
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(("LÊ THỊ HƯƠNG", ""), (voucher.CustomerCode, voucher.CustomerTaxCode));
+    }, new FakeScenario(CustomerTaxUnlisted: taxControlUnlisted), customers: [new("LÊ THỊ HƯƠNG", "LÊ THỊ HƯƠNG", "")]);
+
+    [Fact]
+    public Task OrganizationKeptWithoutMstInMisaIsNotSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var buyer = new Party("KHÁC", "3300999999", "", "KHAC", ValuePresence.Provided, PartyKind.Organization);
+        var invoice = Invoices.Build(TempDirectory(misa), "1455", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome is "discarded" or "failed", Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+    }, customers: [new("KHAC", "KHÁC", "")]);
 
     [Fact]
     public Task UnfinishedRunClosedByTheUserNoLongerBlocksTheNextInvoice() => WithFakeAsync(async (misa, harness, token) =>
