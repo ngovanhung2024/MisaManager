@@ -576,12 +576,12 @@ public sealed class SalesVoucherTests : UiTest
         Assert.True(one.Outcome == "saved", Describe(one));
         Assert.True(two.Outcome == "saved", Describe(two));
         var created = Assert.Single(misa.State().CreatedCustomers ?? []);
-        Assert.Equal(new FakeCustomer("3301747760", buyer.Name, buyer.Address, "3301747760"), created);
+        Assert.Equal(new FakeCustomer("PHÚ LỘC", buyer.Name, buyer.Address, "3301747760"), created);
         Assert.All(misa.State().Vouchers, voucher =>
-            Assert.Equal(("3301747760", buyer.Name, "3301747760"), (voucher.CustomerCode, voucher.CustomerName, voucher.CustomerTaxCode)));
-        Assert.Equal("3301747760", one.Context.NativeValues?.GetValueOrDefault("customer_created"));
+            Assert.Equal(("PHÚ LỘC", buyer.Name, "3301747760"), (voucher.CustomerCode, voucher.CustomerName, voucher.CustomerTaxCode)));
+        Assert.Equal("PHÚ LỘC", one.Context.NativeValues?.GetValueOrDefault("customer_created"));
         Assert.Null(two.Context.NativeValues?.GetValueOrDefault("customer_created"));
-        Assert.Equal(buyer.Address, harness.Parties.FindByCode("3301747760")?.Address);
+        Assert.Equal(buyer.Address, harness.Parties.FindByCode("PHÚ LỘC")?.Address);
     }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
 
     // Report 0.2.103 (invoice 1475): a failure inside "Thêm Khách hàng" left the dialog open, so the voucher could not be discarded.

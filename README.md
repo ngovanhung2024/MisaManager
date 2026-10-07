@@ -154,9 +154,11 @@ mã trong Excel luôn được ưu tiên. Trùng nhiều mã → hóa đơn dừ
 khách hàng của chứng từ, tool nhấn F9 trên ô Khách hàng (tương đương nút **+**) để mở hộp **Thêm Khách hàng**, chọn
 **1. Tổ chức** hoặc **2. Cá nhân** (cá nhân = người mua không mang dấu hiệu tổ chức, xem `BUYER_TAX_OPTIONAL` bên dưới), điền
 Mã, Tên/Họ và tên, Địa chỉ (cột Địa chỉ người mua) và MST (cột MST người mua), đọc lại toàn bộ rồi bấm **Cất** của hộp. MISA
-đưa khách hàng mới vào chứng từ (nếu không, tool gõ mã), sau đó luồng chạy tiếp như bình thường. Quy tắc mã: tổ chức dùng
-**mã số thuế** (`3301747760`, `0100101611-008`); cá nhân (hoặc tổ chức không có MST) dùng **chữ cái đầu** của tên không dấu
-như cách đặt mã hiện có (`Hoàng Trọng Tiếp` → `HTT`); mã đã có trong danh mục thì thêm số (`HTT2`). MST 12 số của cá nhân
+đưa khách hàng mới vào chứng từ (nếu không, tool gõ mã), sau đó luồng chạy tiếp như bình thường. Quy tắc mã theo danh sách
+khách hàng của kế toán (không bao giờ dùng MST): tổ chức dùng **phần tên riêng** viết hoa có dấu, bỏ loại hình và ngành nghề ở
+đầu tên (`CÔNG TY TNHH MỘT THÀNH VIÊN LINH NGỌC` → `LINH NGỌC`, `TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC` → `PHÚ LỘC`);
+phần còn lại dài hơn 3 từ hoặc 20 ký tự thì dùng chữ cái đầu của phần đó. Cá nhân dùng **chữ cái đầu** của tên không dấu
+(`Hoàng Trọng Tiếp` → `HTT`). Mã đã có trong danh mục thì thêm số (`HTT2`, `PHÚ LỘC 2`). MST 12 số của cá nhân
 là số CCCD nên được điền vào ô **Số CMND**, không vào ô Mã số thuế. Mã được ghi vào checkpoint trước khi bấm Cất; vì mã cố
 định theo người mua, nếu kết quả Cất không rõ thì lần chạy sau MISA báo trùng mã (`CUSTOMER_CODE_TAKEN`) thay vì tạo thêm
 khách hàng. Khách hàng đã tạo được lưu trong `party-catalog.json` (mục `created`) để các hóa đơn sau của cùng người mua dùng
