@@ -175,7 +175,7 @@ public sealed class NewCustomerWindow : Window
 /// <summary>MISA's warning when the voucher VAT total differs from the per-rate calculation.</summary>
 public sealed class TaxPromptWindow : Window
 {
-    public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated, bool asLabel = false)
+    public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated, bool asLabel = false, int busyMilliseconds = 0)
     {
         Ui.Id(this, profile.ScopeId("tax_rounding_prompt"));
         Title = "MISA SME 2023";
@@ -195,7 +195,7 @@ public sealed class TaxPromptWindow : Window
         var yes = Ui.Button("Có", width: 80);
         yes.Click += (_, _) => { Adjust = true; Close(); };
         var no = Ui.Button("Không", automationId: profile.Id("tax_rounding_prompt", "no"), width: 80);
-        no.Click += (_, _) => Close();
+        no.Click += (_, _) => { FakeLog.Write("Hộp chênh lệch thuế: bấm Không"); Close(); };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(8) };
         buttons.Children.Add(yes);
         buttons.Children.Add(no);
@@ -204,6 +204,12 @@ public sealed class TaxPromptWindow : Window
         root.Children.Add(buttons);
         root.Children.Add(text);
         Content = root;
+        if (busyMilliseconds > 0)
+            ContentRendered += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                FakeLog.Write($"MISA bận {busyMilliseconds} ms khi hiện hộp chênh lệch thuế");
+                Thread.Sleep(busyMilliseconds);
+            }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     public bool Adjust { get; private set; }

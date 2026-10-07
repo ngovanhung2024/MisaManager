@@ -16,6 +16,8 @@ public sealed record Scenario
     public decimal TaxRoundingDifference { get; init; } = 1;
     /// <summary>Prompt text in a label exposing only Name (no Value/Text pattern), as real MISA's message box does.</summary>
     public bool TaxPromptAsLabel { get; init; }
+    /// <summary>MISA's UI thread stops answering (UIA times out) for this long right after the tax prompt shows.</summary>
+    public int TaxPromptBusyMilliseconds { get; init; }
     /// <summary>Added to every computed line VAT, to simulate MISA rounding differently from the source.</summary>
     public decimal TaxOffset { get; init; }
     /// <summary>Item codes the new-item dialog refuses with "đã tồn tại" (created by another user meanwhile).</summary>

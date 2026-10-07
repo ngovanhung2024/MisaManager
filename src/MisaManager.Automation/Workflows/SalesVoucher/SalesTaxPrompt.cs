@@ -18,8 +18,11 @@ public sealed partial class NativeInputService
     /// difference into the first line and the source tax typed by the tool is kept (the saved totals are read
     /// back afterwards). Returns the prompt text, or null when no such prompt is open.
     /// </summary>
-    public Task<string?> AnswerTaxRoundingPromptAsync(nint editorHandle, CancellationToken token)
-        => dispatcher.RunAsync<string?>(() =>
+    public async Task<string?> AnswerTaxRoundingPromptAsync(nint editorHandle, CancellationToken token)
+    {
+        // Finding the prompt only reads. MISA can stop answering UIA while it shows the prompt; that timeout
+        // must stay a retryable read (NATIVE_READ_TIMEOUT), not an interrupted input that ends SaveUncertain.
+        var found = await dispatcher.RunAsync<TaxPromptTarget?>(() =>
         {
             if (identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
             var prompts = TaxRoundingPrompts(editorHandle);
@@ -27,22 +30,30 @@ public sealed partial class NativeInputService
             if (prompts.Count > 1)
                 throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Có nhiều hộp thông báo chênh lệch tiền thuế cùng lúc; xử lý trong MISA rồi chạy lại.");
             var (dialog, text, noHandle, noElement) = prompts[0];
+            if (noHandle != nint.Zero) return new TaxPromptTarget(dialog, text, noHandle, 0, 0, nint.Zero);
+            var bounds = noElement!.BoundingRectangle;
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+                throw new AutomationException("BOUNDS_UNREADABLE", "Nút Không của hộp thông báo thuế không có vị trí hiển thị.");
+            return new TaxPromptTarget(dialog, text, nint.Zero, bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
+                WorkflowTargetHandle(noElement));
+        }, token);
+        if (found is not { } prompt) return null;
+        return await dispatcher.RunAsync<string?>(() =>
+        {
+            if (identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
+            var dialog = prompt.Dialog;
+            // Closed since the scan: nothing to answer; the caller polls again.
+            if (!PInvoke.IsWindow((HWND)dialog) || !PInvoke.IsWindowVisible((HWND)dialog)) return null;
             token.ThrowIfCancellationRequested();
             MarkWorkflowInput();
             epoch++;
-            if (noHandle != nint.Zero)
+            if (prompt.NoHandle != nint.Zero)
             {
-                if (SendMessageTimeout(noHandle, 0x00F5, 0, nint.Zero, 2, 1000, out _) == nint.Zero)
+                if (SendMessageTimeout(prompt.NoHandle, 0x00F5, 0, nint.Zero, 2, 1000, out _) == nint.Zero)
                     throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được thao tác bấm Không; không bấm lại.", true);
             }
             else
-            {
-                var bounds = noElement!.BoundingRectangle;
-                if (bounds.Width <= 0 || bounds.Height <= 0)
-                    throw new AutomationException("BOUNDS_UNREADABLE", "Nút Không của hộp thông báo thuế không có vị trí hiển thị.");
-                NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                    identity.WindowHandle, identity.ProcessId, WorkflowTargetHandle(noElement));
-            }
+                NativeKeyboard.Click(prompt.X, prompt.Y, identity.WindowHandle, identity.ProcessId, prompt.TargetHandle);
             var closeBy = Environment.TickCount64 + 3000;
             while (PInvoke.IsWindow((HWND)dialog) && PInvoke.IsWindowVisible((HWND)dialog))
             {
@@ -50,8 +61,11 @@ public sealed partial class NativeInputService
                     throw new AutomationException("SAVE_PROMPT_NOT_CLOSED", "Hộp thông báo chênh lệch tiền thuế chưa đóng sau khi bấm Không.", true);
                 if (token.WaitHandle.WaitOne(50)) token.ThrowIfCancellationRequested();
             }
-            return text;
+            return prompt.Text;
         }, token, maySendInput: true);
+    }
+
+    private sealed record TaxPromptTarget(nint Dialog, string Text, nint NoHandle, int X, int Y, nint TargetHandle);
 
     private List<(nint Dialog, string Text, nint NoHandle, AutomationElement? NoElement)> TaxRoundingPrompts(nint editorHandle)
     {
