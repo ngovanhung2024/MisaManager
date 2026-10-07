@@ -447,10 +447,59 @@ public partial class MainWindow : Window
         MarkTickedSavedItem.Header = $"Đánh dấu đã lưu cho {ticked.Length} hóa đơn đang tick";
         MarkTickedSavedItem.Visibility = ticked.Length > 1 || ticked.Length == 1 && !ReferenceEquals(ticked[0], row.Invoice)
             ? Visibility.Visible : Visibility.Collapsed;
+        var canReset = workflow.CanResetToReady(row.Invoice);
+        ResetReadyItem.IsEnabled = canReset;
+        ResetReadyItem.ToolTip = canReset
+            ? "Dùng khi bạn đã tự xóa chứng từ của hóa đơn này trong MISA: tool xóa lịch sử đã lưu và cho nhập lại"
+            : ((App)Application.Current).Services.PostedInvoices.Contains(row.Invoice)
+                ? "Hóa đơn nằm trong danh sách đã ghi sổ nạp từ MISA; nạp lại danh sách đó sau khi xóa."
+                : "Hóa đơn này chưa lưu.";
+        var tickedReset = TickedResettable();
+        ResetTickedReadyItem.Header = $"Chuyển về sẵn sàng nhập cho {tickedReset.Length} hóa đơn đang tick";
+        ResetTickedReadyItem.Visibility = tickedReset.Length > 1 || tickedReset.Length == 1 && !ReferenceEquals(tickedReset[0], row.Invoice)
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private InvoiceDocument[] TickedMarkable() => [.. invoices
         .Where(row => workflow.IsChecked(row.Invoice.Fingerprint) && workflow.CanMarkSaved(row.Invoice)).Select(row => row.Invoice)];
+
+    private InvoiceDocument[] TickedResettable() => [.. invoices
+        .Where(row => workflow.IsChecked(row.Invoice.Fingerprint) && workflow.CanResetToReady(row.Invoice)).Select(row => row.Invoice)];
+
+    private async void ResetReady_Click(object sender, RoutedEventArgs e)
+    {
+        if (contextRow is { } row) await ResetToReadyAsync([row.Invoice]);
+    }
+
+    private async void ResetTickedReady_Click(object sender, RoutedEventArgs e) => await ResetToReadyAsync(TickedResettable());
+
+    private async Task ResetToReadyAsync(IReadOnlyList<InvoiceDocument> targets)
+    {
+        if (workflow.IsRunning)
+        {
+            StatusLabel.Text = "Đang chạy Thêm vào MISA. Bấm Dừng ngay, chờ dừng hẳn rồi mới chuyển hóa đơn về sẵn sàng nhập.";
+            return;
+        }
+        var saved = targets.Where(workflow.CanResetToReady).ToArray();
+        if (saved.Length == 0) return;
+        var numbers = string.Join(", ", saved.Take(8).Select(invoice => invoice.Identity.Number)) + (saved.Length > 8 ? "…" : "");
+        if (MessageBox.Show(this,
+                $"Chuyển {saved.Length} hóa đơn ({numbers}) về SẴN SÀNG NHẬP?\n\n"
+                + "Chỉ làm khi bạn đã tự xóa chứng từ của hóa đơn này trong MISA.\n\n"
+                + "• Lịch sử lưu của hóa đơn này trong tool bị xóa; lần chạy sau tool sẽ nhập lại.\n"
+                + "• Trước khi nhập, tool vẫn kiểm tra số hóa đơn trong MISA và bỏ qua nếu chứng từ còn tồn tại.\n"
+                + "• Không hoàn tác được.",
+                "Chuyển về sẵn sàng nhập", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        var (reset, error) = await workflow.ResetToReadyAsync(saved);
+        foreach (var row in invoices) row.Refresh();
+        if (InvoiceList.SelectedItem is InvoiceRow selected) ShowIssues(selected.Invoice);
+        RefreshWorkflowPanel();
+        RefreshRunSummary();
+        StatusLabel.Text = error is null
+            ? $"Đã chuyển {reset} hóa đơn về sẵn sàng nhập."
+            : $"Đã chuyển {reset}/{saved.Length} hóa đơn. Lỗi: {error}";
+    }
 
     private async void MarkSaved_Click(object sender, RoutedEventArgs e)
     {

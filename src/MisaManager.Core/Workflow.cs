@@ -251,6 +251,45 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         finally { transitionGate.Release(); }
     }
 
+    /// <summary>
+    /// The user deleted this invoice's voucher in MISA by hand: deletes every run record of the invoice (đã lưu, đã lưu nhập
+    /// tay, đã có trong MISA, lỗi…) so it is ready to enter again. A later run still checks MISA for the invoice number first.
+    /// Refuses while the invoice has an active, unfinished session (chưa rõ, tạm dừng…). Returns how many records were deleted.
+    /// </summary>
+    public async Task<int> ResetToReadyAsync(InvoiceDocument invoice, CancellationToken token = default)
+    {
+        await InitializeAsync(token);
+        await transitionGate.WaitAsync(token);
+        try
+        {
+            bool Same(WorkflowContext run) => run.Invoice.InvoiceId == invoice.InvoiceId
+                || run.Invoice.Fingerprint == invoice.Fingerprint;
+            var current = Current;
+            var currentMatches = current is not null && Same(current);
+            if (currentMatches && !IsTerminal(current!.Snapshot.Status))
+                throw new InvalidOperationException(
+                    $"Hóa đơn {invoice.Identity.Number} đang có phiên nhập chưa kết thúc; xử lý phiên đó trước khi chuyển về sẵn sàng nhập.");
+            var records = (await ReadHistoryAsync(token)).Where(Same).ToList();
+            foreach (var record in records) DeleteRunFiles(record.Snapshot.RunId);
+            if (currentMatches)
+            {
+                if (records.All(record => record.Snapshot.RunId != current!.Snapshot.RunId)) DeleteRunFiles(current!.Snapshot.RunId);
+                var session = StateFiles.UnderRoot(stateStore.RootPath, SessionPath(current!.ExecutionMode));
+                if (File.Exists(session)) File.Delete(session);
+                lock (gate)
+                {
+                    context = null;
+                    cancellation?.Cancel();
+                    cancellation = null;
+                    activeOperation?.Cancel();
+                    activeOperation = null;
+                }
+            }
+            return records.Count;
+        }
+        finally { transitionGate.Release(); }
+    }
+
     private static WorkflowContext WithComparison(WorkflowContext current, string phase,
         ReconciliationResult? result, string? error = null)
         => current with { Reconciliations = [.. current.Reconciliations ?? [],
