@@ -6,7 +6,7 @@ namespace MisaManager.Automation;
 /// </summary>
 public sealed record CustomerDialogProfile(string Title, NativeSelector Organization, NativeSelector Individual,
     NativeSelector Code, NativeSelector Name, NativeSelector FullName, NativeSelector Address, NativeSelector TaxCode,
-    NativeSelector IdNumber, NativeSelector Save, string OpenKey);
+    NativeSelector IdNumber, NativeSelector Save, NativeSelector Cancel, string OpenKey);
 
 /// <summary>
 /// Typed view of the screens the sales-invoice workflow drives. Selectors come from the
@@ -75,7 +75,7 @@ public sealed class WorkflowProfile
             NewCustomer = new(title, customer.Element("organization").Selector, customer.Element("individual").Selector,
                 customer.Element("code").Selector, customer.Element("name").Selector, customer.Element("full_name").Selector,
                 customer.Element("address").Selector, customer.Element("tax_code").Selector, customer.Element("id_number").Selector,
-                customer.Element("save").Selector, customer.Setting("openKey", "F9"));
+                customer.Element("save").Selector, customer.Element("cancel").Selector, customer.Setting("openKey", "F9"));
             if (NewCustomer.Save.ControlType != "Button") throw new InvalidDataException("Nút Cất của hộp Thêm Khách hàng phải có controlType Button.");
         }
         var prompt = Screen(TaxRoundingPrompt);
