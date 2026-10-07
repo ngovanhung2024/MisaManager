@@ -166,6 +166,57 @@ public sealed class ManualSavedTests : IDisposable
         Assert.Equal(marked.Snapshot.RunId, Assert.Single(await runner.ReadHistoryAsync(Token)).Snapshot.RunId);
     }
 
+    [Theory]
+    [InlineData(WorkflowStatus.Saved, null)]
+    [InlineData(WorkflowStatus.Saved, WorkflowRunner.ManualSavedCode)]
+    [InlineData(WorkflowStatus.Discarded, WorkflowRunner.ExistingInvoiceCode)]
+    public async Task ResetDeletesTheInvoicesRecordsAndKeepsOtherInvoices(WorkflowStatus status, string? code)
+    {
+        var (runner, store) = Create();
+        var mine = Invoice("1544");
+        var done = await SeedRunAsync(store, mine, status, code);
+        var older = await SeedRunAsync(store, mine, WorkflowStatus.Failed);
+        var other = await SeedRunAsync(store, Invoice("1545"), WorkflowStatus.Saved);
+
+        Assert.Equal(2, await runner.ResetToReadyAsync(mine, Token));
+
+        Assert.False(Directory.Exists(RunDirectory(store, done)));
+        Assert.False(Directory.Exists(RunDirectory(store, older)));
+        Assert.False(File.Exists(Path.Combine(store.RootPath, "verification", "runs", done.Snapshot.RunId + ".json")));
+        Assert.Equal(other.Snapshot.RunId, Assert.Single(await runner.ReadHistoryAsync(Token)).Snapshot.RunId);
+    }
+
+    [Fact]
+    public async Task ResetClearsAFinishedSessionOfTheInvoice()
+    {
+        var (_, store) = Create();
+        var invoice = Invoice("1544");
+        await SeedRunAsync(store, invoice, WorkflowStatus.Saved, session: true);
+        var runner = new WorkflowRunner(new NoNative(), store, new RunEventStore(directory.Combine("logs")));
+        await runner.InitializeAsync(Token);
+
+        await runner.ResetToReadyAsync(invoice, Token);
+
+        Assert.Null(runner.Current);
+        Assert.False(File.Exists(Path.Combine(store.RootPath, "session.json")));
+        Assert.Empty(await runner.ReadHistoryAsync(Token));
+    }
+
+    [Fact]
+    public async Task ResetIsRefusedWhileTheInvoiceHasAnUnfinishedSession()
+    {
+        var (_, store) = Create();
+        var invoice = Invoice("1544");
+        var active = await SeedRunAsync(store, invoice, WorkflowStatus.SaveUncertain, session: true);
+        var runner = new WorkflowRunner(new NoNative(), store, new RunEventStore(directory.Combine("logs")));
+        await runner.InitializeAsync(Token);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runner.ResetToReadyAsync(invoice, Token));
+
+        Assert.Equal(active.Snapshot.RunId, runner.Current!.Snapshot.RunId);
+        Assert.True(Directory.Exists(RunDirectory(store, active)));
+    }
+
     private sealed class NoNative : IWorkflowNativeGateway
     {
         public Task<WorkflowObservation> ObserveAsync(WorkflowContext context, CancellationToken token) => throw new InvalidOperationException();

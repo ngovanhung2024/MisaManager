@@ -220,6 +220,34 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public bool CanMarkSaved(InvoiceDocument invoice) => !running && !IsDone(invoice);
 
+    /// <summary>Done only because of the tool's own records (not the posted list loaded from MISA), so a reset makes it ready.</summary>
+    public bool CanResetToReady(InvoiceDocument invoice) => !running && !services.PostedInvoices.Contains(invoice) && IsDone(invoice);
+
+    /// <summary>
+    /// The user deleted these vouchers in MISA by hand: deletes their run records so they can be entered again.
+    /// Returns how many invoices were reset and an error (null when everything went through).
+    /// </summary>
+    public async Task<(int Reset, string? Error)> ResetToReadyAsync(IEnumerable<InvoiceDocument> targets)
+    {
+        if (running) return (0, "Đang chạy Thêm vào MISA. Bấm Dừng ngay, chờ dừng hẳn rồi mới chuyển hóa đơn về sẵn sàng nhập.");
+        var reset = 0;
+        string? error = null;
+        var hadSession = services.Workflow.Current is not null;
+        try
+        {
+            foreach (var invoice in targets.DistinctBy(invoice => invoice.Fingerprint).Where(CanResetToReady))
+            {
+                await services.Workflow.ResetToReadyAsync(invoice);
+                reset++;
+            }
+        }
+        catch (Exception exception) { error = exception.Message; }
+        History = await services.Workflow.ReadHistoryAsync();
+        if (hadSession && services.Workflow.Current is null) { lastError = null; SessionReset?.Invoke(this, EventArgs.Empty); }
+        NotifyWorkflowChanged();
+        return (reset, error);
+    }
+
     /// <summary>
     /// The user entered these invoices in MISA by hand: records them as saved and deletes their old checkpoints.
     /// Returns how many were marked and an error (null when everything went through).
