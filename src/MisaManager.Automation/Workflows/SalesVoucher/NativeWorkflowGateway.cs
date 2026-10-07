@@ -236,11 +236,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var checkpointStarted = Stopwatch.GetTimestamp();
         try
         {
-            var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction));
+            var stale = transition.Action == WorkflowRunner.ResolveStaleAction;
+            var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction),
+                anyProfileRevision: stale);
             ValidateDocument(context);
             stopPointsEnabled = transition.Action != "verify_only"
                 && transition.To is >= WorkflowStatus.CustomerVerified and <= WorkflowStatus.AwaitingSave;
-            if (transition.Action == WorkflowRunner.ResolveStaleAction)
+            if (stale)
                 return await ResolveStaleAsync(context, window, token);
             if (transition.Action == "verify_only")
             {
@@ -1423,9 +1425,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             exists => !exists, "EDITOR_STILL_OPEN", "Editor chưa đóng; cần kiểm tra Cất/Bỏ.", token, timeoutMilliseconds: 15000);
         return null;
     }
-    private WindowIdentity BindTarget(WorkflowContext context, bool activate = true)
+    // resolve_stale only reads the sales register with the current profile, so a checkpoint left by an older
+    // profile revision can still be settled; any step that types or reads the editor keeps the revision guard.
+    private WindowIdentity BindTarget(WorkflowContext context, bool activate = true, bool anyProfileRevision = false)
     {
-        if (context.ProfileRevision != profile.Revision)
+        if (!anyProfileRevision && context.ProfileRevision != profile.Revision)
             throw new AutomationException("PROFILE_REVISION_CHANGED", "Checkpoint thuộc profile khác; cần đối chiếu và migration explicit trước khi nhập.");
         var parts = context.WindowIdentity.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(part => part.Split('=', 2))
             .Where(part => part.Length == 2).ToDictionary(part => part[0], part => part[1], StringComparer.Ordinal);
