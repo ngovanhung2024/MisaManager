@@ -510,6 +510,25 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(invoice.TaxTotal, Assert.Single(misa.State().Vouchers).TaxTotal);
     }, new FakeScenario(TaxRoundingPrompt: true, TaxPromptAsLabel: true));
 
+    // Report 0.2.121 (hóa đơn 1718): MISA stopped answering UIA while showing the tax prompt; scanning it timed out
+    // inside the input call, so the run ended NATIVE_CALL_INTERRUPTED/SaveUncertain and "Không" was never pressed.
+    [Fact]
+    public Task TaxPromptWhileMisaStopsAnsweringIsStillAnsweredNo() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1718", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(invoice.TaxTotal, Assert.Single(misa.State().Vouchers).TaxTotal);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("khi hiện hộp chênh lệch thuế", log, StringComparison.Ordinal);
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains("bấm Không", StringComparison.Ordinal)));
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (", StringComparison.Ordinal)));
+    }, new FakeScenario(TaxRoundingPrompt: true, TaxPromptAsLabel: true, TaxPromptBusyMilliseconds: 4000));
+
     [Fact]
     public Task TwoInvoicesInOneSessionAreSavedAsSeparateVouchers() => WithFakeAsync(async (misa, harness, token) =>
     {
