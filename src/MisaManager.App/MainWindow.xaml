@@ -1,7 +1,7 @@
 <Window x:Class="MisaManager.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:MisaManager.App"
         Title="MISA Excel Manager" Width="384" MinWidth="310" MaxWidth="499" MinHeight="520" WindowStartupLocation="Manual"
-        Topmost="True" ShowInTaskbar="True" ShowActivated="True" WindowState="Normal"
+        Topmost="False" ShowInTaskbar="True" ShowActivated="True" WindowState="Normal"
         WindowStyle="SingleBorderWindow" ResizeMode="CanMinimize" Background="#F4F6FA"
         FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12.5" Foreground="#111827"
         TextOptions.TextFormattingMode="Display" UseLayoutRounding="True" SnapsToDevicePixels="True"
