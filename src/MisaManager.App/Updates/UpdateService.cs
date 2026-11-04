@@ -148,8 +148,17 @@ public sealed class UpdateService(UpdateSettings settings, Func<bool> hasUnresol
         catch (CryptographicException) { return null; }
     }
 
+    /// <summary>Folder the per-user MSI installs the app into (Package.wxs: LocalAppData\Programs\MisaManager\app).</summary>
+    public static string InstalledExecutable => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Programs", "MisaManager", "app", "MisaManager.App.exe");
+
+    private static string UpdatesDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        ProductIdentity.TechnicalName, "updates");
+
+    private static string ResultFile => Path.Combine(UpdatesDirectory, "last-install.txt");
+
     /// <summary>Refuses while a checkpoint is still attached (the caller releases it first); otherwise starts msiexec after this process exits and restarts the app.</summary>
-    public void InstallAfterExit(string msiPath)
+    public void InstallAfterExit(string msiPath, Version version)
     {
         if (hasUnresolvedRun())
             throw new UpdateException("Không bỏ được checkpoint của phiên Thêm vào MISA cũ nên chưa cập nhật. Thử lại sau.");
@@ -157,6 +166,10 @@ public sealed class UpdateService(UpdateSettings settings, Func<bool> hasUnresol
         var log = Path.Combine(directory, "install-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".log");
         var script = Path.Combine(directory, "install-update.cmd");
         var app = Environment.ProcessPath ?? throw new UpdateException("Không xác định được đường dẫn app để mở lại.");
+        var installed = InstalledExecutable;
+        Directory.CreateDirectory(UpdatesDirectory);
+        // Line 1-2 written now, msiexec exit code appended by the script; read back on the next start.
+        File.WriteAllText(ResultFile, version.ToString(3) + "\r\n" + log + "\r\n");
         File.WriteAllText(script, string.Join("\r\n",
             "@echo off",
             $"set PID={Environment.ProcessId}",
@@ -164,9 +177,53 @@ public sealed class UpdateService(UpdateSettings settings, Func<bool> hasUnresol
             // ping is the delay: timeout.exe exits at once when the hidden console has no stdin.
             "tasklist /FI \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)",
             $"msiexec /i \"{msiPath}\" /passive /norestart /l*v \"{log}\"",
-            $"start \"\" \"{app}\"",
+            $">>\"{ResultFile}\" echo %ERRORLEVEL%",
+            // Relaunch the MSI-installed copy: the running exe may be a stale copy outside the install folder.
+            $"if exist \"{installed}\" (start \"\" \"{installed}\") else (start \"\" \"{app}\")",
             ""));
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"\"{script}\"\"") { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = directory });
+    }
+
+    /// <summary>Result of the last in-app install, consumed once; null when it succeeded or none is pending.</summary>
+    public static string? TakeFailedInstallMessage()
+    {
+        string[] lines;
+        try
+        {
+            if (!File.Exists(ResultFile)) return null;
+            lines = File.ReadAllLines(ResultFile);
+            File.Delete(ResultFile);
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+        if (lines.Length < 2 || !TryParseTag(lines[0], out var target)) return null;
+        var log = lines[1].Trim();
+        var running = Environment.ProcessPath ?? "";
+        var code = lines.Length > 2 && int.TryParse(lines[2].Trim(), CultureInfo.InvariantCulture, out var parsed) ? parsed : (int?)null;
+        return InstallFailureMessage(target, CurrentVersion, code, log, running, InstalledExecutable);
+    }
+
+    internal static string? InstallFailureMessage(Version target, Version current, int? exitCode, string log, string running, string installed)
+    {
+        if (current >= target) return null;
+        if (exitCode is not (0 or 3010))
+        {
+            var reason = exitCode switch
+            {
+                null => "trình cài đặt không chạy xong (app cũ có thể chưa đóng hẳn)",
+                1602 => "đã bấm hủy trong cửa sổ cài đặt",
+                1618 => "đang có một bộ cài khác chạy trên máy",
+                1625 or 1643 => "chính sách Windows chặn cài đặt",
+                1638 => "đã có bản khác cài trên máy",
+                _ => "Windows Installer báo lỗi",
+            };
+            return $"Cài bản {target.ToString(3)} không thành công: {reason}"
+                + (exitCode is { } code ? $" (mã lỗi {code})" : "") + $".\n\nNhật ký cài đặt: {log}\n\nĐóng mọi cửa sổ MISA Excel Manager rồi thử cập nhật lại.";
+        }
+        if (running.Length > 0 && !string.Equals(Path.GetFullPath(running), Path.GetFullPath(installed), StringComparison.OrdinalIgnoreCase))
+            return $"Đã cài bản {target.ToString(3)} vào:\n{installed}\n\nnhưng app đang chạy là bản {current.ToString(3)} ở chỗ khác:\n{running}\n\n"
+                + "Hãy đóng app này và mở bằng biểu tượng \"MISA Excel Manager\" trên Desktop hoặc menu Start; xóa shortcut/bản cũ để không mở nhầm.";
+        return $"Đã chạy cài bản {target.ToString(3)} nhưng app vẫn là bản {current.ToString(3)}. Khởi động lại máy rồi mở lại app.\n\nNhật ký cài đặt: {log}";
     }
 
     internal static bool TryParseTag(string tag, out Version version)
