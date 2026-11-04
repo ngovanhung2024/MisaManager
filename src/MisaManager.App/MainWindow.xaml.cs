@@ -222,14 +222,14 @@ public partial class MainWindow : Window
         var dialog = Purchase
             ? new OpenFileDialog { Filter = "Hóa đơn mua vào (*.zip;*.html;*.xlsx)|*.zip;*.html;*.htm;*.xlsx", CheckFileExists = true, Multiselect = false,
                 Title = "Bước 1/2: Chọn file zip hóa đơn mua vào (các file HTML tải từ cổng thuế) hoặc file Excel đã chuyển đổi" }
-            : new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
-                Title = "Bước 1/2: Chọn file Excel hóa đơn (danh sách hóa đơn xuất từ cổng hóa đơn điện tử)" };
+            : new OpenFileDialog { Filter = "Hóa đơn bán ra (*.zip;*.html;*.xlsx)|*.zip;*.html;*.htm;*.xlsx", CheckFileExists = true, Multiselect = false,
+                Title = "Bước 1/2: Chọn file zip hóa đơn bán ra (các file HTML tải từ cổng thuế) hoặc file Excel hóa đơn" };
         if (dialog.ShowDialog(this) != true) return;
         var services = ((App)Application.Current).Services;
         var workbookPath = dialog.FileName;
-        if (Purchase && !workbookPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        if (!workbookPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
         {
-            if (await ConvertPurchaseArchiveAsync(workbookPath) is not { } converted) return;
+            if (await ConvertArchiveAsync(workbookPath, Purchase) is not { } converted) return;
             workbookPath = converted;
         }
         var postedStore = PostedStore;
@@ -290,12 +290,18 @@ public partial class MainWindow : Window
         : ((App)Application.Current).Services.PostedInvoices;
 
     /// <summary>
-    /// Mua hàng: reads the portal's HTML invoices (zip, folder or one page), keeps one per supplier/series/number and writes
-    /// them sorted from the start of the year to an Excel file next to the source, which is then imported like any workbook.
+    /// Reads the portal's HTML invoices (zip, folder or one page), keeps one per seller/series/number and writes them sorted
+    /// from the start of the year to an Excel file next to the source, which is then imported like any workbook. Sales use
+    /// the layout of the portal's old Excel export, purchases the purchase sheet.
     /// </summary>
-    private async Task<string?> ConvertPurchaseArchiveAsync(string source)
+    private async Task<string?> ConvertArchiveAsync(string source, bool purchase)
     {
         StatusLabel.Text = "Đang đọc và chuyển hóa đơn HTML sang Excel...";
+        void Write(string path, IReadOnlyList<PurchaseHtmlInvoice> invoices)
+        {
+            if (purchase) PurchaseInvoiceArchive.WriteWorkbook(path, invoices);
+            else SalesInvoiceArchive.WriteWorkbook(path, invoices);
+        }
         try
         {
             var archive = await Task.Run(() => PurchaseInvoiceArchive.Read(source));
@@ -304,16 +310,16 @@ public partial class MainWindow : Window
                 StatusLabel.Text = "Không đọc được hóa đơn nào: " + string.Join("; ", archive.Skipped.Take(3));
                 return null;
             }
-            var name = Path.GetFileNameWithoutExtension(source) + "_hoa_don_mua_vao.xlsx";
+            var name = Path.GetFileNameWithoutExtension(source) + (purchase ? "_hoa_don_mua_vao.xlsx" : "_hoa_don_ban_ra.xlsx");
             var target = Path.Combine(Path.GetDirectoryName(source)!, name);
-            try { await Task.Run(() => PurchaseInvoiceArchive.WriteWorkbook(target, archive.Invoices)); }
+            try { await Task.Run(() => Write(target, archive.Invoices)); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 // Read-only or locked folder (e.g. the file is open in Excel): keep the converted file with the app data.
                 target = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName,
-                    "purchase", Path.GetFileNameWithoutExtension(name) + "_" + DateTime.Now.ToString("yyyyMMddHHmmss") + ".xlsx");
+                    purchase ? "purchase" : "sales", Path.GetFileNameWithoutExtension(name) + "_" + DateTime.Now.ToString("yyyyMMddHHmmss") + ".xlsx");
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                await Task.Run(() => PurchaseInvoiceArchive.WriteWorkbook(target, archive.Invoices));
+                await Task.Run(() => Write(target, archive.Invoices));
             }
             StatusLabel.Text = $"Đã chuyển {archive.Invoices.Count:N0} hóa đơn ({archive.Invoices[0].Issued:dd/MM/yyyy} → {archive.Invoices[^1].Issued:dd/MM/yyyy}) sang {target}"
                 + (archive.Skipped.Count > 0 ? $" · bỏ {archive.Skipped.Count:N0} file" : "");
@@ -322,7 +328,7 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or WorkbookImportException
             or NotSupportedException)
         {
-            StatusLabel.Text = "Không chuyển được hóa đơn mua vào: " + error.Message;
+            StatusLabel.Text = (purchase ? "Không chuyển được hóa đơn mua vào: " : "Không chuyển được hóa đơn bán ra: ") + error.Message;
             return null;
         }
     }

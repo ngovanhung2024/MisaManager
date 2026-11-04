@@ -112,7 +112,7 @@
         <StackPanel Orientation="Horizontal">
           <RadioButton x:Name="SalesMode" GroupName="VoucherMode" Content="Bán hàng" Style="{StaticResource ModeButton}" IsChecked="True"
                        Checked="Mode_Checked" IsEnabled="{Binding CanEditSource}" AutomationProperties.Name="Chế độ Bán hàng"
-                       ToolTip="Hóa đơn bán ra (Excel) → Chứng từ bán hàng trong MISA"/>
+                       ToolTip="Hóa đơn bán ra (zip HTML tải từ cổng thuế hoặc Excel) → Chứng từ bán hàng trong MISA"/>
           <RadioButton x:Name="PurchaseMode" GroupName="VoucherMode" Content="Mua hàng" Style="{StaticResource ModeButton}"
                        Checked="Mode_Checked" IsEnabled="{Binding CanEditSource}" AutomationProperties.Name="Chế độ Mua hàng"
                        ToolTip="Hóa đơn mua vào (zip HTML tải từ cổng thuế) → Mua hàng trong nước nhập kho (Kho KHH, TK 1561, TK 331). Dịch vụ không nhập."/>

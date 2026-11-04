@@ -186,6 +186,8 @@ public sealed class PurchaseInvoiceTests : IDisposable
             Assert.Equal(invoice.Seller, invoice.Partner());
             Assert.Equal(InvoiceKinds.PurchasePayment, invoice.PaymentMethod);
             Assert.Equal(42_300_001m, invoice.GrandTotal);
+            // "Mẫu số HĐ" is typed on purchase vouchers, so the converted column must be read.
+            Assert.Equal("1", invoice.Template);
         });
         Assert.Equal([OtherTax, SupplierTax], result.Invoices.Select(invoice => invoice.Seller.TaxCode).Order());
         Assert.Equal(2, result.Invoices.Select(invoice => invoice.InvoiceId).Distinct().Count());

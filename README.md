@@ -201,6 +201,11 @@ cùng ĐVT (hóa đơn dùng tên đó sẽ tạm hoãn).
 
 ## Hóa đơn đã ghi sổ
 
+File hóa đơn bán ra có thể là **zip các hóa đơn HTML tải từ cổng thuế** (hoặc một file HTML) thay cho Excel cũ: tool đọc
+từng trang, bỏ file trùng/đã hủy, ghi ra `<tên zip>_hoa_don_ban_ra.xlsx` cạnh file zip theo đúng cột của Excel "Danh sách
+hóa đơn" cũ (người mua/DN mua, MST hoặc CCCD người mua, địa chỉ, dòng hàng, thuế chia theo dòng như Mua hàng), sắp xếp từ
+đầu năm, rồi nhập như Excel.
+
 **Mở Excel** (hoặc **••• → Mở Excel hóa đơn…**) hỏi hai file liên tiếp: file hóa đơn, rồi file danh sách chứng từ bán
 hàng xuất từ MISA (`Ban_hang.xlsx`: cột Số hóa đơn, Ký hiệu HĐ, Số chứng từ; bỏ dòng "Số dòng = N"). Bấm Hủy ở file thứ hai
 thì dùng danh sách đã nạp lần trước. Tab Hóa đơn chỉ hiện hóa đơn **chưa có trong MISA**: hóa đơn đã ghi sổ bị ẩn cùng lỗi
@@ -228,9 +233,9 @@ phần mềm, chữ ký số, thanh toán theo hợp đồng…, hoặc dòng kh
 `Hàng hóa`/`Dịch vụ` rồi mở lại file nếu tool nhận nhầm.
 
 Chứng từ: **Thêm** trên tab Mua hàng hóa, dịch vụ (Mua hàng trong nước nhập kho chưa thanh toán) → ô Nhà cung cấp gõ
-**MST** rồi Enter → ngày hạch toán/chứng từ/hóa đơn → tab Hóa đơn chỉ điền số hóa đơn (không điền ký hiệu) → mã hàng như
-bán hàng (thiếu thì F9 tạo mã, kho ngầm định KHH) → mỗi dòng phải là Kho **KHH**, TK Kho **1561**, TK công nợ **331**
-(khác thì tool gõ lại) → tiền thuế từng dòng đúng nguồn → đối chiếu → Cất. Đã nạp danh sách nhà cung cấp mà thiếu MST thì
+**MST** rồi Enter → ngày hạch toán/chứng từ/hóa đơn → tab Hóa đơn điền số hóa đơn, Ký hiệu HĐ và Mẫu số HĐ → mã hàng như
+bán hàng (thiếu thì F9 tạo mã, kho ngầm định KHH) → Kho, TK Kho, TK công nợ để MISA tự điền theo mã hàng (tool không gõ
+và không đọc các cột này) → tiền thuế từng dòng đúng nguồn → đối chiếu → Cất. Đã nạp danh sách nhà cung cấp mà thiếu MST thì
 dừng trước khi nhập. Selector màn hình mua hàng (`purchase_list`, `purchase_voucher` trong profile) theo quy ước ID của bán
 hàng; nếu **Kiểm tra giao diện** báo lệch, **Copy lỗi** gửi lại để cập nhật profile.
 

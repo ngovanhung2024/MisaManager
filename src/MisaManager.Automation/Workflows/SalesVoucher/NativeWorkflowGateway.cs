@@ -909,9 +909,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     + $"nhưng MISA đọc lại tên '{metadata.Values[profile.Columns["name"]].Value}'. "
                     + "Hãy xuất lại danh mục vật tư từ MISA và nạp lại file mã hàng; tool không mở Tìm nhanh/kính lúp và không tự đổi mã.", true);
             }
-            if (profile.IsPurchase) metadata = await EnsurePurchaseAccountsAsync(row, code, line, metadata, token);
-            var expectedAccount = metadata.Values[profile.Columns["debit_account"]].Value;
-            if (string.IsNullOrWhiteSpace(expectedAccount) || !expectedAccount.All(char.IsDigit))
+            // Purchases: MISA fills Kho/TK Kho/TK công nợ from the item itself; they are neither typed nor read.
+            var expectedAccount = profile.IsPurchase ? null : metadata.Values[profile.Columns["debit_account"]].Value;
+            if (!profile.IsPurchase && (string.IsNullOrWhiteSpace(expectedAccount) || !expectedAccount.All(char.IsDigit)))
                 throw new AutomationException("ACCOUNT_READBACK_INVALID", $"Row {row + 1}: native account is invalid.");
             var converted = !string.IsNullOrWhiteSpace(context.NativeValues?.GetValueOrDefault("conversion:" + line.LineId));
             var expected = ExpectedLine(context, line);
@@ -966,7 +966,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 RequireCatalog().ConfirmPending(code);
             codes.Add(code);
             await progress(new("line:" + line.LineId, code, Frame(verifiedRow.Frame), row,
-                new Dictionary<string, string> { ["account:" + line.LineId] = expectedAccount }), token);
+                expectedAccount is null ? null : new Dictionary<string, string> { ["account:" + line.LineId] = expectedAccount }), token);
         }
         StopPoint();
         await Tab(profile.TaxTab, token);
@@ -992,59 +992,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
 
     private string[] MetadataColumns() => profile.IsPurchase
-        ? [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"], profile.Columns["stock"], profile.Columns["credit_account"]]
+        ? [profile.Columns["name"], profile.Columns["unit"]]
         : [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]];
-
-    /// <summary>
-    /// Purchase lines go to warehouse KHH, TK Kho 1561 and TK công nợ 331 (profile settings). MISA fills them from the
-    /// item's default warehouse; a cell that differs is typed and read back, never left as MISA proposed it.
-    /// </summary>
-    private async Task<NativeFields> EnsurePurchaseAccountsAsync(int row, string code, InvoiceLine line, NativeFields metadata,
-        CancellationToken token)
-    {
-        // R20 fills Kho/TK Kho/TK công nợ a moment after the item code; typing into Kho meanwhile pops
-        // "Dữ liệu không có trong danh mục.". Wait (read-only) for MISA's defaults before deciding to type.
-        var boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
-        metadata = await NativeWait.UntilAsync(
-            async () => await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token), boundRow, MetadataColumns(), token), token),
-            PurchaseAccountsMatch, "READBACK_MISMATCH", $"Dòng {row + 1}: MISA chưa điền Kho/TK.", token,
-            timeoutMilliseconds: 4000, returnLastMismatch: true);
-        var changed = false;
-        foreach (var (key, wanted, commit) in new[] { ("stock", profile.PurchaseStock, "Enter"), ("debit_account", profile.StockAccount, "Tab"),
-                     ("credit_account", profile.PayableAccount, "Tab") })
-        {
-            if (Match(wanted, metadata.Values[profile.Columns[key]].Value, NativeValueKind.Text)) continue;
-            // The warehouse sets TK Kho; read again before deciding to type the account itself.
-            if (changed && key == "debit_account")
-            {
-                metadata = await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token),
-                    new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code), MetadataColumns(), token), token);
-                if (Match(wanted, metadata.Values[profile.Columns[key]].Value, NativeValueKind.Text)) continue;
-            }
-            StopPoint();
-            Entering("line:" + line.LineId + ":" + key);
-            await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, code, key),
-                wanted, wanted, NativeValueKind.Text, profile.Culture, token, commitKey: commit), token);
-            changed = true;
-        }
-        if (!changed) return metadata;
-        var verified = await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token),
-            new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code), MetadataColumns(), token), token);
-        foreach (var (key, wanted) in new[] { ("stock", profile.PurchaseStock), ("debit_account", profile.StockAccount), ("credit_account", profile.PayableAccount) })
-            if (!Match(wanted, verified.Values[profile.Columns[key]].Value, NativeValueKind.Text))
-                throw new AutomationException("PURCHASE_ACCOUNT_MISMATCH",
-                    $"Dòng {row + 1}: {profile.Columns[key]} là '{verified.Values[profile.Columns[key]].Value}', cần '{wanted}'.", true);
-        return verified;
-    }
 
     // Only purchases type "Mẫu số HĐ"; sales keep the template of the chosen invoice series.
     private string? PurchaseTemplate(WorkflowContext context)
         => profile.IsPurchase && profile.Fields.ContainsKey("template") && context.Invoice.Template.Trim() is { Length: > 0 } template
             ? template : null;
-
-    private bool PurchaseAccountsMatch(NativeFields fields)
-        => new[] { ("stock", profile.PurchaseStock), ("debit_account", profile.StockAccount), ("credit_account", profile.PayableAccount) }
-            .All(pair => Match(pair.Item2, fields.Values[profile.Columns[pair.Item1]].Value, NativeValueKind.Text));
 
     /// <summary>
     /// The portal states tax per rate; the importer spreads its rounding over the lines. MISA computes amount × rate per
@@ -1126,7 +1080,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             StopPoint();
             await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
-                : profile.IsPurchase ? new[] { "code", "name", "stock", "unit", "debit_account", "credit_account", "quantity", "amount", "unit_price" }
+                : profile.IsPurchase ? new[] { "code", "name", "unit", "quantity", "amount", "unit_price" }
                 : new[] { "code", "name", "unit", "debit_account", "quantity", "amount", "unit_price" };
             var table = await Steady(async () => await input.ReadCompleteTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
                 keys.Select(key => profile.Columns[key]).ToArray(), token), token);
@@ -1155,10 +1109,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         ("debit_account", context.NativeValues?.GetValueOrDefault("account:" + line.LineId) ?? "<missing verified account>", NativeValueKind.Exact),
                         ("quantity", Decimal(expectedLine.Quantity), NativeValueKind.Decimal), ("amount", Decimal(line.AmountBeforeTax), NativeValueKind.Decimal),
                         ("unit_price", Decimal(decimal.Round(line.AmountBeforeTax!.Value / expectedLine.Quantity, 2, MidpointRounding.AwayFromZero)), NativeValueKind.Decimal) };
-                // Purchases: warehouse and both accounts are fixed by the profile (KHH, 1561, 331).
-                if (!taxTab && profile.IsPurchase)
-                    expected = [.. expected, ("stock", profile.PurchaseStock, NativeValueKind.Text),
-                        ("credit_account", profile.PayableAccount, NativeValueKind.Exact)];
+                // Purchases leave Kho/TK Kho/TK công nợ to MISA and do not compare them.
+                if (!taxTab && profile.IsPurchase) expected = [.. expected.Where(item => item.Item1 != "debit_account")];
                 foreach (var (key, wanted, kind) in expected)
                 {
                     var actual = native.Row?.GetValueOrDefault(profile.Columns[key]);
@@ -1170,7 +1122,6 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         "name" => CatalogNameMatch(wanted, actual),
                         // MISA derives the price from amount / quantity at its own display scale.
                         "unit_price" => NativeComparison.MatchesDerivedUnitPrice(expectedLine.Quantity, line.AmountBeforeTax!.Value, actual, Culture),
-                        "debit_account" when profile.IsPurchase => Match(wanted, actual, kind) && Match(profile.StockAccount, actual, NativeValueKind.Exact),
                         _ => Match(wanted, actual, kind)
                     };
                     values.Add(new($"line:{line.LineId}:{key}", wanted, actual, matched, source));

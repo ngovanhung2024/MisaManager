@@ -72,7 +72,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase
     private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] Required = ["number", "issued", "buyer", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] IdentityFields = ["number", "buyerCode", "buyerTaxCode"];
-    private static readonly string[] PurchaseFields = ["number", "series", "issued", "seller", "sellerTaxCode", "sellerAddress", "sellerCode",
+    private static readonly string[] PurchaseFields = ["number", "series", "template", "issued", "seller", "sellerTaxCode", "sellerAddress", "sellerCode",
         "buyer", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal",
         "lineKind", "itemNature", "total"];
     private static readonly string[] PurchaseRequired = ["number", "issued", "seller", "sellerTaxCode", "name", "unit", "unitPrice", "quantity",

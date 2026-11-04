@@ -19,6 +19,12 @@ public sealed record PurchaseHtmlInvoice(string File, string Template, string Se
 {
     public decimal Subtotal => Lines.Sum(line => line.Amount);
     public decimal TaxTotal => Lines.Sum(line => line.TaxAmount);
+
+    // Buyer details only sales invoices need ("Tên người mua" is the organisation, "Họ tên người mua" the person).
+    public string BuyerOrganization { get; init; } = "";
+    public string BuyerPerson { get; init; } = "";
+    public string BuyerAddress { get; init; } = "";
+    public string BuyerIdNumber { get; init; } = "";
 }
 
 public sealed record PurchaseArchiveResult(IReadOnlyList<PurchaseHtmlInvoice> Invoices, IReadOnlyList<string> Skipped);
@@ -135,7 +141,13 @@ public static partial class PurchaseInvoiceArchive
             foreach (var row in Rows(tables[2]))
                 if (row.Length >= 2 && Plain(row[0]).StartsWith("tongtienthanhtoanbangso", StringComparison.Ordinal)) statedTotal = Number(row[1]);
         return new(file, template, series, number, issued, seller, sellerTax, sellerAddress, buyer, buyerTax,
-            AllocateTax(lines, taxes), statedTotal);
+            AllocateTax(lines, taxes), statedTotal)
+        {
+            BuyerOrganization = Field(buyerStart, fields.Length, "tennguoimua"),
+            BuyerPerson = Field(buyerStart, fields.Length, "hotennguoimua"),
+            BuyerAddress = Field(buyerStart, fields.Length, "diachi"),
+            BuyerIdNumber = Field(buyerStart, fields.Length, "cccdnguoimua")
+        };
     }
 
     private static List<PurchaseHtmlLine> ReadLines(string table)
@@ -195,6 +207,23 @@ public static partial class PurchaseInvoiceArchive
 
     /// <summary>Writes the invoices to one sheet with the importer's purchase headers.</summary>
     public static void WriteWorkbook(string path, IReadOnlyList<PurchaseHtmlInvoice> invoices)
+        => WriteSheet(path, SheetName, Headers, invoices.SelectMany(invoice => invoice.Lines.Select(line =>
+        {
+            var (service, reason) = ItemNatures.Classify(line.Name, line.Unit, line.Quantity);
+            var discount = line.Amount < 0;
+            return (IEnumerable<object?>)
+            [
+                invoice.Issued.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture), invoice.Template, invoice.Series, invoice.Number,
+                invoice.Seller, invoice.SellerTaxCode, invoice.SellerAddress, invoice.Buyer, invoice.BuyerTaxCode,
+                line.Kind, line.Name, line.Unit, line.Quantity, line.UnitPrice, line.Amount, line.TaxRate, line.TaxAmount,
+                line.Amount + line.TaxAmount, invoice.StatedTotal,
+                discount ? "" : service ? ItemNatures.ServiceLabel : ItemNatures.GoodsLabel,
+                discount ? "chiết khấu/điều chỉnh giảm – không nhập" : reason, invoice.File
+            ];
+        })));
+
+    /// <summary>One sheet with a frozen header row, written to a temporary file and moved into place.</summary>
+    internal static void WriteSheet(string path, string sheetName, IReadOnlyList<string> headers, IEnumerable<IEnumerable<object?>> rows)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
@@ -206,27 +235,13 @@ public static partial class PurchaseInvoiceArchive
                 var sheetPart = workbook.AddNewPart<WorksheetPart>();
                 var data = new SheetData();
                 var rowNumber = 1u;
-                data.Append(Row(rowNumber++, Headers.Select(header => (object?)header)));
-                foreach (var invoice in invoices)
-                    foreach (var line in invoice.Lines)
-                    {
-                        var (service, reason) = ItemNatures.Classify(line.Name, line.Unit, line.Quantity);
-                        var discount = line.Amount < 0;
-                        data.Append(Row(rowNumber++,
-                        [
-                            invoice.Issued.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture), invoice.Template, invoice.Series, invoice.Number,
-                            invoice.Seller, invoice.SellerTaxCode, invoice.SellerAddress, invoice.Buyer, invoice.BuyerTaxCode,
-                            line.Kind, line.Name, line.Unit, line.Quantity, line.UnitPrice, line.Amount, line.TaxRate, line.TaxAmount,
-                            line.Amount + line.TaxAmount, invoice.StatedTotal,
-                            discount ? "" : service ? ItemNatures.ServiceLabel : ItemNatures.GoodsLabel,
-                            discount ? "chiết khấu/điều chỉnh giảm – không nhập" : reason, invoice.File
-                        ]));
-                    }
+                data.Append(Row(rowNumber++, headers));
+                foreach (var row in rows) data.Append(Row(rowNumber++, row));
                 sheetPart.Worksheet = new Worksheet(new SheetViews(new SheetView(new Pane
                     {
                         VerticalSplit = 1, TopLeftCell = "A2", ActivePane = PaneValues.BottomLeft, State = PaneStateValues.Frozen
                     }) { WorkbookViewId = 0 }), data);
-                workbook.Workbook.AppendChild(new Sheets(new Sheet { Id = workbook.GetIdOfPart(sheetPart), SheetId = 1, Name = SheetName }));
+                workbook.Workbook.AppendChild(new Sheets(new Sheet { Id = workbook.GetIdOfPart(sheetPart), SheetId = 1, Name = sheetName }));
                 workbook.Workbook.Save();
             }
             File.Move(temporary, path, overwrite: true);
@@ -234,7 +249,7 @@ public static partial class PurchaseInvoiceArchive
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    private static Row Row(uint number, IEnumerable<object?> values)
+    internal static Row Row(uint number, IEnumerable<object?> values)
     {
         var row = new Row { RowIndex = number };
         var column = 0;
@@ -267,7 +282,7 @@ public static partial class PurchaseInvoiceArchive
     }
 
     /// <summary>"5%", "5", "KCT"… → "5"/"KCT"; null when empty.</summary>
-    private static string? RateKey(string? rate)
+    internal static string? RateKey(string? rate)
     {
         var text = (rate ?? "").Trim().TrimEnd('%').Trim();
         if (text.Length == 0) return null;
