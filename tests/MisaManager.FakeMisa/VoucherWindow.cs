@@ -423,6 +423,7 @@ public sealed class VoucherWindow : Window, IGridSource
                     // MISA derives the unit price from the typed amount.
                     line.UnitPrice = line.Quantity == 0 ? 0 : Math.Round(amount / line.Quantity, 2, MidpointRounding.AwayFromZero);
                     Recalculate(line);
+                    if (scenario.RowRedrawAfterAmountMilliseconds > 0) RedrawRow(line);
                     break;
                 case "tax_rate" when Ui.TaxRate(text) is { } rate:
                     line.TaxRate = rate;
@@ -483,6 +484,22 @@ public sealed class VoucherWindow : Window, IGridSource
             }
         }
         Recalculate(line);
+    }
+
+    // Real R20 phiếu nhập (report 0.2.142): after Thành tiền the row is redrawn and its code cell is briefly blank.
+    private void RedrawRow(LineModel line)
+    {
+        var code = line.Code;
+        line.Code = "";
+        FakeLog.Write($"row redraw: code '{code}' blank for {scenario.RowRedrawAfterAmountMilliseconds} ms");
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(scenario.RowRedrawAfterAmountMilliseconds) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            line.Code = code;
+            grid.Refresh(force: true);
+        };
+        timer.Start();
     }
 
     private void Recalculate(LineModel line)

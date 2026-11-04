@@ -94,6 +94,26 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Single(events, line => line.Contains(" code <- 'HH_07'"));
     }, Purchase with { LineErrorRow = 1 });
 
+    // Report 0.2.142 (invoice 633): the readback after "Thành tiền" saw the code cell mid-redraw and stopped with
+    // ROW_INPUT_UNCERTAIN "Mã hàng ở dòng đích đã thay đổi" although the row was fine.
+    [Fact]
+    public Task RowRedrawnAfterTheAmountIsReadAgainNotFailed() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2006", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 5, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 2, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
+        var events = Events(misa);
+        Assert.Contains(events, line => line.Contains("row redraw", StringComparison.Ordinal));
+        // Only re-read: each value is typed once.
+        Assert.Single(events, line => line.Contains("row=0 amount <-", StringComparison.Ordinal));
+    }, Purchase with { RowRedrawAfterAmountMilliseconds = 400 });
+
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>
     {

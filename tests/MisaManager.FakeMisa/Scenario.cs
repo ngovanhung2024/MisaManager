@@ -56,6 +56,8 @@ public sealed record Scenario
     public int PurchaseDefaultsDelayMilliseconds { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
+    /// <summary>After "Thành tiền" is committed the line's code cell reads empty this long (R20 redrawing the row).</summary>
+    public int RowRedrawAfterAmountMilliseconds { get; init; }
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
 
