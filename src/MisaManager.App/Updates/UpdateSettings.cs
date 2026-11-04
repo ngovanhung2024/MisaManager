@@ -23,7 +23,7 @@ public sealed class UpdateSettings
 
     /// <summary>owner/name baked in at build time (MSBuild property UpdateRepository).</summary>
     public static string DefaultRepository => typeof(UpdateSettings).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-        .FirstOrDefault(item => item.Key == "UpdateRepository")?.Value is { Length: > 0 } value ? value : "ngovanhung2024/MisaManager";
+        .FirstOrDefault(item => item.Key == "UpdateRepository")?.Value is { Length: > 0 } value ? value : "vanalex2026/new-misa-r20";
 
     public static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         ProductIdentity.TechnicalName, "update.json");
