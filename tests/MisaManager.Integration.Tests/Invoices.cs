@@ -43,10 +43,10 @@ public static class Invoices
 
     /// <summary>A purchase invoice as the tax-portal importer builds it: the supplier is the seller, the shop the buyer.</summary>
     public static InvoiceDocument BuildPurchase(string directory, string number, Party supplier, params InvoiceLine[] lines)
-        => Create(directory, number, supplier, Seller, InvoiceKinds.Purchase, InvoiceKinds.PurchasePayment, lines);
+        => Create(directory, number, supplier, Seller, InvoiceKinds.Purchase, InvoiceKinds.PurchasePayment, lines, template: "1");
 
     private static InvoiceDocument Create(string directory, string number, Party seller, Party buyer, string invoiceType,
-        string payment, InvoiceLine[] lines)
+        string payment, InvoiceLine[] lines, string template = "")
     {
         Directory.CreateDirectory(directory);
         var source = Path.Combine(directory, $"hoa-don-{number}.xlsx");
@@ -57,7 +57,7 @@ public static class Invoices
         var invoice = new InvoiceDocument(Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant(), 1, "",
             new InvoiceIdentity(seller.TaxCode, "1C26MLV", number, Day),
             new SourceReference(source, sha, "Hóa đơn", 1, 1 + lines.Length),
-            seller, buyer, "", "VND", payment, Day, Day, Day, invoiceType, null, [.. lines],
+            seller, buyer, template, "VND", payment, Day, Day, Day, invoiceType, null, [.. lines],
             subtotal, tax, subtotal + tax, null, [], "", [], [],
             SourceIssues: [], Corrections: [], HeaderCells: ImmutableDictionary<string, SourceCell>.Empty, Signed: Day);
         invoice = invoice with { Issues = [.. InvoiceValidation.Validate(invoice)] };

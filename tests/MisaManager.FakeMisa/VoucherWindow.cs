@@ -77,7 +77,7 @@ public sealed class VoucherWindow : Window, IGridSource
         header["voucher_number"] = store.NextVoucherNumber(purchase ? "NK0" : "PT0");
         header["issue_number"] = "XK0" + header["voucher_number"][3..];
         header["number"] = store.NextInvoiceNumber();
-        // Purchases show no proposed series: the tool must leave it alone.
+        // Purchases show no proposed series: the tool types the source "Ký hiệu HĐ" and "Mẫu số HĐ".
         header["series"] = purchase ? "" : "1C26MLV";
         header["payment"] = purchase ? "Chưa thanh toán" : "Tiền mặt";
         foreach (var key in new[] { "customer", "customer_name", "address", "customer_tax", "payer", "buyer", "template" }) header[key] = "";
@@ -372,6 +372,9 @@ public sealed class VoucherWindow : Window, IGridSource
             switch (e.Key)
             {
                 case "name": line.Name = text; break;
+                case "stock" when purchase && scenario.PurchaseDefaultsDelayMilliseconds > 0:
+                    MessageBox.Show(this, "Dữ liệu không có trong danh mục.", "MISA SME 2023", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    break;
                 case "stock": line.Stock = text; break;
                 case "debit_account": line.DebitAccount = text; break;
                 case "credit_account": line.CreditAccount = text; break;
@@ -430,9 +433,26 @@ public sealed class VoucherWindow : Window, IGridSource
         if (purchase)
         {
             // MISA fills warehouse and accounts from the item's defaults; the profile expects KHH / 1561 / 331.
-            line.Stock = profile.Setting(screen, "stock", "KHH");
-            line.DebitAccount = profile.Setting(screen, "stockAccount", "1561");
-            line.CreditAccount = profile.Setting(screen, "payableAccount", "331");
+            void Defaults()
+            {
+                line.Stock = profile.Setting(screen, "stock", "KHH");
+                line.DebitAccount = profile.Setting(screen, "stockAccount", "1561");
+                line.CreditAccount = profile.Setting(screen, "payableAccount", "331");
+            }
+            if (scenario.PurchaseDefaultsDelayMilliseconds <= 0) Defaults();
+            else
+            {
+                line.Stock = line.DebitAccount = line.CreditAccount = "";
+                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(scenario.PurchaseDefaultsDelayMilliseconds) };
+                timer.Tick += (_, _) =>
+                {
+                    timer.Stop();
+                    Defaults();
+                    FakeLog.Write("purchase defaults filled");
+                    grid.Refresh(force: true);
+                };
+                timer.Start();
+            }
         }
         Recalculate(line);
     }

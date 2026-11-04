@@ -49,6 +49,11 @@ public sealed record Scenario
     public bool NewCustomerAddressReadOnly { get; init; }
     /// <summary>The "Mua hàng" module: purchase list and "Mua hàng hóa, dịch vụ" editor (purchase_list / purchase_voucher screens).</summary>
     public bool Purchase { get; init; }
+    /// <summary>
+    /// Real R20 purchase lines: Kho/TK Kho/TK công nợ appear this long after the item code, and typing into Kho shows
+    /// "Dữ liệu không có trong danh mục." (failure report 0.2.137).
+    /// </summary>
+    public int PurchaseDefaultsDelayMilliseconds { get; init; }
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
 

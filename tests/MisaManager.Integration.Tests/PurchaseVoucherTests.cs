@@ -37,8 +37,10 @@ public sealed class PurchaseVoucherTests : UiTest
         // No customer/supplier list loaded: the supplier is looked up by the MST typed into "Nhà cung cấp".
         Assert.Contains(events, line => line.Contains("field customer <- '" + Invoices.Supplier.TaxCode + "'"));
         Assert.Contains(events, line => line.Contains("customer NCC_PBH"));
-        // MISA already proposed KHH/1561/331 and no series: the tool types neither.
-        Assert.DoesNotContain(events, line => line.Contains("field series <-"));
+        // "Ký hiệu HĐ" and "Mẫu số HĐ" of the source invoice are typed; MISA already proposed KHH/1561/331.
+        Assert.Equal("1C26MLV", voucher.Series);
+        Assert.Contains(events, line => line.Contains("field series <- '1C26MLV'"));
+        Assert.Contains(events, line => line.Contains("field template <- '1'"));
         Assert.DoesNotContain(events, line => line.Contains(" stock <-") || line.Contains(" debit_account <-") || line.Contains(" credit_account <-"));
     }, Purchase);
 
@@ -58,6 +60,21 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Contains(events, line => line.Contains("field customer <- 'NCC_PBH'"));
         Assert.DoesNotContain(events, line => line.Contains("field customer <- '" + Invoices.Supplier.TaxCode + "'"));
     }, Purchase, customers: [new PartyCatalogEntry("NCC_PBH", Invoices.Supplier.Name, Invoices.Supplier.TaxCode)]);
+
+    [Fact]
+    public Task WarehouseAndAccountsFilledLateByMisaAreWaitedForNotTyped() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2004", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 4, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.All(voucher.Lines, line => Assert.Equal(("KHH", "1561", "331"), (line.Stock, line.DebitAccount, line.CreditAccount)));
+        // Typing into Kho shows "Dữ liệu không có trong danh mục." on real R20: MISA's own defaults must be awaited.
+        Assert.DoesNotContain(Events(misa), line => line.Contains(" stock <-"));
+    }, Purchase with { PurchaseDefaultsDelayMilliseconds = 1500 });
 
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>

@@ -375,9 +375,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     case WorkflowStatus.InvoiceVerified:
                         await Tab(profile.InvoiceTab, token);
                         await Write("number", context.Invoice.Identity.Number, context.Invoice.Identity.Number, NativeValueKind.Exact, "Tab", token); sent = true;
-                        // Purchases keep the series MISA proposes (not needed for the purchase register).
-                        if (context.Invoice.Identity.Series.Length > 0 && !profile.IsPurchase)
+                        if (context.Invoice.Identity.Series.Length > 0)
                             await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token);
+                        if (PurchaseTemplate(context) is { } template)
+                            await Write("template", template, template, NativeValueKind.Exact, "Tab", token);
                         break;
                     case WorkflowStatus.ItemsVerified:
                         await EnterLines(context, progress, token);
@@ -1001,6 +1002,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private async Task<NativeFields> EnsurePurchaseAccountsAsync(int row, string code, InvoiceLine line, NativeFields metadata,
         CancellationToken token)
     {
+        // R20 fills Kho/TK Kho/TK công nợ a moment after the item code; typing into Kho meanwhile pops
+        // "Dữ liệu không có trong danh mục.". Wait (read-only) for MISA's defaults before deciding to type.
+        var boundRow = new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code);
+        metadata = await NativeWait.UntilAsync(
+            async () => await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token), boundRow, MetadataColumns(), token), token),
+            PurchaseAccountsMatch, "READBACK_MISMATCH", $"Dòng {row + 1}: MISA chưa điền Kho/TK.", token,
+            timeoutMilliseconds: 4000, returnLastMismatch: true);
         var changed = false;
         foreach (var (key, wanted, commit) in new[] { ("stock", profile.PurchaseStock, "Enter"), ("debit_account", profile.StockAccount, "Tab"),
                      ("credit_account", profile.PayableAccount, "Tab") })
@@ -1028,6 +1036,15 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     $"Dòng {row + 1}: {profile.Columns[key]} là '{verified.Values[profile.Columns[key]].Value}', cần '{wanted}'.", true);
         return verified;
     }
+
+    // Only purchases type "Mẫu số HĐ"; sales keep the template of the chosen invoice series.
+    private string? PurchaseTemplate(WorkflowContext context)
+        => profile.IsPurchase && profile.Fields.ContainsKey("template") && context.Invoice.Template.Trim() is { Length: > 0 } template
+            ? template : null;
+
+    private bool PurchaseAccountsMatch(NativeFields fields)
+        => new[] { ("stock", profile.PurchaseStock), ("debit_account", profile.StockAccount), ("credit_account", profile.PayableAccount) }
+            .All(pair => Match(pair.Item2, fields.Values[profile.Columns[pair.Item1]].Value, NativeValueKind.Text));
 
     /// <summary>
     /// The portal states tax per rate; the importer spreads its rounding over the lines. MISA computes amount × rate per
@@ -1205,8 +1222,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // Purchases are always "Chưa thanh toán" (the editor the Thêm button opens) and keep MISA's series.
         if (!profile.IsPurchase) invoiceFields.Add(("payment", context.Invoice.PaymentMethod, NativeValueKind.Text));
         // An empty source series keeps MISA's default series; there is nothing to compare.
-        if (context.Invoice.Identity.Series.Length > 0 && !profile.IsPurchase)
+        if (context.Invoice.Identity.Series.Length > 0)
             invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
+        if (PurchaseTemplate(context) is { } template) invoiceFields.Add(("template", template, NativeValueKind.Exact));
         // Invoice tab first: entry ends there, and Cất needs the receipt tab, so each header tab is selected once.
         await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
         var individual = !profile.IsPurchase && BuyerCodes.IsIndividual(context.Invoice.Buyer);
@@ -1491,8 +1509,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     {
         await Tab(profile.InvoiceTab, token);
         await Require("number", context.Invoice.Identity.Number, NativeValueKind.Exact, token);
-        if (profile.IsPurchase) return;
         if (context.Invoice.Identity.Series.Length > 0) await Require("series", context.Invoice.Identity.Series, NativeValueKind.Exact, token);
+        if (PurchaseTemplate(context) is { } template) await Require("template", template, NativeValueKind.Exact, token);
+        if (profile.IsPurchase) return;
         // R20's domestic VND editor has no currency control; VND is implicit in this surface.
         if (!string.Equals(context.Invoice.Currency, "VND", StringComparison.Ordinal))
             await Require("currency", context.Invoice.Currency, NativeValueKind.Exact, token);
