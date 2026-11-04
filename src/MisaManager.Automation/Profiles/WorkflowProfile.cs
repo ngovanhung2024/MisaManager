@@ -161,8 +161,9 @@ public sealed class WorkflowProfile
         return elements.Any(element => element.AutomationId == scope.AutomationId
                 && (scope.Name.Length == 0 || string.Equals(element.Name, scope.Name, StringComparison.Ordinal))
                 && element.Enabled && !element.Offscreen)
-            && elements.Any(element => element.AutomationId == SalesTab.AutomationId
-                && (SalesTab.Name.Length == 0 || string.Equals(element.Name, SalesTab.Name, StringComparison.Ordinal)));
+            && elements.Any(element => (SalesTab.AutomationId.Length == 0 || element.AutomationId == SalesTab.AutomationId)
+                && (SalesTab.Name.Length == 0 || string.Equals(element.Name, SalesTab.Name, StringComparison.Ordinal))
+                && (SalesTab.ControlType.Length == 0 || string.Equals(element.ControlType, SalesTab.ControlType, StringComparison.Ordinal)));
     }
 
     public ScreenProfile Screen(string key) => Screens.TryGetValue(key, out var screen) ? screen

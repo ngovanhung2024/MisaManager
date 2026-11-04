@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-purchase-service-list-20261104",
+  "revision": "r20-purchase-tab-by-name-20261104",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -70,7 +70,7 @@
       "title": "Phân hệ Mua hàng - Mua hàng hóa, dịch vụ (danh sách chứng từ)",
       "scope": { "automationId": "frmPUVoucherService", "name": "Mua hàng hóa, dịch vụ" },
       "elements": {
-        "module_tab": { "automationId": "TabItem Key PUVoucherService", "name": "Mua hàng hóa, dịch vụ", "description": "Tab Mua hàng hóa, dịch vụ trong phân hệ Mua hàng; Key theo form frmPUVoucherService (quy ước TabItem Key SAVoucher ↔ frmSAVoucher), xác nhận bằng Kiểm tra giao diện" },
+        "module_tab": { "name": "Mua hàng hóa, dịch vụ", "controlType": "TabItem", "description": "Tab Mua hàng hóa, dịch vụ trên thanh tab phân hệ Mua hàng. R20 thật không có ID TabItem Key PUVoucherService (báo cáo 0.2.133) nên chọn theo tên + loại TabItem" },
         "add": { "name": "Thêm", "controlType": "Button", "description": "Nút Thêm: mở Chứng từ mua hàng trong nước nhập kho chưa thanh toán" }
       },
       "grids": {

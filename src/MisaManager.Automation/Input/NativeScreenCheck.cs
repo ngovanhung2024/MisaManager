@@ -87,8 +87,13 @@ public sealed partial class NativeInputService
         // caption-only matches such as "Cất" also exist on the voucher editor.
         var open = screen.Scope is not null || checks.Any(item => item.Status is ScreenCheckStatus.Ok
             && screen.Elements.TryGetValue(item.Key, out var element) && element.AutomationId.Length > 0);
-        IReadOnlyList<string> ids = checks.Any(item => item.Status is ScreenCheckStatus.Missing or ScreenCheckStatus.Ambiguous)
-            ? all.Where(item => item.AutomationId.Length > 0 && !item.Offscreen)
+        var failed = checks.Any(item => item.Status is ScreenCheckStatus.Missing or ScreenCheckStatus.Ambiguous);
+        // The module tab strip is outside the scope; list its tabs so the report carries their real IDs.
+        var outside = failed && !ReferenceEquals(scope, main)
+            ? Snapshots(main, new AndCondition(automation.ConditionFactory.ByProcessId(processId), automation.ConditionFactory.ByControlType(ControlType.TabItem)))
+            : [];
+        IReadOnlyList<string> ids = failed
+            ? all.Concat(outside).Where(item => (item.AutomationId.Length > 0 || item.ControlType == ControlType.TabItem) && !item.Offscreen)
                 .Select(item => $"{item.AutomationId} | {item.ControlType} | {item.Name}").Distinct().Take(MaxReportedIds).ToArray()
             : [];
         return new(screen.Key, screen.Title, open, tabs, open ? checks : [], open ? ids : []);
