@@ -1366,9 +1366,50 @@ public partial class MainWindow : Window
     {
         if (sender is Button { ContextMenu: { } menu } button)
         {
+            RefreshLoadedMenuItems();
             menu.PlacementTarget = button;
             menu.IsOpen = true;
         }
+    }
+
+    private void RefreshLoadedMenuItems()
+    {
+        var services = ((App)Application.Current).Services;
+        var posted = services.PostedInvoices.Count == 0 ? "" : $" · {services.PostedInvoices.Count:N0} HĐ đã ghi sổ";
+        MarkLoaded(OpenInvoicesItem, "Mở Excel hóa đơn…",
+            invoices.Count == 0 ? null : $"{invoices.Count:N0} hóa đơn · {WorkbookLabel.Text}{posted}");
+        var catalog = services.ItemCatalog;
+        MarkLoaded(CatalogMenuItem, "Nạp mã hàng…",
+            catalog.Count == 0 ? null : $"{catalog.Count:N0} mã{FileSuffix(catalog.SourceFile)}");
+        var groups = services.ItemGroups;
+        MarkLoaded(ItemGroupsMenuItem, "Nạp nhóm vật tư, hàng hóa…", groups.Count == 0 ? null
+            : $"{groups.Count:N0} nhóm ({string.Join(", ", groups.Snapshot().Select(group => group.Code).Take(6))}"
+                + $"{(groups.Count > 6 ? "…" : "")}){FileSuffix(groups.Source)}");
+        var parties = services.PartyCatalog;
+        MarkLoaded(CustomersMenuItem, "Nạp mã khách hàng…",
+            parties.CustomerCount == 0 ? null : $"{parties.CustomerCount:N0} mã{FileSuffix(parties.CustomerSource)}");
+        MarkLoaded(SuppliersMenuItem, "Nạp mã nhà cung cấp…",
+            parties.SupplierCount == 0 ? null : $"{parties.SupplierCount:N0} mã{FileSuffix(parties.SupplierSource)}");
+    }
+
+    private static string FileSuffix(string? path) => string.IsNullOrWhiteSpace(path) ? "" : " · " + Path.GetFileName(path);
+
+    private void MarkLoaded(MenuItem item, string title, string? detail)
+    {
+        if (detail is null)
+        {
+            item.Header = title;
+            item.Icon = null;
+            item.ClearValue(ForegroundProperty);
+            return;
+        }
+        var success = (System.Windows.Media.Brush)FindResource("Success");
+        var header = new StackPanel();
+        header.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold });
+        header.Children.Add(new TextBlock { Text = "Đã nạp: " + detail, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 320 });
+        item.Header = header;
+        item.Icon = new TextBlock { Text = "✓", Foreground = success, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center };
+        item.Foreground = success;
     }
 
     private sealed class InvoiceRow : INotifyPropertyChanged
