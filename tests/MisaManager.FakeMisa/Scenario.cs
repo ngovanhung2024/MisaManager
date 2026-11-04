@@ -47,6 +47,13 @@ public sealed record Scenario
     public bool SaveKeepsCatEnabled { get; init; }
     /// <summary>The "Địa chỉ" box of "Thêm Khách hàng" (organisation) refuses input, so the tool fails before the dialog's Cất.</summary>
     public bool NewCustomerAddressReadOnly { get; init; }
+    /// <summary>The "Mua hàng" module: purchase list and "Mua hàng hóa, dịch vụ" editor (purchase_list / purchase_voucher screens).</summary>
+    public bool Purchase { get; init; }
+    /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
+    public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
+
+    [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
+    [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -61,13 +68,14 @@ public sealed record Scenario
         {
             ExistingVouchers = scenario.ExistingVouchers ?? [],
             TakenItemCodes = scenario.TakenItemCodes ?? [],
-            AdditionalItems = scenario.AdditionalItems ?? []
+            AdditionalItems = scenario.AdditionalItems ?? [],
+            AdditionalSuppliers = scenario.AdditionalSuppliers ?? []
         };
     }
 }
 
 public sealed record SavedLine(string Code, string Name, string Unit, string DebitAccount, string RevenueAccount,
-    decimal Quantity, decimal UnitPrice, decimal Amount, string TaxRate, decimal TaxAmount);
+    decimal Quantity, decimal UnitPrice, decimal Amount, string TaxRate, decimal TaxAmount, string Stock = "", string CreditAccount = "");
 
 public sealed record SavedVoucher(string VoucherNumber, string InvoiceNumber, string Series, string CustomerCode,
     string CustomerName, string CustomerTaxCode, string PostedDate, string VoucherDate, string IssuedDate, string Payment,

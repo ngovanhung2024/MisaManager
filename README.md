@@ -210,6 +210,30 @@ MISA** bỏ qua nếu còn trong hàng đợi. Ghép theo số hóa đơn (bỏ 
 `%LOCALAPPDATA%\MisaManager\posted-invoices.json`; mỗi lần nạp thay toàn bộ danh sách cũ, **Xóa tất cả dữ liệu Excel đã
 nạp** xóa danh sách này. Lịch sử nhập của tool không bị ảnh hưởng.
 
+## Mua hàng (hóa đơn mua vào)
+
+Nút **Bán hàng / Mua hàng** ở đầu cửa sổ chọn chế độ (nhớ qua lần mở sau; mỗi chế độ có danh sách hóa đơn, danh sách đã
+ghi sổ `posted-purchases.json` và phiên nhập `import-purchase` riêng). Ở **Mua hàng**, **••• → Mở hóa đơn mua vào** hỏi:
+
+1. File zip các hóa đơn HTML tải từ cổng thuế (hoặc file Excel đã chuyển trước đó). Tool đọc từng trang, bỏ file trùng/đã
+   hủy, ghi ra `<tên zip>_hoa_don_mua_vao.xlsx` cạnh file zip, **sắp xếp từ đầu năm đến cuối năm**. Thuế chỉ có theo từng
+   thuế suất nên được chia cho các dòng (làm tròn đồng, phần lệch dồn vào dòng lớn nhất). Dòng chiết khấu thương mại/điều
+   chỉnh giảm ghi số âm nên hóa đơn đó bị bỏ như hóa đơn âm.
+2. File `Mua_hang_hoa__dich_vu.xlsx` xuất từ MISA: ghép theo số hóa đơn **và tên nhà cung cấp** (nhà cung cấp khác nhau có
+   thể trùng số).
+
+Chỉ **hàng hóa** được nhập. Hóa đơn dịch vụ/chi phí (phí, cước, vé, xăng dầu, điện nước, ăn uống, điện thoại/máy tính,
+phần mềm, chữ ký số, thanh toán theo hợp đồng…, hoặc dòng không có ĐVT và số lượng) hiện ở tab **Dịch vụ** kèm lý do; hóa
+đơn có cả hàng hóa lẫn một phần nhỏ dịch vụ cũng không nhập (nhập tay). Sửa cột **Phân loại** trong file Excel thành
+`Hàng hóa`/`Dịch vụ` rồi mở lại file nếu tool nhận nhầm.
+
+Chứng từ: **Thêm** trên tab Mua hàng hóa, dịch vụ (Mua hàng trong nước nhập kho chưa thanh toán) → ô Nhà cung cấp gõ
+**MST** rồi Enter → ngày hạch toán/chứng từ/hóa đơn → tab Hóa đơn chỉ điền số hóa đơn (không điền ký hiệu) → mã hàng như
+bán hàng (thiếu thì F9 tạo mã, kho ngầm định KHH) → mỗi dòng phải là Kho **KHH**, TK Kho **1561**, TK công nợ **331**
+(khác thì tool gõ lại) → tiền thuế từng dòng đúng nguồn → đối chiếu → Cất. Đã nạp danh sách nhà cung cấp mà thiếu MST thì
+dừng trước khi nhập. Selector màn hình mua hàng (`purchase_list`, `purchase_voucher` trong profile) theo quy ước ID của bán
+hàng; nếu **Kiểm tra giao diện** báo lệch, **Copy lỗi** gửi lại để cập nhật profile.
+
 ## Đối chiếu hóa đơn
 
 Nút **Đối chiếu hóa đơn** đọc chứng từ bán hàng **đang mở trong MISA** (không cần tool vừa nhập, không cần nạp Excel):

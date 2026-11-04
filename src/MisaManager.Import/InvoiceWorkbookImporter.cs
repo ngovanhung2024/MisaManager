@@ -19,7 +19,11 @@ public sealed record WorkbookMappingField(string Key, bool Required, int? Sugges
 public sealed record WorkbookMappingSchema(int HeaderRow, IReadOnlyList<WorkbookColumnChoice> Columns,
     IReadOnlyList<WorkbookMappingField> Fields);
 
-public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
+/// <param name="purchase">
+/// Purchase invoices ("Mua hàng"): the seller is the supplier on the voucher, invoices are told apart by supplier MST,
+/// series and number (suppliers reuse numbers), and services/expenses are left out (<see cref="ImportResult.Services"/>).
+/// </param>
+public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase = false)
 {
     private static readonly IReadOnlyDictionary<string, string[]> Aliases = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
@@ -62,12 +66,24 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         ["exchangeRate"] = ["tỷ giá", "ty gia", "exchange rate"],
         ["voucherDate"] = ["ngày chứng từ", "ngay chung tu", "voucher date"],
         ["postedDate"] = ["ngày hạch toán", "ngay hach toan", "posted date"],
-        ["notes"] = ["ghi chú", "ghi chu", "notes", "note"]
+        ["notes"] = ["ghi chú", "ghi chu", "notes", "note"],
+        ["itemNature"] = ["phân loại", "phan loai", "loại hàng", "hàng hóa/dịch vụ", "item nature"]
     };
     private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] Required = ["number", "issued", "buyer", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] IdentityFields = ["number", "buyerCode", "buyerTaxCode"];
+    private static readonly string[] PurchaseFields = ["number", "series", "issued", "seller", "sellerTaxCode", "sellerAddress", "sellerCode",
+        "buyer", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal",
+        "lineKind", "itemNature", "total"];
+    private static readonly string[] PurchaseRequired = ["number", "issued", "seller", "sellerTaxCode", "name", "unit", "unitPrice", "quantity",
+        "amount", "taxRate", "taxAmount", "lineTotal"];
+    // Per-line columns; every other mapped column is invoice metadata and must agree across the invoice's rows.
+    private static readonly HashSet<string> LineFields = new(["itemCode", "name", "unit", "quantity", "unitPrice", "amount", "taxRate",
+        "taxAmount", "lineTotal", "lineKind", "itemNature"], StringComparer.Ordinal);
+    /// <summary>Sales fields (the default importer).</summary>
     public static IReadOnlyList<string> Fields => SelectedFields;
+    public IReadOnlyList<string> MappedFields => purchase ? PurchaseFields : SelectedFields;
+    private IReadOnlyList<string> RequiredFields => purchase ? PurchaseRequired : Required;
 
     public WorkbookMappingSchema DescribeMapping(WorkbookData workbook, string worksheet)
     {
@@ -77,7 +93,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         var columns = header.Cells.Values.OrderBy(cell => cell.Column)
             .Select(cell => new WorkbookColumnChoice(cell.Column, $"{cell.Address} - {cell.ParsedValue}"))
             .ToArray();
-        var fields = Fields.Select(key => new WorkbookMappingField(key, Required.Contains(key), SuggestColumn(header, key))).ToArray();
+        var fields = MappedFields.Select(key => new WorkbookMappingField(key, RequiredFields.Contains(key), SuggestColumn(header, key))).ToArray();
         return new WorkbookMappingSchema(header.Number, columns, fields);
     }
 
@@ -119,7 +135,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             ?? throw new WorkbookImportException("HEADER_MISSING", "Không tìm thấy dòng tiêu đề.");
         var columns = options.ColumnMap is null ? MapColumns(header, issues) : ValidateMapping(options.ColumnMap, header);
         // A "DN mua" column alone names the buyer as well as "Người mua" does.
-        foreach (var required in Required.Where(key => !columns.ContainsKey(key) && !(key == "buyer" && columns.ContainsKey("buyerCompany"))))
+        foreach (var required in RequiredFields.Where(key => !columns.ContainsKey(key) && !(key == "buyer" && columns.ContainsKey("buyerCompany"))))
             issues.Add(new("COLUMN_MISSING", IssueSeverity.Blocking, $"Thiếu cột bắt buộc '{required}'.", sheet.Name, Resolution: "Bổ sung cột hoặc chọn lại worksheet."));
         if (issues.Any(issue => issue.Severity == IssueSeverity.Blocking))
             return EmptyResult(workbook, sheet, header.Number, issues);
@@ -140,8 +156,11 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             // Unnumbered rows are invoices not yet signed/issued: skipped, never glued to the previous invoice.
             if (number.Length == 0) { unnumbered.Add(cells["number"]); continue; }
             ParseDate(cells["issued"], workbook.Date1904, options.Locale, issues);
-            // One invoice number denotes one invoice; conflicting header values are checked in BuildInvoice.
-            if (!groups.TryGetValue(number, out var group)) groups.Add(number, group = []);
+            // One invoice number denotes one sales invoice; suppliers reuse numbers, so purchases add MST and series.
+            // Conflicting header values are checked in BuildInvoice.
+            var groupKey = purchase ? JsonSerializer.Serialize(new[] { PartyCatalogStore.TaxKey(Text(cells, "sellerTaxCode")),
+                PostedInvoiceStore.SeriesKey(Text(cells, "series")), number }) : number;
+            if (!groups.TryGetValue(groupKey, out var group)) groups.Add(groupKey, group = []);
             group.Add((row, cells));
         }
         if (unnumbered.Count > 0)
@@ -151,7 +170,25 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
                 Resolution: "Hóa đơn chưa được cấp số (chưa ký/phát hành) không nhập; xuất lại file sau khi đã có số."));
         var sha = workbook.Sha256;
         var source = new SourceReference(workbook.FilePath, sha, sheet.Name, header.Number, sheet.Rows.LastOrDefault()?.Number ?? header.Number, options.ImportRevision);
-        var built = groups.Values.Select(group => BuildInvoice(source, group, workbook.Date1904, options.Locale, confirmation, token)).ToArray();
+        var built = groups.Values.Select(group => BuildInvoice(source, group, workbook.Date1904, options.Locale, confirmation, purchase, token)).ToArray();
+        var services = new List<ServiceInvoice>();
+        if (purchase)
+        {
+            // Only stock goods are entered; a service or mixed invoice is listed for the user instead.
+            foreach (var invoice in built)
+            {
+                var (nature, classified) = ItemNatures.Classify(invoice);
+                if (nature != InvoiceNature.Goods)
+                    services.Add(new(invoice.InvoiceId, invoice.Identity.Number, invoice.Issued, invoice.Seller.Name, invoice.Seller.TaxCode,
+                        invoice.Subtotal, invoice.GrandTotal, nature, classified));
+            }
+            var serviceIds = services.Select(item => item.InvoiceId).ToHashSet(StringComparer.Ordinal);
+            built = built.Where(invoice => !serviceIds.Contains(invoice.InvoiceId)).ToArray();
+            if (services.Count > 0)
+                issues.Add(new("SERVICE_INVOICES_SKIPPED", IssueSeverity.Info,
+                    $"Bỏ qua {services.Count:N0} hóa đơn dịch vụ/chi phí (xem tab Dịch vụ).", sheet.Name,
+                    Resolution: "Chỉ hàng hóa được nhập vào Mua hàng nhập kho. Nếu tool nhận nhầm, sửa cột 'Phân loại' thành 'Hàng hóa' rồi nạp lại."));
+        }
         // Negative lines are adjustments/returns, which are not entered: the whole invoice is left out.
         var negative = built.Where(invoice => invoice.Lines.Any(line => line.Quantity < 0 || line.AmountBeforeTax < 0)).ToArray();
         var invoices = built.Except(negative).ToImmutableArray();
@@ -159,25 +196,27 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
             issues.Add(new("INVOICE_NEGATIVE_SKIPPED", IssueSeverity.Info,
                 $"Bỏ qua {negative.Length:N0} hóa đơn có số lượng/thành tiền âm (HĐ {string.Join(", ", negative.Take(10).Select(invoice => invoice.Identity.Number))}{(negative.Length > 10 ? ", …" : "")}).",
                 sheet.Name, Resolution: "Hóa đơn điều chỉnh/trả hàng không nhập bằng tool."));
-        if (invoices.Length == 0) issues.Add(new("NO_INVOICES", IssueSeverity.Blocking, "Worksheet không có dòng hóa đơn.", sheet.Name));
+        if (invoices.Length == 0 && services.Count == 0) issues.Add(new("NO_INVOICES", IssueSeverity.Blocking, "Worksheet không có dòng hóa đơn.", sheet.Name));
         return new ImportResult(source, sheets.Select(item => item.Name).ToArray(), invoices, issues.Concat(invoices.SelectMany(item => item.Issues)).ToArray(),
-            sheet.Rows.Length, ignored, unnumbered.Count, negative.Length);
+            sheet.Rows.Length, ignored, unnumbered.Count, negative.Length, purchase ? services : null);
     }
 
-    private static InvoiceDocument BuildInvoice(SourceReference source, List<(WorkbookRow Row, IReadOnlyDictionary<string, SourceCell> Cells)> records, bool date1904, string? locale, ImportConfirmation? confirmation, CancellationToken token)
+    private static InvoiceDocument BuildInvoice(SourceReference source, List<(WorkbookRow Row, IReadOnlyDictionary<string, SourceCell> Cells)> records, bool date1904, string? locale, ImportConfirmation? confirmation, bool purchase, CancellationToken token)
     {
         var invoiceSource = new SourceReference(source.FilePath, source.Sha256, source.Worksheet,
             records.Min(item => item.Row.Number), records.Max(item => item.Row.Number), source.ImportRevision);
         var issues = new List<ImportIssue>();
         var first = records[0].Cells.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        foreach (var field in new[] { "issued", "signed", "buyer", "buyerCompany", "buyerTaxCode" })
+        foreach (var field in new[] { "issued", "signed", "buyer", "buyerCompany", "buyerTaxCode", "seller", "sellerTaxCode" })
         {
             var populated = records.Select(record => record.Cells.GetValueOrDefault(field))
                 .Where(cell => cell is not null && !string.IsNullOrWhiteSpace(cell.ParsedValue)).ToArray();
             if (populated.Length > 0) first[field] = populated[0]!;
         }
         var number = Text(records[0].Cells, "number");
-        var key = JsonSerializer.Serialize(new[] { source.FilePath, source.Sha256, source.Worksheet, number });
+        var key = JsonSerializer.Serialize(purchase
+            ? new[] { source.FilePath, source.Sha256, source.Worksheet, number, Text(first, "series"), PartyCatalogStore.TaxKey(Text(first, "sellerTaxCode")) }
+            : new[] { source.FilePath, source.Sha256, source.Worksheet, number });
         var id = Hash(key)[..24];
         var issued = ParseDate(first["issued"], date1904, locale, issues);
         var identity = new InvoiceIdentity(Text(first, "sellerTaxCode"), Text(first, "series"), Text(first, "number"), issued);
@@ -206,7 +245,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
                 Text(cells, "taxRate"), Number(cells, "taxAmount", locale, issues), Number(cells, "lineTotal", locale, issues), Number(cells, "discountRate", locale, issues),
                 Text(cells, "lineKind"), cells.ToImmutableDictionary()));
         }
-        var lineFields = new HashSet<string>(["itemCode", "name", "unit", "quantity", "unitPrice", "amount", "taxRate", "taxAmount", "lineTotal"], StringComparer.Ordinal);
+        var lineFields = LineFields;
         foreach (var field in first.Keys.Where(field => !lineFields.Contains(field)))
             if (records.Select(row => Text(row.Cells, field)).Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).Count() > 1)
                 issues.Add(new("METADATA_CONFLICT", IssueSeverity.Blocking, $"{field}: dữ liệu trong cùng nhóm hóa đơn không nhất quán.", source.Worksheet,
@@ -227,7 +266,8 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         var buyerCode = Text(first, "buyerCode");
         // Consumer invoices use MISA's standard NTD customer when the source
         // workbook does not carry a customer code.
-        if (Normalize(buyerName) == Normalize("BÁN CHO NGƯỜI TIÊU DÙNG") && buyerCode.Length == 0)
+        if (purchase) { }
+        else if (Normalize(buyerName) == Normalize("BÁN CHO NGƯỜI TIÊU DÙNG") && buyerCode.Length == 0)
         {
             buyerCode = "NTD";
             buyerKind = PartyKind.Individual;
@@ -262,12 +302,17 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         var signed = DateField("signed") ?? issued;
         var voucherDate = DateField("voucherDate") ?? signed;
         var postedDate = DateField("postedDate") ?? signed;
+        // The portal's invoice total must equal the lines; otherwise a fee or rounding is missing from them.
+        if (purchase && Number(first, "total", locale, issues) is { } stated && grandTotal is { } summed && stated != summed
+            && !lines.Any(line => line.AmountBeforeTax < 0))
+            issues.Add(new("SOURCE_TOTAL_MISMATCH", IssueSeverity.Blocking, $"Tổng thanh toán hóa đơn {stated:N0} khác tổng các dòng {summed:N0}.",
+                source.Worksheet, first["total"].Address, Resolution: "Kiểm tra phí/chiết khấu trên hóa đơn gốc; nhập tay hóa đơn này."));
         var invoice = new InvoiceDocument(id, source.ImportRevision, "", identity, invoiceSource,
             new Party(Text(first, "seller"), Text(first, "sellerTaxCode"), Text(first, "sellerAddress"), Text(first, "sellerCode"), Presence(Text(first, "sellerTaxCode"))),
             new Party(buyerName, Text(first, "buyerTaxCode"), Text(first, "buyerAddress"), buyerCode, buyerPresence, buyerKind, buyerContact),
             Text(first, "template"), Text(first, "currency").Length == 0 ? "VND" : Text(first, "currency"),
-            Text(first, "payment").Length == 0 ? "Tiền mặt" : Text(first, "payment"), issued, voucherDate, postedDate,
-            Text(first, "invoiceType").Length == 0 ? "Hóa đơn bán hàng" : Text(first, "invoiceType"),
+            purchase ? InvoiceKinds.PurchasePayment : Text(first, "payment").Length == 0 ? "Tiền mặt" : Text(first, "payment"), issued, voucherDate, postedDate,
+            purchase ? InvoiceKinds.Purchase : Text(first, "invoiceType").Length == 0 ? InvoiceKinds.Sales : Text(first, "invoiceType"),
             Number(first, "exchangeRate", locale, issues), lines.ToImmutable(),
             subtotal, taxTotal, grandTotal, Number(first, "invoiceDiscount", locale, issues),
             ImmutableArray<TaxSummary>.Empty, Text(first, "notes"), ImmutableArray<ImportIssue>.Empty, allCells.ToImmutable(), confirmation,
@@ -305,14 +350,14 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         }
     }
 
-    private static Dictionary<string, int> MapColumns(WorkbookRow header, List<ImportIssue> issues)
+    private Dictionary<string, int> MapColumns(WorkbookRow header, List<ImportIssue> issues)
     {
         var columns = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var (column, cell) in header.Cells)
         {
             var name = Normalize(cell.ParsedValue);
             if (cell.HasFormula) issues.Add(new("HEADER_FORMULA", IssueSeverity.Blocking, "Tiêu đề cột không được là công thức.", cell.Worksheet, cell.Address));
-            var matches = Aliases.Where(pair => SelectedFields.Contains(pair.Key)
+            var matches = Aliases.Where(pair => MappedFields.Contains(pair.Key)
                 && pair.Value.Any(alias => Normalize(alias) == name)).Select(pair => pair.Key).ToArray();
             if (matches.Length == 0) continue;
             if (matches.Length > 1 || columns.ContainsKey(matches[0]))
@@ -326,9 +371,9 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         return columns;
     }
 
-    private static int? SuggestColumn(WorkbookRow header, string field)
+    private int? SuggestColumn(WorkbookRow header, string field)
     {
-        var matches = header.Cells.Values.Where(cell => !cell.HasFormula && SuggestField(cell.ParsedValue ?? "") == field)
+        var matches = header.Cells.Values.Where(cell => !cell.HasFormula && SuggestField(cell.ParsedValue ?? "", MappedFields) == field)
             .Select(cell => cell.Column).ToArray();
         return matches.Length == 1 ? matches[0] : null;
     }
@@ -337,9 +382,9 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         => sheet.Rows.Take(50).FirstOrDefault(row => row.Cells.Values.Any(cell =>
             Aliases["number"].Any(alias => Normalize(alias) == Normalize(cell.ParsedValue))));
 
-    private static Dictionary<string, int> ValidateMapping(ImmutableDictionary<string, int> mapping, WorkbookRow header)
+    private Dictionary<string, int> ValidateMapping(ImmutableDictionary<string, int> mapping, WorkbookRow header)
     {
-        if (mapping.Keys.Any(key => !SelectedFields.Contains(key)) || mapping.Values.Distinct().Count() != mapping.Count
+        if (mapping.Keys.Any(key => !MappedFields.Contains(key)) || mapping.Values.Distinct().Count() != mapping.Count
             || mapping.Values.Any(column => !header.Cells.ContainsKey(column) || header.Cells[column].HasFormula))
             throw new WorkbookImportException("MAPPING_INVALID", "Mapping phải dùng field hợp lệ và mỗi cột duy nhất tồn tại trong header.");
         return mapping.ToDictionary();
@@ -414,9 +459,10 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader)
         .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark).Select(char.ToLowerInvariant).ToArray())
         .Replace('đ', 'd').Replace('_', ' ').Replace('-', ' '), @"\s+", " ").Trim();
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-    public static string? SuggestField(string header)
+    public static string? SuggestField(string header) => SuggestField(header, SelectedFields);
+    private static string? SuggestField(string header, IReadOnlyList<string> selected)
     {
-        var fields = Aliases.Where(pair => SelectedFields.Contains(pair.Key)
+        var fields = Aliases.Where(pair => selected.Contains(pair.Key)
             && pair.Value.Any(alias => Normalize(alias) == Normalize(header))).Select(pair => pair.Key).ToArray();
         return fields.Length == 1 ? fields[0] : null;
     }

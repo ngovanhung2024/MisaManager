@@ -46,8 +46,15 @@ public static class InvoiceValidation
         // Stop before domain calculations or computed properties access that graph.
         if (invoice.Buyer is null || issues.Any(issue => issue.Severity == IssueSeverity.Blocking))
             return issues;
-        Required(invoice.Buyer.Name, "BUYER", "tên người mua");
-        if (string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode))
+        if (invoice.IsPurchase())
+        {
+            // The supplier is found in MISA by its MST, typed into "Nhà cung cấp".
+            Required(invoice.Seller!.Name, "SELLER", "tên nhà cung cấp");
+            if (string.IsNullOrWhiteSpace(invoice.Seller.TaxCode))
+                Block("SELLER_TAX_MISSING", "Thiếu MST nhà cung cấp.", "Bổ sung MST người bán trong file; tool điền MST vào ô Nhà cung cấp của MISA.");
+        }
+        else Required(invoice.Buyer.Name, "BUYER", "tên người mua");
+        if (!invoice.IsPurchase() && string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode))
         {
             if (invoice.Buyer.Name?.Contains("NGƯỜI TIÊU DÙNG", StringComparison.OrdinalIgnoreCase) == true)
                 issues.Add(new("BUYER_TAX_OPTIONAL", IssueSeverity.Info, "MST người mua để trống; chấp nhận cho giao dịch bán cho người tiêu dùng."));
@@ -58,7 +65,7 @@ public static class InvoiceValidation
                 issues.Add(new("BUYER_TAX_OPTIONAL", IssueSeverity.Info, "MST người mua để trống; người mua là cá nhân nên không bắt buộc MST."));
             else Block("BUYER_TAX_STATUS", "Thiếu MST của người mua là tổ chức/doanh nghiệp.", "Bổ sung MST người mua trong workbook.");
         }
-        if (invoice.Buyer.TaxCodePresence == ValuePresence.Provided && string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode))
+        if (!invoice.IsPurchase() && invoice.Buyer.TaxCodePresence == ValuePresence.Provided && string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode))
             Block("BUYER_TAX_STATUS", "Trạng thái MST người mua không phù hợp.", "Điền MST hoặc để trống cho người tiêu dùng.");
         if (invoice.Issued is null) Block("DATES_MISSING", "Thiếu ngày lập hóa đơn.", "Bổ sung ngày lập rõ ràng.");
         if (invoice.Lines.Length == 0) Block("LINES_MISSING", "Hóa đơn không có dòng hàng.", "Bổ sung dòng hàng.");

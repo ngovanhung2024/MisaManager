@@ -78,6 +78,23 @@
     <Style x:Key="CounterChip" TargetType="Border">
       <Setter Property="CornerRadius" Value="5"/><Setter Property="Padding" Value="6,1"/><Setter Property="Margin" Value="0,0,3,0"/>
     </Style>
+    <!-- Bán hàng / Mua hàng switch: a two-segment toggle -->
+    <Style x:Key="ModeButton" TargetType="RadioButton">
+      <Setter Property="Cursor" Value="Hand"/><Setter Property="FontSize" Value="12"/><Setter Property="Foreground" Value="{StaticResource Muted}"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+        <Border x:Name="Surface" CornerRadius="5" Padding="12,2" Background="Transparent">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#F4F6FA"/></Trigger>
+          <Trigger Property="IsChecked" Value="True">
+            <Setter TargetName="Surface" Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="{StaticResource Primary}"/><Setter Property="FontWeight" Value="SemiBold"/>
+          </Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.6"/></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style x:Key="MiniButton" TargetType="Button" BasedOn="{StaticResource RailButton}">
       <Setter Property="Padding" Value="7,1"/><Setter Property="MinHeight" Value="22"/><Setter Property="FontSize" Value="11.5"/>
       <Setter Property="Margin" Value="0,0,3,0"/><Setter Property="Foreground" Value="{StaticResource Primary}"/>
@@ -89,7 +106,22 @@
       <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <!-- Sources (row 0 is empty: the live status badge sits in the footer) -->
+    <!-- Bán hàng / Mua hàng: which invoices are loaded and which MISA voucher is filled (the live status badge sits in the footer) -->
+    <DockPanel Grid.Row="0" Margin="0,0,0,2">
+      <Border Background="#E5E9F0" CornerRadius="6" Padding="2" DockPanel.Dock="Left">
+        <StackPanel Orientation="Horizontal">
+          <RadioButton x:Name="SalesMode" GroupName="VoucherMode" Content="Bán hàng" Style="{StaticResource ModeButton}" IsChecked="True"
+                       Checked="Mode_Checked" IsEnabled="{Binding CanEditSource}" AutomationProperties.Name="Chế độ Bán hàng"
+                       ToolTip="Hóa đơn bán ra (Excel) → Chứng từ bán hàng trong MISA"/>
+          <RadioButton x:Name="PurchaseMode" GroupName="VoucherMode" Content="Mua hàng" Style="{StaticResource ModeButton}"
+                       Checked="Mode_Checked" IsEnabled="{Binding CanEditSource}" AutomationProperties.Name="Chế độ Mua hàng"
+                       ToolTip="Hóa đơn mua vào (zip HTML tải từ cổng thuế) → Mua hàng trong nước nhập kho (Kho KHH, TK 1561, TK 331). Dịch vụ không nhập."/>
+        </StackPanel>
+      </Border>
+      <TextBlock x:Name="ModeHint" FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"
+                 Text="Hóa đơn bán ra → Chứng từ bán hàng"/>
+    </DockPanel>
+
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Visibility="Collapsed" app:Motion.Entrance="True">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="1"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -137,7 +169,7 @@
               ToolTip="Chạy tiếp các hóa đơn đã tick còn lại"/>
       <Button x:Name="MoreButton" Grid.Column="3" Style="{StaticResource IconButton}" Content="•••" AutomationProperties.Name="Thao tác khác" Margin="4,0,0,0" Click="More_Click" ToolTip="Thao tác khác">
         <Button.ContextMenu><ContextMenu>
-          <MenuItem Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
+          <MenuItem x:Name="OpenInvoicesItem" Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập"/>
           <MenuItem Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA; xóa toàn bộ mã hàng cũ và thay bằng dữ liệu trong file"/>
@@ -440,6 +472,27 @@
             </Grid>
           </Border>
         </Grid>
+      </TabItem>
+
+      <!-- Mua hàng: invoices for services/expenses, left out of entry -->
+      <TabItem x:Name="ServicesTab" Header="Dịch vụ" Visibility="Collapsed">
+        <Border Style="{StaticResource Card}" app:Motion.Entrance="True">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <TextBlock x:Name="ServicesSummary" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource Muted}" Margin="2,0,2,4"
+                       Text="Hóa đơn dịch vụ/chi phí (phí ngân hàng, vé, xăng dầu, điện nước, ăn uống, phần mềm, thanh toán hợp đồng…) không được nhập vào Mua hàng nhập kho."/>
+            <ListView Grid.Row="1" x:Name="ServiceList" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListView.ItemTemplate><DataTemplate>
+                <StackPanel Margin="0,1">
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"/>
+                  <TextBlock Text="{Binding Subtitle}" FontSize="11.5" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Subtitle}"/>
+                  <TextBlock Text="{Binding Reason}" FontSize="11.5" Foreground="#9A3412" TextWrapping="Wrap"/>
+                  <TextBlock Text="{Binding Items}" FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="Wrap" MaxHeight="30" TextTrimming="CharacterEllipsis" ToolTip="{Binding Items}"/>
+                </StackPanel>
+              </DataTemplate></ListView.ItemTemplate>
+            </ListView>
+          </Grid>
+        </Border>
       </TabItem>
 
       <TabItem Header="Hồ sơ">

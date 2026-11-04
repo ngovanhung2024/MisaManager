@@ -11,18 +11,21 @@ public sealed class AutomationHarness : IAsyncDisposable
 {
     public AutomationHarness(string root, IEnumerable<ItemCatalogEntry>? catalog = null, IEnumerable<PartyCatalogEntry>? customers = null)
     {
-        Profile = WorkflowProfile.Load(Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json"));
+        var profilePath = Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json");
+        Profile = WorkflowProfile.Load(profilePath);
+        PurchaseProfile = WorkflowProfile.Load(profilePath, VoucherKind.Purchase);
         Input = new NativeInputService();
         Catalog = new ItemCatalogStore(Path.Combine(root, "item-catalog.json"));
         if (catalog is not null) Catalog.Import(catalog, Path.Combine(root, "catalog.xlsx"));
         Parties = new PartyCatalogStore(Path.Combine(root, "party-catalog.json"));
         if (customers is not null) Parties.Replace(PartyRole.Customer, customers, Path.Combine(root, "Khach_hang.xlsx"));
         Groups = new ItemGroupStore(Path.Combine(root, "item-groups.json"));
-        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile) { ItemCatalog = Catalog, PartyCatalog = Parties, ItemGroups = Groups };
+        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile, PurchaseProfile) { ItemCatalog = Catalog, PartyCatalog = Parties, ItemGroups = Groups };
         Runner = new WorkflowRunner(Gateway, new JsonStateStore(Path.Combine(root, "state")), new RunEventStore(Path.Combine(root, "logs")));
     }
 
     public WorkflowProfile Profile { get; }
+    public WorkflowProfile PurchaseProfile { get; }
     public NativeInputService Input { get; }
     public ItemCatalogStore Catalog { get; }
     public PartyCatalogStore Parties { get; }

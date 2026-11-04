@@ -213,7 +213,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// <summary>Invoices that can still be entered: not blocked or held and neither saved, already in MISA nor posted.</summary>
     public IEnumerable<InvoiceDocument> PendingInvoices => InvoiceQueue.Where(invoice => !invoice.IsBlocked && !IsDone(invoice) && !IsHeld(invoice));
 
-    public bool IsDone(InvoiceDocument invoice) => services.PostedInvoices.Contains(invoice)
+    public bool IsDone(InvoiceDocument invoice) => services.IsPosted(invoice)
         || History.Any(run => run.Invoice.Fingerprint == invoice.Fingerprint
             && (run.Snapshot.Status == WorkflowStatus.Saved || RunOutcome.IsExisting(run.Snapshot))
             || WorkflowRunner.IsManualSavedFor(run, invoice));
@@ -221,7 +221,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public bool CanMarkSaved(InvoiceDocument invoice) => !running && !IsDone(invoice);
 
     /// <summary>Done only because of the tool's own records (not the posted list loaded from MISA), so a reset makes it ready.</summary>
-    public bool CanResetToReady(InvoiceDocument invoice) => !running && !services.PostedInvoices.Contains(invoice) && IsDone(invoice);
+    public bool CanResetToReady(InvoiceDocument invoice) => !running && !services.IsPosted(invoice) && IsDone(invoice);
 
     /// <summary>
     /// The user deleted these vouchers in MISA by hand: deletes their run records so they can be entered again.
@@ -1041,9 +1041,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (window is null) return (false, null);
         try
         {
-            var observation = await services.Native.ObserveAsync(window.WindowHandle, null, token,
-                services.WorkflowProfile.SalesScopeId);
-            return (services.WorkflowProfile.IsSalesSurface(observation.Elements), observation.Frame.Window);
+            var profile = services.ProfileFor(services.Workflow.Current?.Invoice);
+            var observation = await services.Native.ObserveAsync(window.WindowHandle, null, token, profile.SalesScopeId);
+            return (profile.IsSalesSurface(observation.Elements), observation.Frame.Window);
         }
         catch (Exception error) when (error is AutomationException or ArgumentException
             or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -1060,7 +1060,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         try
         {
             // Existence only: walking the editor's subtree here every probe kept MISA's UI thread busy.
-            return await services.Native.ScopeWindowOpenAsync(window.WindowHandle, services.WorkflowProfile.EditorId, token);
+            return await services.Native.ScopeWindowOpenAsync(window.WindowHandle,
+                services.ProfileFor(services.Workflow.Current?.Invoice).EditorId, token);
         }
         catch (Exception error) when (error is AutomationException or ArgumentException
             or InvalidOperationException or System.ComponentModel.Win32Exception)

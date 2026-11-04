@@ -19,12 +19,40 @@ public sealed partial class NativeWorkflowGateway
     // MISA fills in its own name for a code found in the customer/supplier list; that is what readback must show.
     // A customer created by this run carries the invoice name the tool typed.
     private string ExpectedCustomerName(WorkflowContext context)
-        => CreatedCustomer(context) is not null ? context.Invoice.Buyer.Name.Trim()
+        => context.Invoice.IsPurchase() ? Supplier(context.Invoice)?.Name ?? context.Invoice.Seller.Name.Trim()
+            : CreatedCustomer(context) is not null ? context.Invoice.Buyer.Name.Trim()
             : BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.CatalogName ?? context.Invoice.Buyer.Name;
 
+    // A purchase's supplier code is only known when the supplier list was loaded; MISA itself finds it by MST.
     private string BuyerCode(WorkflowContext context)
-        => CreatedCustomer(context) ?? BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
+        => context.Invoice.IsPurchase() ? Supplier(context.Invoice)?.Code ?? ""
+            : CreatedCustomer(context) ?? BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
             ?? throw MissingCustomer(context);
+
+    /// <summary>The supplier with the invoice's MST in the loaded list; null when none was loaded or found.</summary>
+    private PartyCatalogEntry? Supplier(InvoiceDocument invoice)
+    {
+        var found = PartyCatalog?.FindByTax(invoice.Seller.TaxCode) ?? [];
+        if (found.Select(entry => entry.Code).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+            throw new AutomationException("SUPPLIER_AMBIGUOUS", $"Hóa đơn {invoice.Identity.Number}: MST {invoice.Seller.TaxCode} thuộc nhiều nhà cung cấp "
+                + $"({string.Join(", ", found.Select(entry => entry.Code).Distinct())}); sửa danh mục trong MISA rồi nạp lại danh sách nhà cung cấp.");
+        return found.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Supplier readback: MISA shows the code it found for the MST (any code is accepted when no list was loaded) and its
+    /// own spelling of the name, so names compare loosely (case, punctuation, "CTY CP" = "CÔNG TY CỔ PHẦN").
+    /// </summary>
+    private bool SupplierMatches(WorkflowContext context, string key, string expected, string? actual, bool selecting)
+        => key switch
+        {
+            "customer" => selecting && expected.Length == 0 && !string.IsNullOrWhiteSpace(actual)
+                && PartyCatalogStore.TaxKey(actual) != PartyCatalogStore.TaxKey(context.Invoice.Seller.TaxCode),
+            "customer_name" => actual is not null && PartyCatalogStore.RelaxedKey(actual).Length > 0
+                && (PartyCatalogStore.RelaxedKey(actual) == PartyCatalogStore.RelaxedKey(expected)
+                    || PartyCatalogStore.RelaxedKey(actual) == PartyCatalogStore.RelaxedKey(context.Invoice.Seller.Name)),
+            _ => false
+        };
 
     private AutomationException MissingCustomer(WorkflowContext context)
         => new(BuyerCodes.MissingCode, $"Hóa đơn {context.Invoice.Identity.Number}: chưa có mã khách hàng cho '{context.Invoice.Buyer.Name}'. "
@@ -35,6 +63,15 @@ public sealed partial class NativeWorkflowGateway
     /// <summary>Before any input: the buyer has a code, or the tool can create it in MISA during the customer step.</summary>
     private void RequireCustomer(WorkflowContext context)
     {
+        if (context.Invoice.IsPurchase())
+        {
+            // A loaded supplier list that lacks the MST means MISA would not find it either: stop before any input.
+            if (Supplier(context.Invoice) is null && PartyCatalog is { SupplierCount: > 0 })
+                throw new AutomationException(BuyerCodes.MissingCode, $"Hóa đơn {context.Invoice.Identity.Number}: nhà cung cấp "
+                    + $"'{context.Invoice.Seller.Name}' (MST {context.Invoice.Seller.TaxCode}) chưa có trong danh sách nhà cung cấp đã nạp. "
+                    + "Thêm nhà cung cấp trong MISA, xuất lại danh sách nhà cung cấp và nạp lại ở menu •••, rồi chạy lại.");
+            return;
+        }
         if (CreatedCustomer(context) is not null || BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog) is not null) return;
         if (profile.NewCustomer is not null && BuyerCodes.CanCreate(context.Invoice.Buyer, PartyCatalog)) return;
         throw MissingCustomer(context);
@@ -61,9 +98,12 @@ public sealed partial class NativeWorkflowGateway
         var session = windows.Focus(window.WindowHandle, window.ProcessId);
         if (!session.Title.StartsWith(profile.VersionTitle + " - ", StringComparison.Ordinal))
             throw new AutomationException("WINDOW_IDENTITY_CHANGED", "MISA đang ở màn hình đăng nhập hoặc không phải bản " + profile.VersionTitle + ".");
+        // Whichever voucher is open decides the screens: a purchase editor, otherwise the sales one.
+        Use(purchaseProfile is not null && await input.WorkflowScopeExistsAsync(session, purchaseProfile.EditorId, token)
+            ? purchaseProfile : salesProfile);
         _ = await input.TryBindWorkflowScopeAsync(session, profile.EditorId, null, token)
             ?? throw new AutomationException("EDITOR_NOT_FOUND",
-                "Chưa có chứng từ bán hàng nào đang mở trong MISA. Mở chứng từ cần đối chiếu rồi bấm Đọc lại.");
+                "Chưa có chứng từ bán hàng/mua hàng nào đang mở trong MISA. Mở chứng từ cần đối chiếu rồi bấm Đọc lại.");
         var read = await ReadOpenVoucherAsync(token);
         var first = Compare(pick(read), read);
         if (first.Invoice is null || first.Result.Matched) return first;
@@ -149,27 +189,34 @@ public sealed partial class NativeWorkflowGateway
         static string Day(DateOnly? day) => day?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
         static string Number(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "";
 
-        var taxCode = invoice.Buyer.TaxCode.Trim();
+        var partner = invoice.Partner();
+        var taxCode = partner.TaxCode.Trim();
         var receipt = read.Receipt;
         BuyerCode? resolved;
-        try { resolved = BuyerCodes.Resolve(invoice.Buyer, PartyCatalog); }
+        try
+        {
+            resolved = invoice.IsPurchase()
+                ? Supplier(invoice) is { } supplier ? new BuyerCode(supplier.Code, "Danh sách nhà cung cấp", supplier.Name) : null
+                : BuyerCodes.Resolve(invoice.Buyer, PartyCatalog);
+        }
         catch (AutomationException) { resolved = null; }
         var expectedCode = resolved?.Code;
-        if (taxCode.Length > 0) values.Add(CustomerTaxComparison(taxCode, expectedCode, read.Tax, BuyerCodes.IsIndividual(invoice.Buyer)));
+        if (taxCode.Length > 0) values.Add(CustomerTaxComparison(taxCode, expectedCode, read.Tax, !invoice.IsPurchase() && BuyerCodes.IsIndividual(invoice.Buyer)));
         // R20 exposes the selected customer's internal GUID instead of its code; the name identifies it then.
         var customer = receipt["customer"];
         if (expectedCode is not null && !Guid.TryParse(customer.Value, out _))
             Add("customer", expectedCode, customer, string.Equals(expectedCode, customer.Value?.Trim(), StringComparison.OrdinalIgnoreCase));
         var misaName = receipt["customer_name"].Value;
-        Add("customer_name", invoice.Buyer.Name, receipt["customer_name"], Text(invoice.Buyer.Name, misaName)
-            || resolved?.CatalogName is { } catalogName && Text(catalogName, misaName));
+        Add("customer_name", partner.Name, receipt["customer_name"], Text(partner.Name, misaName)
+            || resolved?.CatalogName is { } catalogName && Text(catalogName, misaName)
+            || invoice.IsPurchase() && misaName is not null && PartyCatalogStore.RelaxedKey(partner.Name) == PartyCatalogStore.RelaxedKey(misaName));
         Add("voucher_date", Day(invoice.VoucherDate), receipt["voucher_date"], Match(Day(invoice.VoucherDate), receipt["voucher_date"].Value, NativeValueKind.Date));
         Add("posted_date", Day(invoice.PostedDate), receipt["posted_date"], Match(Day(invoice.PostedDate), receipt["posted_date"].Value, NativeValueKind.Date));
 
         var header = read.Header;
         Add("number", invoice.Identity.Number, header["number"], Match(invoice.Identity.Number, header["number"].Value, NativeValueKind.Exact));
         Add("issued_date", Day(invoice.Issued), header["issued_date"], Match(Day(invoice.Issued), header["issued_date"].Value, NativeValueKind.Date));
-        if (invoice.Identity.Series.Length > 0)
+        if (invoice.Identity.Series.Length > 0 && !invoice.IsPurchase())
             Add("series", invoice.Identity.Series, header["series"], Match(invoice.Identity.Series, header["series"].Value, NativeValueKind.Exact));
 
         var totals = read.Totals;

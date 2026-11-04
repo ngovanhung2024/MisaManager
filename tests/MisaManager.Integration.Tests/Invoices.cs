@@ -35,7 +35,18 @@ public static class Invoices
             null, "", cells.ToImmutable());
     }
 
+    public static readonly Party Supplier = new("CÔNG TY CỔ PHẦN PHÂN BÓN HUẾ", "3300555111", "12 Lê Lợi, Thành phố Huế", "", ValuePresence.Provided);
+    public static readonly Party UnknownSupplier = new("CÔNG TY TNHH HÓA CHẤT MỚI", "3300999888", "Huế", "", ValuePresence.Provided);
+
     public static InvoiceDocument Build(string directory, string number, Party buyer, params InvoiceLine[] lines)
+        => Create(directory, number, Seller, buyer, InvoiceKinds.Sales, "Tiền mặt", lines);
+
+    /// <summary>A purchase invoice as the tax-portal importer builds it: the supplier is the seller, the shop the buyer.</summary>
+    public static InvoiceDocument BuildPurchase(string directory, string number, Party supplier, params InvoiceLine[] lines)
+        => Create(directory, number, supplier, Seller, InvoiceKinds.Purchase, InvoiceKinds.PurchasePayment, lines);
+
+    private static InvoiceDocument Create(string directory, string number, Party seller, Party buyer, string invoiceType,
+        string payment, InvoiceLine[] lines)
     {
         Directory.CreateDirectory(directory);
         var source = Path.Combine(directory, $"hoa-don-{number}.xlsx");
@@ -44,9 +55,9 @@ public static class Invoices
         var subtotal = lines.Sum(line => line.AmountBeforeTax ?? 0);
         var tax = lines.Sum(line => line.TaxAmount ?? 0);
         var invoice = new InvoiceDocument(Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant(), 1, "",
-            new InvoiceIdentity(Seller.TaxCode, "1C26MLV", number, Day),
+            new InvoiceIdentity(seller.TaxCode, "1C26MLV", number, Day),
             new SourceReference(source, sha, "Hóa đơn", 1, 1 + lines.Length),
-            Seller, buyer, "", "VND", "Tiền mặt", Day, Day, Day, "Hóa đơn bán hàng", null, [.. lines],
+            seller, buyer, "", "VND", payment, Day, Day, Day, invoiceType, null, [.. lines],
             subtotal, tax, subtotal + tax, null, [], "", [], [],
             SourceIssues: [], Corrections: [], HeaderCells: ImmutableDictionary<string, SourceCell>.Empty, Signed: Day);
         invoice = invoice with { Issues = [.. InvoiceValidation.Validate(invoice)] };

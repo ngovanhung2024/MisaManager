@@ -78,6 +78,10 @@ public partial class MainWindow : Window
     private DateTimeOffset connectionProbeDue = DateTimeOffset.MinValue;
     private ToolState? shownState;
     private WorkflowErrorEventArgs? lastWorkflowError;
+    // Bán hàng or Mua hàng: decides the invoice source, the posted register and the MISA voucher.
+    private VoucherKind mode;
+    private bool Purchase => mode == VoucherKind.Purchase;
+    private bool switchingMode;
 
     public MainWindow()
     {
@@ -134,6 +138,8 @@ public partial class MainWindow : Window
         {
             var workArea = SystemParameters.WorkArea;
             PositionRail(workArea);
+            mode = ((App)Application.Current).Services.Mode;
+            ApplyMode();
             RefreshCatalogLabel();
             RefreshPartyLabel();
             await workflow.RestoreAsync();
@@ -213,20 +219,31 @@ public partial class MainWindow : Window
 
     private async void ChooseWorkbook_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
-            Title = "Bước 1/2: Chọn file Excel hóa đơn (danh sách hóa đơn xuất từ cổng hóa đơn điện tử)" };
+        var dialog = Purchase
+            ? new OpenFileDialog { Filter = "Hóa đơn mua vào (*.zip;*.html;*.xlsx)|*.zip;*.html;*.htm;*.xlsx", CheckFileExists = true, Multiselect = false,
+                Title = "Bước 1/2: Chọn file zip hóa đơn mua vào (các file HTML tải từ cổng thuế) hoặc file Excel đã chuyển đổi" }
+            : new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+                Title = "Bước 1/2: Chọn file Excel hóa đơn (danh sách hóa đơn xuất từ cổng hóa đơn điện tử)" };
         if (dialog.ShowDialog(this) != true) return;
         var services = ((App)Application.Current).Services;
+        var workbookPath = dialog.FileName;
+        if (Purchase && !workbookPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            if (await ConvertPurchaseArchiveAsync(workbookPath) is not { } converted) return;
+            workbookPath = converted;
+        }
+        var postedStore = PostedStore;
         var postedDialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
-            Title = "Bước 2/2: Chọn file danh sách bán hàng đã ghi sổ xuất từ MISA (Ban_hang.xlsx)"
-                + (services.PostedInvoices.Count > 0 ? $" – Hủy để dùng danh sách đã nạp ({services.PostedInvoices.Count:N0} hóa đơn)" : " – Hủy nếu MISA chưa có hóa đơn nào") };
+            Title = (Purchase ? "Bước 2/2: Chọn file danh sách mua hàng đã ghi sổ xuất từ MISA (Mua_hang_hoa__dich_vu.xlsx)"
+                    : "Bước 2/2: Chọn file danh sách bán hàng đã ghi sổ xuất từ MISA (Ban_hang.xlsx)")
+                + (postedStore.Count > 0 ? $" – Hủy để dùng danh sách đã nạp ({postedStore.Count:N0} hóa đơn)" : " – Hủy nếu MISA chưa có hóa đơn nào") };
         if (postedDialog.ShowDialog(this) == true)
         {
             StatusLabel.Text = "Đang đọc file hóa đơn đã ghi sổ...";
             try
             {
                 var entries = await PostedInvoiceWorkbook.ReadAsync(services.WorkbookReader, postedDialog.FileName);
-                await Task.Run(() => services.PostedInvoices.Replace(entries, postedDialog.FileName));
+                await Task.Run(() => postedStore.Replace(entries, postedDialog.FileName));
             }
             catch (Exception error)
             {
@@ -239,12 +256,12 @@ public partial class MainWindow : Window
         updatingSheet = true;
         SheetChoice.ItemsSource = null;
         updatingSheet = false;
-        WorkbookLabel.Text = Path.GetFileName(dialog.FileName);
-        WorkbookLabel.ToolTip = dialog.FileName;
+        WorkbookLabel.Text = Path.GetFileName(workbookPath);
+        WorkbookLabel.ToolTip = workbookPath;
         StatusLabel.Text = "Đang đọc Excel... Nhấn Esc để dừng.";
         try
         {
-            var loaded = await importModel.ReadAsync(dialog.FileName, work.Token);
+            var loaded = await importModel.ReadAsync(workbookPath, work.Token);
             if (!IsCurrent(work)) return;
             WorkbookLabel.Text = Path.GetFileName(loaded.FilePath);
             WorkbookLabel.ToolTip = loaded.FilePath;
@@ -267,6 +284,105 @@ public partial class MainWindow : Window
                 await ImportSelectedSheetAsync();
         }
         catch (Exception error) { ShowImportError(error); }
+    }
+
+    private PostedInvoiceStore PostedStore => Purchase ? ((App)Application.Current).Services.PostedPurchases
+        : ((App)Application.Current).Services.PostedInvoices;
+
+    /// <summary>
+    /// Mua hàng: reads the portal's HTML invoices (zip, folder or one page), keeps one per supplier/series/number and writes
+    /// them sorted from the start of the year to an Excel file next to the source, which is then imported like any workbook.
+    /// </summary>
+    private async Task<string?> ConvertPurchaseArchiveAsync(string source)
+    {
+        StatusLabel.Text = "Đang đọc và chuyển hóa đơn HTML sang Excel...";
+        try
+        {
+            var archive = await Task.Run(() => PurchaseInvoiceArchive.Read(source));
+            if (archive.Invoices.Count == 0)
+            {
+                StatusLabel.Text = "Không đọc được hóa đơn nào: " + string.Join("; ", archive.Skipped.Take(3));
+                return null;
+            }
+            var name = Path.GetFileNameWithoutExtension(source) + "_hoa_don_mua_vao.xlsx";
+            var target = Path.Combine(Path.GetDirectoryName(source)!, name);
+            try { await Task.Run(() => PurchaseInvoiceArchive.WriteWorkbook(target, archive.Invoices)); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Read-only or locked folder (e.g. the file is open in Excel): keep the converted file with the app data.
+                target = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName,
+                    "purchase", Path.GetFileNameWithoutExtension(name) + "_" + DateTime.Now.ToString("yyyyMMddHHmmss") + ".xlsx");
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                await Task.Run(() => PurchaseInvoiceArchive.WriteWorkbook(target, archive.Invoices));
+            }
+            StatusLabel.Text = $"Đã chuyển {archive.Invoices.Count:N0} hóa đơn ({archive.Invoices[0].Issued:dd/MM/yyyy} → {archive.Invoices[^1].Issued:dd/MM/yyyy}) sang {target}"
+                + (archive.Skipped.Count > 0 ? $" · bỏ {archive.Skipped.Count:N0} file" : "");
+            return target;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or WorkbookImportException
+            or NotSupportedException)
+        {
+            StatusLabel.Text = "Không chuyển được hóa đơn mua vào: " + error.Message;
+            return null;
+        }
+    }
+
+    private async void Mode_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || switchingMode) return;
+        var next = PurchaseMode.IsChecked == true ? VoucherKind.Purchase : VoucherKind.Sales;
+        if (next == mode) return;
+        if (!workflow.CanEditSource)
+        {
+            ApplyMode();
+            return;
+        }
+        try
+        {
+            CancelImport();
+            importModel.Reset();
+            ClearImportResult();
+            workflow.SetCheckedMany([]);
+            ResetMapping();
+            updatingSheet = true;
+            SheetChoice.ItemsSource = null;
+            updatingSheet = false;
+            mode = next;
+            ((App)Application.Current).Services.Mode = next;
+            ApplyMode();
+            RefreshPartyLabel();
+            await RestoreImportSessionAsync();
+            if (invoices.Count == 0)
+                StatusLabel.Text = Purchase
+                    ? "Chế độ Mua hàng: bấm ••• → Mở hóa đơn mua vào và chọn file zip HTML tải từ cổng thuế."
+                    : "Chế độ Bán hàng: bấm ••• → Mở Excel hóa đơn.";
+        }
+        catch (Exception error) { StatusLabel.Text = "Không chuyển được chế độ: " + error.Message; }
+    }
+
+    /// <summary>Shows the current mode on the switch, menu and labels.</summary>
+    private void ApplyMode()
+    {
+        switchingMode = true;
+        try
+        {
+            SalesMode.IsChecked = !Purchase;
+            PurchaseMode.IsChecked = Purchase;
+        }
+        finally { switchingMode = false; }
+        importModel.Purchase = Purchase;
+        ModeHint.Text = Purchase ? "Hóa đơn mua vào → Mua hàng nhập kho (KHH · 1561 · 331)" : "Hóa đơn bán ra → Chứng từ bán hàng";
+        OpenInvoicesItem.Header = Purchase ? "Mở hóa đơn mua vào (zip HTML)…" : "Mở Excel hóa đơn…";
+        OpenInvoicesItem.ToolTip = Purchase
+            ? "Chọn file zip các hóa đơn HTML tải từ cổng thuế (tool chuyển sang Excel, sắp xếp từ đầu năm), rồi file Mua hàng hóa, dịch vụ đã ghi sổ xuất từ MISA"
+            : "Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập";
+        ServicesTab.Visibility = Purchase ? Visibility.Visible : Visibility.Collapsed;
+        if (!Purchase && ServicesTab.IsSelected) WorkspaceTabs.SelectedIndex = 0;
+        if (invoices.Count == 0)
+        {
+            WorkbookLabel.Text = Purchase ? "Chưa chọn hóa đơn mua vào" : "Chưa chọn file Excel hóa đơn";
+            WorkbookLabel.ToolTip = null;
+        }
     }
 
     private async void ChooseCatalog_Click(object sender, RoutedEventArgs e)
@@ -382,6 +498,19 @@ public partial class MainWindow : Window
         PartyRow.Visibility = Visibility.Visible;
         PartyLabel.Text = $"{parties.CustomerCount:N0} mã khách hàng · {parties.SupplierCount:N0} mã nhà cung cấp";
         PartyLabel.ToolTip = string.Join(Environment.NewLine, new[] { parties.CustomerSource, parties.SupplierSource }.OfType<string>());
+        if (Purchase)
+        {
+            // MISA finds suppliers by MST; list the ones the loaded supplier list does not have.
+            var suppliers = invoices.Select(row => row.Invoice.Seller).DistinctBy(seller => PartyCatalogStore.TaxKey(seller.TaxCode)).ToArray();
+            var absent = parties.SupplierCount == 0 ? [] : suppliers.Where(seller => parties.FindByTax(seller.TaxCode).Count == 0).ToArray();
+            PartyDetail.Visibility = suppliers.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            PartyDetail.Text = parties.SupplierCount == 0 ? "Chưa nạp danh sách nhà cung cấp: MISA tự tìm nhà cung cấp theo MST."
+                : absent.Length == 0 ? $"Đủ {suppliers.Length} nhà cung cấp trong danh sách đã nạp."
+                : $"{absent.Length}/{suppliers.Length} nhà cung cấp chưa có trong MISA (thêm trước khi nhập): "
+                    + string.Join("; ", absent.Take(3).Select(seller => $"{seller.Name} ({seller.TaxCode})")) + (absent.Length > 3 ? "…" : "");
+            PartyDetail.ToolTip = string.Join(Environment.NewLine, absent.Select(seller => $"{seller.Name} ({seller.TaxCode})"));
+            return;
+        }
         var buyers = invoices.Select(row => row.Invoice.Buyer)
             .Where(buyer => buyer.Code.Trim().Length == 0 && !BuyerCodes.IsConsumer(buyer.Name))
             .GroupBy(buyer => PartyCatalogStore.NameKey(buyer.Name)).Select(group => group.First()).ToArray();
@@ -451,7 +580,7 @@ public partial class MainWindow : Window
         ResetReadyItem.IsEnabled = canReset;
         ResetReadyItem.ToolTip = canReset
             ? "Dùng khi bạn đã tự xóa chứng từ của hóa đơn này trong MISA: tool xóa lịch sử đã lưu và cho nhập lại"
-            : ((App)Application.Current).Services.PostedInvoices.Contains(row.Invoice)
+            : ((App)Application.Current).Services.IsPosted(row.Invoice)
                 ? "Hóa đơn nằm trong danh sách đã ghi sổ nạp từ MISA; nạp lại danh sách đó sau khi xóa."
                 : "Hóa đơn này chưa lưu.";
         var tickedReset = TickedResettable();
@@ -684,8 +813,9 @@ public partial class MainWindow : Window
     /// <summary>Lists the invoices not yet posted in MISA and returns a status line saying what was left out.</summary>
     private string ShowImported(ImportResult imported, IReadOnlyList<string>? ticked)
     {
-        var posted = ((App)Application.Current).Services.PostedInvoices;
+        var posted = PostedStore;
         var (pending, hidden) = posted.WithoutPosted(imported);
+        ShowServices(imported.Services ?? []);
         shown = pending;
         // MISA numbers vouchers in entry order, so enter oldest first: issued date, then invoice number.
         var ordered = pending.Invoices
@@ -709,13 +839,31 @@ public partial class MainWindow : Window
         var held = ordered.Count(workflow.IsHeld);
         return $"{ordered.Length:N0} hóa đơn chưa nhập"
             + (posted.Count == 0 ? " (chưa nạp danh sách đã ghi sổ)" : $" · bỏ {hidden:N0} hóa đơn đã ghi sổ")
+            + (imported.Services is { Count: > 0 } services ? $" · {services.Count:N0} hóa đơn dịch vụ không nhập (tab Dịch vụ)" : "")
             + (imported.SkippedUnnumberedRows > 0 ? $" · bỏ {imported.SkippedUnnumberedRows:N0} dòng chưa có số" : "")
             + (imported.SkippedNegativeInvoices > 0 ? $" · bỏ {imported.SkippedNegativeInvoices:N0} hóa đơn số lượng âm" : "")
             + (blocked > 0 ? $" · {blocked:N0} hóa đơn cần bổ sung dữ liệu" : "")
             + (held > 0 ? $" · {held:N0} hóa đơn tạm hoãn (mặt hàng trùng tên nhiều mã)" : "");
     }
 
-    private ImportSessionStore ImportSessions => ((App)Application.Current).Services.ImportSessions;
+    private ImportSessionStore ImportSessions => Purchase ? ((App)Application.Current).Services.PurchaseImportSessions
+        : ((App)Application.Current).Services.ImportSessions;
+
+    private sealed record ServiceRow(string Title, string Subtitle, string Reason, string Items);
+
+    private void ShowServices(IReadOnlyList<ServiceInvoice> services)
+    {
+        var vi = System.Globalization.CultureInfo.GetCultureInfo("vi-VN");
+        ServiceList.ItemsSource = services.OrderBy(item => item.Issued ?? DateOnly.MaxValue).Select(item => new ServiceRow(
+            $"HĐ {item.Number} · {FormatDay(item.Issued)} · {item.GrandTotal?.ToString("N0", vi) ?? "?"} đ",
+            $"{item.Seller} · MST {item.SellerTaxCode}", item.Reason,
+            string.Join("; ", item.Lines.Select(line => line.Name).Take(6)) + (item.Lines.Count > 6 ? "…" : ""))).ToArray();
+        ServicesTab.Header = services.Count == 0 ? "Dịch vụ" : $"Dịch vụ ({services.Count:N0})";
+        ServicesSummary.Text = services.Count == 0
+            ? "Không có hóa đơn dịch vụ trong file: mọi hóa đơn là hàng hóa."
+            : $"{services.Count:N0} hóa đơn dịch vụ/chi phí (phí ngân hàng, vé, xăng dầu, điện nước, ăn uống, phần mềm, thanh toán hợp đồng…) "
+                + "không nhập vào Mua hàng nhập kho. Nếu nhận nhầm, sửa cột 'Phân loại' trong file Excel thành 'Hàng hóa' rồi mở lại file.";
+    }
 
     private async void SaveImportSession(string filePath, string sheet, ImportResult imported)
     {
@@ -767,6 +915,7 @@ public partial class MainWindow : Window
         invoices.Clear();
         workflow.InvoiceQueue = [];
         workflow.SelectedInvoice = null;
+        ShowServices([]);
         RefreshWorkflowPanel();
         SetVisibleIssues([]);
         SelectedTitle.Text = "Chọn một hóa đơn";
@@ -1103,7 +1252,7 @@ public partial class MainWindow : Window
                 + (ErrorHints.For(ErrorHints.FindCode(latest.Error)) is { } hint ? " " + hint : "")
             : mismatched == 0 ? "Tất cả thông tin khớp với nguồn Excel."
             : $"{mismatched} trường lệch giữa Excel và MISA. Dòng đỏ là chỗ cần kiểm tra.";
-        var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("vi-VN")) ?? "?"} {invoice.Currency}";
+        var subtitle = $"{invoice.Partner().Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("vi-VN")) ?? "?"} {invoice.Currency}";
         var observed = latest?.Result is { } result ? "đọc lúc " + result.ObservedAt.ToLocalTime().ToString("HH:mm:ss") : "";
         return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, rows, !workflow.IsRunning);
     }
@@ -1137,7 +1286,7 @@ public partial class MainWindow : Window
             ? check.Error + (ErrorHints.For(ErrorHints.FindCode(check.Error)) is { } errorHint ? " " + errorHint : "")
             : mismatched == 0 ? $"Toàn bộ thông tin của {voucher} trong MISA khớp với hóa đơn Excel."
             : $"{mismatched} trường lệch giữa Excel và {voucher}. Dòng đỏ là chỗ cần kiểm tra.";
-        var subtitle = $"{invoice.Buyer.Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", vi) ?? "?"} {invoice.Currency}";
+        var subtitle = $"{invoice.Partner().Name} · {FormatDay(invoice.Issued)} · {invoice.GrandTotal?.ToString("N0", vi) ?? "?"} {invoice.Currency}";
         return new($"Hóa đơn {invoice.Identity.Number}", subtitle, kind, label, summary, observed, compared, !workflow.IsRunning);
     }
 
@@ -1189,13 +1338,15 @@ public partial class MainWindow : Window
             SheetChoice.ItemsSource = null;
             updatingSheet = false;
             SourcePopup.IsOpen = false;
-            WorkbookLabel.Text = "Chưa chọn file Excel hóa đơn";
+            WorkbookLabel.Text = Purchase ? "Chưa chọn hóa đơn mua vào" : "Chưa chọn file Excel hóa đơn";
             WorkbookLabel.ToolTip = null;
-            ImportSessions.Clear();
+            services.ImportSessions.Clear();
+            services.PurchaseImportSessions.Clear();
             await services.Drafts.ClearAsync();
             var removedItems = await Task.Run(services.ItemCatalog.Clear);
             await Task.Run(services.PartyCatalog.Clear);
             await Task.Run(services.PostedInvoices.Clear);
+            await Task.Run(services.PostedPurchases.Clear);
             await Task.Run(services.ItemGroups.Clear);
             RefreshCatalogLabel();
             RefreshPartyLabel();
@@ -1250,10 +1401,10 @@ public partial class MainWindow : Window
             this.selection = selection;
         }
         public string DisplayIdentity => (Invoice.Identity.Series.Length == 0 ? "HĐ " : Invoice.Identity.Series + " ")
-            + $"{Invoice.Identity.Number} · {Invoice.Buyer.Name}";
+            + $"{Invoice.Identity.Number} · {Invoice.Partner().Name}";
         public string DisplayDate => Invoice.Issued?.ToString("dd/MM/yyyy") ?? "Thiếu";
         public int LineCount => Invoice.Lines.Length;
-        private bool IsPosted => ((App)Application.Current).Services.PostedInvoices.Contains(Invoice);
+        private bool IsPosted => ((App)Application.Current).Services.IsPosted(Invoice);
         public string SourceRange => $"dòng {Invoice.Source.FirstRow}-{Invoice.Source.LastRow}";
         public string DisplaySummary => $"{DisplayDate} · {LineCount} mặt hàng · {Invoice.GrandTotal?.ToString("N0") ?? "?"} {Invoice.Currency}";
         public string DisplayStatus

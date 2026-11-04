@@ -18,6 +18,7 @@ public sealed class ImportViewModel(ImportSession session)
     public ImportResult? Result { get; private set; }
     public ImportConfirmation? Confirmation { get; private set; }
     public string? Locale { get; private set; }
+    public bool Purchase { get => session.Purchase; set => session.Purchase = value; }
 
     public async Task<WorkbookData> ReadAsync(string path, CancellationToken token)
     {

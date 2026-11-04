@@ -180,7 +180,9 @@ public sealed record ImportResult(
     int ReadRows,
     int IgnoredEmptyRows,
     int SkippedUnnumberedRows = 0,
-    int SkippedNegativeInvoices = 0)
+    int SkippedNegativeInvoices = 0,
+    // Purchase invoices left out because they buy services/expenses rather than stock goods.
+    IReadOnlyList<ServiceInvoice>? Services = null)
 {
     public bool IsBlocked => Issues.Any(issue => issue.Severity == IssueSeverity.Blocking)
         || Invoices.Any(invoice => invoice.IsBlocked);

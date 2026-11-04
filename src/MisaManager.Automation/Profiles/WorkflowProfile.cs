@@ -8,8 +8,11 @@ public sealed record CustomerDialogProfile(string Title, NativeSelector Organiza
     NativeSelector Code, NativeSelector Name, NativeSelector FullName, NativeSelector Address, NativeSelector TaxCode,
     NativeSelector IdNumber, NativeSelector Save, NativeSelector Cancel, string OpenKey);
 
+/// <summary>Which MISA voucher the workflow fills: "Bán hàng" or "Mua hàng hóa, dịch vụ" (nhập kho).</summary>
+public enum VoucherKind { Sales, Purchase }
+
 /// <summary>
-/// Typed view of the screens the sales-invoice workflow drives. Selectors come from the
+/// Typed view of the screens the invoice workflow drives (sales or purchase, see <see cref="Kind"/>). Selectors come from the
 /// generic <see cref="ScreenProfile"/> data in profiles/*.json; other workflows read
 /// <see cref="Screens"/> directly instead of growing this class.
 /// </summary>
@@ -17,6 +20,8 @@ public sealed class WorkflowProfile
 {
     public const string SalesList = "sales_list";
     public const string SalesVoucher = "sales_voucher";
+    public const string PurchaseList = "purchase_list";
+    public const string PurchaseVoucher = "purchase_voucher";
     public const string ItemNew = "item_new";
     public const string CustomerNew = "customer_new";
     public const string TaxRoundingPrompt = "tax_rounding_prompt";
@@ -25,18 +30,24 @@ public sealed class WorkflowProfile
         "issued_date", "number", "series", "currency", "payment", "voucher_number", "subtotal", "tax_total", "grand_total"];
     private static readonly string[] RequiredColumns = ["code", "name", "unit", "debit_account", "quantity", "unit_price", "amount", "tax_rate", "tax_amount"];
     private static readonly string[] RequiredSalesColumns = ["voucher_number", "number", "customer", "subtotal", "voucher_date"];
+    // Purchases keep the series and payment MISA proposes, so those controls are not needed.
+    private static readonly string[] PurchaseRequiredFields = ["customer", "customer_name", "customer_tax", "voucher_date", "posted_date",
+        "issued_date", "number", "voucher_number", "subtotal", "tax_total", "grand_total"];
+    private static readonly string[] PurchaseRequiredColumns = [.. RequiredColumns, "stock", "credit_account"];
     private static readonly string[] NonFieldElements = ["save", "close", "unpost"];
 
-    private WorkflowProfile(ProfileDocument document, IReadOnlyDictionary<string, ScreenProfile> screens)
+    private WorkflowProfile(ProfileDocument document, IReadOnlyDictionary<string, ScreenProfile> screens, VoucherKind kind)
     {
+        Kind = kind;
         Id = document.Id;
         Revision = document.Revision;
         VersionTitle = document.VersionTitle;
         Status = document.Status;
         Culture = document.Culture;
         Screens = screens;
-        var list = Screen(SalesList);
-        var voucher = Screen(SalesVoucher);
+        ListScreen = kind == VoucherKind.Purchase ? PurchaseList : SalesList;
+        var list = Screen(ListScreen);
+        var voucher = Screen(kind == VoucherKind.Purchase ? PurchaseVoucher : SalesVoucher);
         var item = Screen(ItemNew);
         SalesScopeId = Scope(list);
         EditorId = Scope(voucher);
@@ -68,6 +79,9 @@ public sealed class WorkflowProfile
         ItemNewTaxRate = item.Element("tax_rate").Selector;
         ItemNewSave = item.Element("save").Selector;
         DefaultItemStock = item.Setting("defaultStock", "KHH");
+        PurchaseStock = voucher.Setting("stock", DefaultItemStock);
+        StockAccount = voucher.Setting("stockAccount", "1561");
+        PayableAccount = voucher.Setting("payableAccount", "331");
         if (screens.TryGetValue(CustomerNew, out var customer))
         {
             var title = customer.Scope?.Name is { Length: > 0 } caption ? caption
@@ -83,14 +97,24 @@ public sealed class WorkflowProfile
         TaxPromptMessage = prompt.Element("message").Selector;
         TaxPromptNo = prompt.Element("no").Selector;
 
-        foreach (var key in RequiredFields)
+        foreach (var key in kind == VoucherKind.Purchase ? PurchaseRequiredFields : RequiredFields)
             if (!Fields.ContainsKey(key)) throw new InvalidDataException("Profile thiếu field " + key);
-        foreach (var key in RequiredColumns)
+        foreach (var key in kind == VoucherKind.Purchase ? PurchaseRequiredColumns : RequiredColumns)
             if (!Columns.ContainsKey(key)) throw new InvalidDataException("Profile thiếu column " + key);
         foreach (var key in RequiredSalesColumns)
             if (!SalesColumns.ContainsKey(key)) throw new InvalidDataException("Profile thiếu sales column " + key);
     }
 
+    public VoucherKind Kind { get; }
+    public bool IsPurchase => Kind == VoucherKind.Purchase;
+    /// <summary>Profile key of the voucher list screen (Bán hàng or Mua hàng hóa, dịch vụ).</summary>
+    public string ListScreen { get; }
+    /// <summary>Caption of the MISA list the user must open, for messages.</summary>
+    public string ModuleCaption => IsPurchase ? "Mua hàng hóa, dịch vụ (phân hệ Mua hàng)" : "Bán hàng";
+    /// <summary>Purchase lines: warehouse, stock account and payable account MISA must show (Kho KHH, TK Kho 1561, TK công nợ 331).</summary>
+    public string PurchaseStock { get; }
+    public string StockAccount { get; }
+    public string PayableAccount { get; }
     public string Id { get; }
     public string Revision { get; }
     public string VersionTitle { get; }
@@ -133,7 +157,7 @@ public sealed class WorkflowProfile
     /// <summary>True when the bound window shows the enabled sales module and its tab.</summary>
     public bool IsSalesSurface(IReadOnlyList<ElementIdentity> elements)
     {
-        var scope = Screen(SalesList).Scope!;
+        var scope = Screen(ListScreen).Scope!;
         return elements.Any(element => element.AutomationId == scope.AutomationId
                 && (scope.Name.Length == 0 || string.Equals(element.Name, scope.Name, StringComparison.Ordinal))
                 && element.Enabled && !element.Offscreen)
@@ -147,11 +171,11 @@ public sealed class WorkflowProfile
     private static string Scope(ScreenProfile screen) => screen.Scope is { AutomationId.Length: > 0 } scope ? scope.AutomationId
         : throw new InvalidDataException($"Màn hình '{screen.Key}' cần scope.automationId.");
 
-    public static WorkflowProfile Load(string? path = null)
+    public static WorkflowProfile Load(string? path = null, VoucherKind kind = VoucherKind.Sales)
     {
         var (document, screens) = ProfileLoader.Read(path ?? ProfileLoader.DefaultPath);
         if (document.Status is not ("live_pending" or "supported") || document.Culture != "vi-VN")
             throw new InvalidDataException("Profile MISA không đúng trạng thái hoặc culture vi-VN.");
-        return new(document, screens);
+        return new(document, screens, kind);
     }
 }
