@@ -34,6 +34,8 @@ public sealed class ProfileTests : UiTest
         Assert.Equal(("KHH", "1561", "331"), (profile.PurchaseStock, profile.StockAccount, profile.PayableAccount));
         // Real R20 (failure report 0.2.132): the "Mua hàng hóa, dịch vụ" list is form frmPUVoucherService, not frmPUVoucher.
         Assert.Equal("frmPUVoucherService", profile.SalesScopeId);
+        // Real R20 (failure report 0.2.133) has no "TabItem Key PUVoucherService": the tab is selected by caption + TabItem.
+        Assert.Equal(new NativeSelector("", "Mua hàng hóa, dịch vụ", "TabItem"), profile.SalesTab);
         Assert.False(Load().IsPurchase);
     }
 
@@ -46,6 +48,10 @@ public sealed class ProfileTests : UiTest
         var list = opened.Screens.Single(screen => screen.Key == WorkflowProfile.PurchaseList);
         Assert.True(list.Open, opened.Details);
         Assert.All(list.Elements.Where(item => item.Required), item => Assert.True(item.Status == ScreenCheckStatus.Ok, item.Key + ": " + opened.Details));
+        Assert.Contains(list.Elements, item => item.Key == "module_tab" && item.Status == ScreenCheckStatus.Ok);
+        await using var native = new NativeObservationService();
+        var observation = await native.ObserveAsync(misa.Window.WindowHandle, null, token, profile.SalesScopeId);
+        Assert.True(profile.IsSalesSurface(observation.Elements));
         Assert.False(opened.Screens.Single(screen => screen.Key == WorkflowProfile.SalesList).Open, opened.Details);
 
         var purchases = await MisaScreen.TryOpenAsync(harness.Input, misa.Window, profile.Screen(WorkflowProfile.PurchaseList), token)

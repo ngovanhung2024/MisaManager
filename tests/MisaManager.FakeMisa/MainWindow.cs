@@ -57,7 +57,8 @@ public sealed class MainWindow : Window, IGridSource
         foreach (var caption in moduleCaptions)
         {
             var tab = new TabItem { Header = caption };
-            if (caption == active) tab.Id(profile.Id(listScreen, "module_tab"));
+            // Purchase: real R20's tab ID is unknown and the profile selects it by caption, so give it an ID the profile does not know.
+            if (caption == active) tab.Id(purchase ? "TabItem Key PU-real-r20" : profile.Id(listScreen, "module_tab"));
             modules.Items.Add(tab);
         }
         var activeIndex = Array.IndexOf(moduleCaptions, active);
