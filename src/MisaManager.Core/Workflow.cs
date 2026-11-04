@@ -639,18 +639,13 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                     ?? $"Live run stopped at {current.Snapshot.Status}: {batch.StopReason}.";
                 var failureCode = current.Snapshot.LastErrorCode;
                 var failureChain = current.Snapshot.ErrorChain ?? batch.Error;
-                var nothingOpened = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current);
-                if (batch.StopReason is not "interrupted")
-                    current = await TryDiscardFailedVoucherAsync(current);
-                var clean = batch.StopReason is not "interrupted"
-                    && (current.Snapshot.Status == WorkflowStatus.Discarded || nothingOpened);
-                var rerunSafe = batch.StopReason == "checkpoint_failed" && InterferenceRetry.IsTransient(failureCode) && clean;
-                // Confirmed discard clears checkpoint errors; preserve the original exception as diagnostic evidence.
+                // A failure stops with the voucher left open as it is (no Bỏ, no rerun) so it can be inspected in MISA.
+                var clean = batch.StopReason is not "interrupted" && !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current);
                 var chain = string.Join(Environment.NewLine, new[] { failureChain, current.Snapshot.ErrorChain }
                     .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal));
                 current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED", token,
                     chain.Length > 0 ? chain : null);
-                return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, rerunSafe, clean);
+                return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, misaClean: clean);
             }
 
             if (StopSignal.IsRequested)
@@ -707,16 +702,13 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             if (current is null) throw;
             current = Refreshed(current);
-            var nothingOpened = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current)
+            // Same as above: stop with the voucher left open, never Bỏ and enter again.
+            var clean = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current)
                 && current.Snapshot.Status is not (WorkflowStatus.SaveUncertain or WorkflowStatus.Saved);
-            current = await TryDiscardFailedVoucherAsync(current);
-            var clean = current.Snapshot.Status == WorkflowStatus.Discarded || nothingOpened;
-            var rerunSafe = error is AutomationException { Code: var code } && InterferenceRetry.IsTransient(code)
-                && current.Snapshot.Status == WorkflowStatus.Discarded;
             current = await MarkLiveFailureAsync(current, error.Message,
                 current.Snapshot.LastErrorCode ?? (error as AutomationException)?.Code ?? "LIVE_RUN_ERROR", CancellationToken.None, error.ToString());
             return await CompleteLiveRecordAsync(current, startedAt, "failed", comparison is not null,
-                comparison?.Matched == true, comparison, error.Message, CancellationToken.None, rerunSafe, clean);
+                comparison?.Matched == true, comparison, error.Message, CancellationToken.None, misaClean: clean);
         }
     }
 
@@ -838,29 +830,6 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         lock (gate) context = failed;
         await PersistAsync(failed, token);
         return failed;
-    }
-
-    private async Task<WorkflowContext> TryDiscardFailedVoucherAsync(WorkflowContext value)
-    {
-        var status = value.Snapshot.Status;
-        if (!VoucherWasOpened(value) || status is WorkflowStatus.SaveUncertain or WorkflowStatus.Saved
-            or WorkflowStatus.Discarded)
-            return value;
-        try
-        {
-            var discarded = await FinishAsync(save: false, token: CancellationToken.None);
-            return discarded.Snapshot.Status == WorkflowStatus.Discarded ? discarded : value;
-        }
-        catch (Exception error)
-        {
-            // The original failure remains authoritative.  The repair packet
-            // will include this cleanup failure without replaying input.
-            return value with { Snapshot = value.Snapshot with
-            {
-                LastMessage = value.Snapshot.LastMessage + " Cleanup Bỏ thất bại: " + error.Message,
-                ErrorChain = (value.Snapshot.ErrorChain ?? "") + "\nCleanup: " + error
-            } };
-        }
     }
 
     private async Task<LiveRunResult> CompleteLiveRecordAsync(WorkflowContext value, DateTimeOffset startedAt,

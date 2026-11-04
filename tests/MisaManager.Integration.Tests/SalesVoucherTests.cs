@@ -615,7 +615,8 @@ public sealed class SalesVoucherTests : UiTest
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.NotEqual("saved", result.Outcome);
-        Assert.True(result.MisaClean, Describe(result));
+        // The voucher stays open for inspection (no Bỏ on errors); only the dialog itself is cancelled.
+        Assert.False(result.MisaClean, Describe(result));
         Assert.Empty(misa.State().CreatedCustomers ?? []);
         Assert.Empty(misa.State().Vouchers);
         Assert.Equal(0, harness.Parties.CreatedCount);

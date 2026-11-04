@@ -76,6 +76,25 @@ public sealed class PurchaseVoucherTests : UiTest
     }, Purchase with { PurchaseDefaultsDelayMilliseconds = 8000 });
 
     [Fact]
+    public Task ErrorAfterTheFirstLineStopsWithTheVoucherLeftOpen() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2005", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "failed", Describe(result));
+        // User request: on an error stop as is; never Bỏ the half-entered voucher and enter it again.
+        Assert.False(result.MisaClean, Describe(result));
+        Assert.False(result.AutoRerunSafe);
+        Assert.Empty(misa.State().Vouchers);
+        var events = Events(misa);
+        Assert.DoesNotContain(events, line => line.Contains(" Đóng (", StringComparison.Ordinal));
+        Assert.Single(events, line => line.Contains(" code <- 'HH_07'"));
+    }, Purchase with { LineErrorRow = 1 });
+
+    [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>
     {
         // 10.010 × 5% = 500,5: MISA rounds to 501 while the invoice states 500.

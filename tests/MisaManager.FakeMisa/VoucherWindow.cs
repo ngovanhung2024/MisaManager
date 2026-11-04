@@ -390,6 +390,9 @@ public sealed class VoucherWindow : Window, IGridSource
                 lines.Add(line);
                 focusRow = lines.Count - 1;
             }
+            if (focusRow == scenario.LineErrorRow)
+                Dispatcher.BeginInvoke(() => MessageBox.Show(this, "Dữ liệu không có trong danh mục.", "MISA SME 2023",
+                    MessageBoxButton.OK, MessageBoxImage.Warning));
         }
         else if (e.Row is { } row)
         {

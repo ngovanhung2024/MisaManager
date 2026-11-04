@@ -54,6 +54,8 @@ public sealed record Scenario
     /// "Dữ liệu không có trong danh mục." (failure report 0.2.137).
     /// </summary>
     public int PurchaseDefaultsDelayMilliseconds { get; init; }
+    /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
+    public int LineErrorRow { get; init; } = -1;
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
 

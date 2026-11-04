@@ -3,7 +3,8 @@
 Tool Windows (WPF, .NET 10) nhập hóa đơn bán hàng từ Excel vào **MISA SME 2023 R20** bằng UI Automation:
 đọc file Excel → kiểm tra dữ liệu → tự mở chứng từ bán hàng trong MISA, điền khách hàng/ngày/hóa đơn/dòng hàng/thuế →
 đọc lại toàn bộ từ MISA để đối chiếu → **Cất** khi khớp, **Bỏ** khi lệch. Mọi bước đều có checkpoint, nên nếu bị gián đoạn
-thì không nhập trùng.
+thì không nhập trùng. Gặp **lỗi** thì tool dừng cả lượt ngay tại chỗ: chứng từ dở vẫn mở trong MISA để kiểm tra, tool không
+Bỏ, không tự nhập lại và không chuyển sang hóa đơn kế tiếp.
 
 ## Kiến trúc
 
@@ -169,7 +170,7 @@ lại mã, đến khi file danh sách khách hàng nạp lại có mã đó. Ch�
 sẽ bị coi là mới) và hóa đơn dừng trước khi mở chứng từ (`CUSTOMER_CODE_MISSING`, **Chưa hoàn thành**). Ô trong hộp Thêm
 Khách hàng được tìm theo **nhãn** bên trái. Hai lựa chọn 1. Tổ chức/2. Cá nhân của R20 không phải RadioButton trong UIA nên
 được tìm theo chữ; layout đúng được xác nhận bằng nhãn ô tên đang hiện (`Tên (*)` / `Họ và tên (*)`), layout mặc định
-(Tổ chức) thì không bấm gì. Lỗi xảy ra trước khi bấm Cất của hộp thì tool bấm **Hủy bỏ** để đóng hộp rồi mới Bỏ chứng từ.
+(Tổ chức) thì không bấm gì. Lỗi xảy ra trước khi bấm Cất của hộp thì tool bấm **Hủy bỏ** để đóng hộp rồi dừng (chứng từ vẫn mở).
 Ô được tìm theo nhãn bên trái (`"label": "Mã (*)"` trong `screens.customer_new` của profile) vì chưa có
 AutomationId; khi biết AutomationId thật, thêm `automationId` vào profile là được ưu tiên.
 Tên người mua lấy từ cột **DN mua** (đơn vị mua) của file hóa đơn nếu ô có dữ liệu; khi đó **Người mua** chỉ là người liên hệ.
@@ -293,7 +294,7 @@ tính/cột vẫn tự mở khi file có nhiều trang tính hoặc thiếu cộ
 `FailureReports` để tạo
 `%LOCALAPPDATA%\MisaManager\logs\reports\misa-report-*.zip` gồm: `README-AI.md` (hướng dẫn cho AI), `summary.json`
 (phiên bản, mã lỗi + exception, bước lỗi, checkpoint, dữ liệu hóa đơn mong đợi, giá trị đọc từ MISA, kết quả đối chiếu,
-timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**, trước khi tool Bỏ chứng từ), trạng thái
+timeline), `ui-at-failure.json` + `screen-at-failure.png` (chụp **ngay lúc lỗi**), trạng thái
 hiện tại, kết quả kiểm tra selector và log gần nhất. Gửi nguyên file zip cho AI/lập trình viên. Ảnh có thể chứa dữ liệu
 kế toán thật – không đăng công khai.
 Tên công ty trên tiêu đề cửa sổ MISA (công ty bản quyền/dữ liệu) và dòng "Đang làm việc trên: …" được thay bằng

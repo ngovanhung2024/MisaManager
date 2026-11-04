@@ -197,7 +197,9 @@ public sealed partial class AppServices : IAsyncDisposable
                 "saved" => "Đối chiếu khớp và đã Cất hóa đơn.",
                 "discarded" => "Đối chiếu không khớp, đã Bỏ chứng từ và lưu hồ sơ kiểm chứng.",
                 "existing" => "Hóa đơn đã tồn tại trong MISA: đã chọn Không, đóng chứng từ và chuyển sang hóa đơn tiếp theo.",
-                _ => "Nhập hóa đơn bị lỗi; đã cố gắng Bỏ chứng từ dở. Bấm \"Copy lỗi\" để gửi cho AI."
+                _ => result.MisaClean
+                    ? "Nhập hóa đơn bị lỗi; đã dừng (chưa mở chứng từ nào). Bấm \"Copy lỗi\" để gửi cho AI."
+                    : "Nhập hóa đơn bị lỗi; đã dừng, chứng từ vẫn mở trong MISA (không Bỏ, không nhập lại). Kiểm tra rồi đóng chứng từ; bấm \"Copy lỗi\" để gửi cho AI."
             };
             var data = FailureData(result.Context, result.Verification, result.Error);
             if (status != OperationStatuses.Completed && result.Outcome != "paused")

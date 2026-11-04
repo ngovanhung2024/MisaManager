@@ -396,9 +396,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var held = 0;
         var unfinishedNumbers = new List<string>();
         var blockedNumbers = new List<string>();
-        var failedNumbers = new List<string>();
-        var consecutiveFailures = 0;
-        string? stopNote = null;
         string? identity = null;
         services.BeginUiBatch(first.Identity.Number);
         if (resume && performanceStartedAt is { } before && performanceEndedAt is { } after) performanceCarried += after - before;
@@ -484,39 +481,10 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
                 Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để dừng sau thao tác hiện tại.";
                 PerformanceCurrent = "Nhập hóa đơn · đang chạy";
-                OperationResult response;
-                var windowReruns = 0;
-                for (var rerun = 0; ; rerun++)
-                {
-                    var liveRun = BeginTrace("Nhập hóa đơn", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}"
-                        + (rerun == 0 ? "" : $" · chạy lại lần {rerun}"));
-                    response = await services.RunInvoiceAsync(invoice, identity ?? "");
-                    FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
-                    // MISA was restarted, re-logged or switched data with nothing of this invoice left open:
-                    // find the session again (waiting for login if needed) and enter the invoice from scratch.
-                    if (response.Status != "completed" && !stopRequested && windowReruns == 0
-                        && services.Workflow.LastLiveRun is { MisaClean: true } lost && lost.Context.Invoice.Fingerprint == fingerprint
-                        && IsSessionLoss(lost.Context.Snapshot.LastErrorCode ?? lost.Verification.ErrorCode))
-                    {
-                        windowReruns++;
-                        Status = $"{position} · phiên MISA đã thay đổi; đang tìm lại phiên MISA để nhập lại từ đầu…";
-                        NotifyWorkflowChanged();
-                        identity = await WaitForSessionAsync();
-                        if (identity is null) break;
-                        continue;
-                    }
-                    // Interference (stray click, tab switch/drag) with the half-entered voucher already discarded:
-                    // enter the same invoice again from scratch instead of stopping with an error.
-                    if (response.Status == "completed" || stopRequested || rerun >= InterferenceRetry.InvoiceReruns
-                        || services.Workflow.LastLiveRun is not { AutoRerunSafe: true } last
-                        || last.Context.Invoice.Fingerprint != fingerprint)
-                        break;
-                    Status = $"{position} · MISA bị gián đoạn ({last.Error ?? response.Message}). Đã Bỏ chứng từ dở, "
-                        + $"tự nhập lại từ đầu (lần {rerun + 1}/{InterferenceRetry.InvoiceReruns})… Tránh bấm vào MISA trong lúc tool chạy.";
-                    NotifyWorkflowChanged();
-                    await Task.Delay(TimeSpan.FromSeconds(1.5));
-                    if (stopRequested) break;
-                }
+                // One attempt per invoice: an error stops the run with the voucher left open, it is never Bỏ and entered again.
+                var liveRun = BeginTrace("Nhập hóa đơn", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
+                var response = await services.RunInvoiceAsync(invoice, identity ?? "");
+                FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
                 RestoreMisaWindow(identity);
                 if (stopRequested && services.Workflow.LastLiveRun is { Outcome: "paused" } paused
                     && paused.Context.Invoice.Fingerprint == fingerprint)
@@ -524,14 +492,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     Status = response.Message;
                     History = [paused.Context, .. History.Where(run => run.Snapshot.RunId != paused.Context.Snapshot.RunId)];
                     NotifyWorkflowChanged();
-                    break;
-                }
-                // Stopped while an interference rerun was due: the voucher was already discarded safely, so this is
-                // not an error; Tiếp tục enters the invoice again from scratch.
-                if (response.Status != "completed" && stopRequested
-                    && services.Workflow.LastLiveRun is { AutoRerunSafe: true } interrupted && interrupted.Context.Invoice.Fingerprint == fingerprint)
-                {
-                    batchIndex--;
                     break;
                 }
                 Status = response.Message;
@@ -560,27 +520,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     continue;
                 }
                 // A completed run (saved, verified discard, or number already in MISA) advances the queue.
-                // A failed invoice that left MISA clean is set aside so one bad invoice does not block the
-                // rest; anything that may have left data in MISA, or an environment problem, stops here.
-                if (response.Status != "completed")
-                {
-                    var failed = services.Workflow.LastLiveRun;
-                    var code = failed?.Context.Snapshot.LastErrorCode ?? failed?.Verification.ErrorCode;
-                    if (stopRequested || failed is not { MisaClean: true } || failed.Context.Invoice.Fingerprint != fingerprint
-                        || IsEnvironmentFailure(code) || ++consecutiveFailures >= 3)
-                    {
-                        if (consecutiveFailures >= 3)
-                            stopNote = Status = $"{consecutiveFailures} hóa đơn liên tiếp bị lỗi; dừng để kiểm tra MISA/dữ liệu. Lỗi gần nhất: {response.Message}";
-                        break;
-                    }
-                    handledInBatch.Add(fingerprint);
-                    failedNumbers.Add(invoice.Identity.Number);
-                    performanceOutcome = "Hoàn tất";
-                    Status = $"{position} · lỗi ({failed.Error ?? response.Message}). Chứng từ đã được Bỏ an toàn; giữ tick để xử lý sau, chuyển sang hóa đơn kế tiếp.";
-                    NotifyWorkflowChanged();
-                    continue;
-                }
-                consecutiveFailures = 0;
+                // Any error stops here so the open voucher can be checked in MISA.
+                if (response.Status != "completed") break;
                 var current = services.Workflow.Current;
                 var final = current?.Invoice.Fingerprint == fingerprint ? current.Snapshot : null;
                 if (final?.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded)
@@ -599,7 +540,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             }
             if (performanceOutcome == "Hoàn tất")
             {
-                if (!stopRequested && stopNote is null)
+                if (!stopRequested)
                 {
                     var parts = new List<string>();
                     if (saved > 0) parts.Add($"{saved} đã lưu");
@@ -609,7 +550,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (held > 0) parts.Add($"{held} tạm hoãn (mặt hàng trùng tên nhiều mã)");
                     if (unfinishedNumbers.Count > 0)
                         parts.Add($"{unfinishedNumbers.Count} chưa hoàn thành, chưa có mã khách hàng ({string.Join(", ", unfinishedNumbers.Take(5))})");
-                    if (failedNumbers.Count > 0) parts.Add($"{failedNumbers.Count} lỗi, đã bỏ chứng từ, cần xem lại ({string.Join(", ", failedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
                     Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy trong danh sách đã tick."
                         : $"Xong các hóa đơn đã tick: {string.Join(" · ", parts)}.";
@@ -784,15 +724,6 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     private static string FormatDuration(TimeSpan duration)
         => duration.TotalSeconds < 1 ? $"{duration.TotalMilliseconds:N0} ms" : duration.ToString(@"mm\:ss\.fff");
-
-    // Codes that mean the MISA session itself changed (restart, re-login, other data), not the invoice.
-    private static bool IsSessionLoss(string? code)
-        => code is "WINDOW_IDENTITY_CHANGED" or "WINDOW_NOT_FOUND" or "WINDOW_IDENTITY_INVALID" or "NOT_MISA" or "NOT_CONNECTED";
-
-    // Problems every following invoice would hit too; continuing would only repeat the same failure.
-    private static bool IsEnvironmentFailure(string? code)
-        => IsSessionLoss(code) || code is "SALES_SURFACE_MISSING" or "EXISTING_EDITOR" or "DIALOG_REQUIRES_ATTENTION"
-            or "NATIVE_OWNER_UNAVAILABLE" or "PROFILE_REVISION_CHANGED" or "ITEM_CATALOG_MISSING" or "ITEM_CREATE_UNCERTAIN";
 
     // Waits (up to 2 minutes, cancellable with Dừng ngay) for exactly one logged-in MISA R20 session,
     // so starting while MISA is still on its login screen or restarting does not fail the run.
