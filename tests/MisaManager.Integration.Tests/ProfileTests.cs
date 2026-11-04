@@ -36,6 +36,8 @@ public sealed class ProfileTests : UiTest
         Assert.Equal("frmPUVoucherService", profile.SalesScopeId);
         // Real R20 (failure report 0.2.133) has no "TabItem Key PUVoucherService": the tab is selected by caption + TabItem.
         Assert.Equal(new NativeSelector("", "Mua hàng hóa, dịch vụ", "TabItem"), profile.SalesTab);
+        // Real R20 (failure report 0.2.136): the purchase receipt shows the supplier name in txtCAAccountObjectName.
+        Assert.Equal("txtCAAccountObjectName", profile.Fields["customer_name"].AutomationId);
         Assert.False(Load().IsPurchase);
     }
 
