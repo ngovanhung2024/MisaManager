@@ -34,13 +34,30 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Equal((invoice.Subtotal, invoice.TaxTotal, invoice.GrandTotal), (voucher.Subtotal, voucher.TaxTotal, voucher.GrandTotal));
 
         var events = Events(misa);
-        // The supplier is looked up by the MST typed into "Nhà cung cấp".
+        // No customer/supplier list loaded: the supplier is looked up by the MST typed into "Nhà cung cấp".
         Assert.Contains(events, line => line.Contains("field customer <- '" + Invoices.Supplier.TaxCode + "'"));
         Assert.Contains(events, line => line.Contains("customer NCC_PBH"));
         // MISA already proposed KHH/1561/331 and no series: the tool types neither.
         Assert.DoesNotContain(events, line => line.Contains("field series <-"));
         Assert.DoesNotContain(events, line => line.Contains(" stock <-") || line.Contains(" debit_account <-") || line.Contains(" credit_account <-"));
     }, Purchase);
+
+    [Fact]
+    public Task SupplierCodeFromLoadedListIsTypedInsteadOfMst() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2003", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 3, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(("NCC_PBH", Invoices.Supplier.TaxCode), (voucher.CustomerCode, voucher.CustomerTaxCode));
+        var events = Events(misa);
+        // R20 does not always resolve a typed MST: with the supplier in the loaded list, its code is typed.
+        Assert.Contains(events, line => line.Contains("field customer <- 'NCC_PBH'"));
+        Assert.DoesNotContain(events, line => line.Contains("field customer <- '" + Invoices.Supplier.TaxCode + "'"));
+    }, Purchase, customers: [new PartyCatalogEntry("NCC_PBH", Invoices.Supplier.Name, Invoices.Supplier.TaxCode)]);
 
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>

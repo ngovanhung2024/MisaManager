@@ -409,9 +409,9 @@ public partial class MainWindow
     {
         if (invoice.IsPurchase())
         {
-            // The tool types the MST; MISA picks the supplier.
+            // The tool types the listed supplier code; without a list entry it types the MST and MISA picks the supplier.
             var found = Parties.FindByTax(invoice.Seller.TaxCode);
-            return found.Count > 0 ? $"MST {invoice.Seller.TaxCode} → {found[0].Code}"
+            return found.Count > 0 ? $"{found[0].Code} · danh sách (MST {invoice.Seller.TaxCode})"
                 : Parties.SupplierCount == 0 ? $"MST {invoice.Seller.TaxCode} (MISA tìm theo MST)"
                 : $"MST {invoice.Seller.TaxCode} – chưa có trong danh sách nhà cung cấp";
         }

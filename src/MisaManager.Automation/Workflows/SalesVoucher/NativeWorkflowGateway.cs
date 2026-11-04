@@ -331,10 +331,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         await Tab(profile.ReceiptTab, token);
                         StopPoint();
                         Entering("customer");
-                        // MISA finds the supplier by the MST typed into "Nhà cung cấp" and Enter.
-                        var supplierTax = context.Invoice.Seller.TaxCode.Trim();
+                        // The supplier code from the loaded customer/supplier lists selects reliably; R20 does not always
+                        // resolve an MST typed into "Nhà cung cấp", so the MST is only the fallback without a list entry.
+                        var supplierText = Supplier(context.Invoice)?.Code ?? context.Invoice.Seller.TaxCode.Trim();
                         await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
-                            supplierTax, supplierTax, NativeValueKind.Exact,
+                            supplierText, supplierText, NativeValueKind.Exact,
                             profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false), token);
                         sent = true;
                         var supplier = await VerifyCustomer(context, token, selecting: true);
@@ -1472,7 +1473,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             actual => expected.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)
                 || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)
                 || profile.IsPurchase && SupplierMatches(context, field.Key, field.Expected, actual.Values[field.Key].Value, selecting)),
-            "READBACK_MISMATCH", profile.IsPurchase ? "Nhà cung cấp MISA chưa khớp tên/mã sau khi gõ MST." : "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.",
+            "READBACK_MISMATCH", profile.IsPurchase ? "Nhà cung cấp MISA chưa khớp tên/mã sau khi gõ mã nhà cung cấp (hoặc MST khi danh mục chưa có)." : "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.",
             token, timeoutMilliseconds: 15000);
         // The buyer MST is compared by the reconciliation before Cất, on the tab it is already reading.
         return customer;

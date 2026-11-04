@@ -500,7 +500,7 @@ public partial class MainWindow : Window
         PartyLabel.ToolTip = string.Join(Environment.NewLine, new[] { parties.CustomerSource, parties.SupplierSource }.OfType<string>());
         if (Purchase)
         {
-            // MISA finds suppliers by MST; list the ones the loaded supplier list does not have.
+            // The tool types the listed supplier code (MST only without a list); list the suppliers the loaded list does not have.
             var suppliers = invoices.Select(row => row.Invoice.Seller).DistinctBy(seller => PartyCatalogStore.TaxKey(seller.TaxCode)).ToArray();
             var absent = parties.SupplierCount == 0 ? [] : suppliers.Where(seller => parties.FindByTax(seller.TaxCode).Count == 0).ToArray();
             PartyDetail.Visibility = suppliers.Length == 0 ? Visibility.Collapsed : Visibility.Visible;

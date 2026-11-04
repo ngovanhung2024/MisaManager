@@ -23,13 +23,13 @@ public sealed partial class NativeWorkflowGateway
             : CreatedCustomer(context) is not null ? context.Invoice.Buyer.Name.Trim()
             : BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.CatalogName ?? context.Invoice.Buyer.Name;
 
-    // A purchase's supplier code is only known when the supplier list was loaded; MISA itself finds it by MST.
+    // A purchase's supplier code is known when a loaded customer/supplier list has the MST; otherwise MISA finds it by MST.
     private string BuyerCode(WorkflowContext context)
         => context.Invoice.IsPurchase() ? Supplier(context.Invoice)?.Code ?? ""
             : CreatedCustomer(context) ?? BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
             ?? throw MissingCustomer(context);
 
-    /// <summary>The supplier with the invoice's MST in the loaded list; null when none was loaded or found.</summary>
+    /// <summary>The entry with the invoice's MST in the loaded supplier list, else customer list; null when none has it.</summary>
     private PartyCatalogEntry? Supplier(InvoiceDocument invoice)
     {
         var found = PartyCatalog?.FindByTax(invoice.Seller.TaxCode) ?? [];
