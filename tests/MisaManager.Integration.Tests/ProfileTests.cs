@@ -32,6 +32,8 @@ public sealed class ProfileTests : UiTest
         foreach (var key in new[] { WorkflowProfile.PurchaseList, WorkflowProfile.PurchaseVoucher })
             Assert.True(profile.Screens.ContainsKey(key), key);
         Assert.Equal(("KHH", "1561", "331"), (profile.PurchaseStock, profile.StockAccount, profile.PayableAccount));
+        // Real R20 (failure report 0.2.132): the "Mua hàng hóa, dịch vụ" list is form frmPUVoucherService, not frmPUVoucher.
+        Assert.Equal("frmPUVoucherService", profile.SalesScopeId);
         Assert.False(Load().IsPurchase);
     }
 

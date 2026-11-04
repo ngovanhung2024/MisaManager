@@ -74,7 +74,7 @@ public static partial class ErrorHints
         ["SCOPE_IDENTITY_CHANGED"] = "Tab hoặc dialog của MISA đã đổi giữa chừng (ví dụ dialog Thêm vật tư mở chậm). Giữ nguyên tab Bán hàng, đóng dialog đang mở rồi chạy lại.",
         ["STALE_NATIVE_FRAME"] = "Màn hình MISA vừa thay đổi nên dữ liệu đọc đã cũ. Chờ MISA ổn định, không thao tác thêm, rồi bấm Đọc lại.",
         ["EDITOR_NOT_FOUND"] = "Không thấy form chứng từ bán hàng. Mở lại chứng từ 'Bán hàng hóa, dịch vụ trong nước' trong MISA rồi chạy lại.",
-        ["SALES_SURFACE_MISSING"] = "MISA chưa ở màn hình Bán hàng. Vào Bán hàng > Chứng từ bán hàng rồi chạy lại.",
+        ["SALES_SURFACE_MISSING"] = "MISA chưa ở màn hình danh sách chứng từ: chế độ Bán hàng cần Bán hàng > Chứng từ bán hàng, chế độ Mua hàng cần Mua hàng > Mua hàng hóa, dịch vụ. Mở đúng màn hình rồi chạy lại.",
         ["WINDOW_IDENTITY_CHANGED"] = "Phiên MISA đã đóng/mở lại hoặc đổi dữ liệu. Đăng nhập đúng dữ liệu rồi bấm Thêm vào MISA để chạy lại hóa đơn từ đầu.",
         ["ITEM_CATALOG_MISSING"] = "Chưa nạp danh mục mã hàng. Bấm nút Mã hàng và chọn file danh mục vật tư xuất từ MISA.",
         ["ITEM_AMBIGUOUS"] = "Tên hàng trùng nhiều mã trong danh mục. Thêm cột 'Mã hàng' vào file Excel hóa đơn, ghi đúng mã cho dòng này rồi nạp lại file; hoặc ngừng theo dõi mã thừa trong MISA rồi xuất lại danh mục.",
