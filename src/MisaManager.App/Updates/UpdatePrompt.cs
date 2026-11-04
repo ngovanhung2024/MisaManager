@@ -13,6 +13,11 @@ public static class UpdatePrompt
     public static async Task CheckAsync(Window owner, UpdateService updates, bool interactive, Action<string> status,
         Func<Task<string?>> releaseCheckpoint)
     {
+        if (!interactive && UpdateService.TakeFailedInstallMessage() is { } failed)
+        {
+            status("Cập nhật lần trước chưa thành công.");
+            MessageBox.Show(owner, failed, "Cập nhật", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         if (busy || !interactive && !updates.Settings.CheckOnStartup) return;
         busy = true;
         try
@@ -42,7 +47,7 @@ public static class UpdatePrompt
             if (MessageBox.Show(owner, $"Đã tải bản {update.Version} và kiểm tra mã SHA-256.\nChữ ký số: {publisher ?? "chưa ký"}\n\nĐóng app và cài đặt ngay?",
                     "Cài đặt cập nhật", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
             if (await releaseCheckpoint() is { } blocked) throw new UpdateException(blocked);
-            updates.InstallAfterExit(path);
+            updates.InstallAfterExit(path, update.Version);
             Application.Current.Shutdown();
         }
         catch (Exception error) when (error is UpdateException or HttpRequestException or TaskCanceledException
