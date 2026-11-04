@@ -7,6 +7,9 @@ namespace MisaManager.App;
 /// <summary>Coordinates read-only workbook/profile/import operations away from the WPF view.</summary>
 public sealed class ImportSession(WorkbookReader reader, WorkbookProfileStore profiles, InvoiceDraftStore drafts)
 {
+    /// <summary>Purchase invoices (Mua hàng): supplier on the voucher, services left out.</summary>
+    public bool Purchase { get; set; }
+
     public async Task<WorkbookData> ReadAsync(string path, CancellationToken token)
     {
         var workbook = await reader.ReadAsync(path, token);
@@ -15,7 +18,7 @@ public sealed class ImportSession(WorkbookReader reader, WorkbookProfileStore pr
     }
 
     public WorkbookMappingSchema Describe(WorkbookData workbook, string sheet)
-        => new InvoiceWorkbookImporter(reader).DescribeMapping(workbook, sheet);
+        => new InvoiceWorkbookImporter(reader, Purchase).DescribeMapping(workbook, sheet);
 
     public Task<WorkbookProfile?> ReadProfileAsync(WorkbookData workbook, string sheet, WorkbookMappingSchema mapping, CancellationToken token)
         => profiles.ReadAsync(workbook, sheet, mapping, token);
@@ -26,7 +29,7 @@ public sealed class ImportSession(WorkbookReader reader, WorkbookProfileStore pr
         if (columnMap is not null && columnMap.Values.Distinct().Count() != columnMap.Count)
             throw new WorkbookImportException("MAPPING_INVALID", "Each source column may be selected only once.");
         var profile = await profiles.SaveAsync(workbook, sheet, mapping, columnMap, token, confirmation, locale);
-        var imported = await Task.Run(() => new InvoiceWorkbookImporter(reader).Import(workbook,
+        var imported = await Task.Run(() => new InvoiceWorkbookImporter(reader, Purchase).Import(workbook,
             new WorkbookImportOptions(sheet, locale, ColumnMap: columnMap, ImportRevision: profile.Revision, Confirmation: confirmation), token), token);
         token.ThrowIfCancellationRequested();
         var invoices = new List<InvoiceDocument>();

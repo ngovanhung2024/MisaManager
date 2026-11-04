@@ -66,6 +66,67 @@
         }
       }
     },
+    "purchase_list": {
+      "title": "Phân hệ Mua hàng - Mua hàng hóa, dịch vụ (danh sách chứng từ)",
+      "scope": { "automationId": "frmPUVoucher", "name": "Mua hàng hóa, dịch vụ" },
+      "elements": {
+        "module_tab": { "automationId": "TabItem Key PUVoucher", "name": "Mua hàng hóa, dịch vụ", "description": "Tab Mua hàng hóa, dịch vụ trong phân hệ Mua hàng; ID theo quy ước của Bán hàng, xác nhận bằng Kiểm tra giao diện" },
+        "add": { "name": "Thêm", "controlType": "Button", "description": "Nút Thêm: mở Chứng từ mua hàng trong nước nhập kho chưa thanh toán" }
+      },
+      "grids": {
+        "vouchers": {
+          "automationId": "grdList",
+          "columns": {
+            "voucher_number": "Số chứng từ",
+            "number": "Số hóa đơn",
+            "customer": "Nhà cung cấp",
+            "subtotal": "Tổng tiền hàng",
+            "voucher_date": "Ngày chứng từ"
+          }
+        }
+      }
+    },
+    "purchase_voucher": {
+      "title": "Chứng từ mua hàng (Mua hàng trong nước nhập kho chưa thanh toán)",
+      "scope": { "automationId": "frmPUVoucherDetail" },
+      "tabs": { "receipt": "Phiếu nhập", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế" },
+      "elements": {
+        "save": { "name": "Cất", "controlType": "Button" },
+        "unpost": { "name": "Bỏ ghi", "controlType": "Button", "required": false, "description": "Chỉ hiện (bật) sau khi Cất xong: bằng chứng chứng từ đã ghi sổ" },
+        "close": { "name": "Đóng", "controlType": "Button" },
+        "customer": { "automationId": "cboAccountObjectID", "description": "Nhà cung cấp: tool gõ MST rồi Enter" },
+        "customer_name": { "automationId": "txtAccountObjectName", "description": "Tên nhà cung cấp" },
+        "customer_tax": { "automationId": "txtAccountObjectTaxCode", "tab": "invoice", "description": "Mã số thuế nhà cung cấp" },
+        "voucher_date": { "automationId": "dteRefDate", "tab": "receipt", "description": "Ngày chứng từ" },
+        "posted_date": { "automationId": "dtePostedDate", "tab": "receipt", "description": "Ngày hạch toán" },
+        "voucher_number": { "automationId": "txtRefNo", "tab": "receipt", "description": "Số phiếu nhập" },
+        "issued_date": { "automationId": "dteInvDate", "tab": "invoice", "description": "Ngày hóa đơn" },
+        "number": { "automationId": "txtInvNo", "tab": "invoice", "description": "Số hóa đơn" },
+        "series": { "automationId": "txtInvSeries", "tab": "invoice", "required": false, "description": "Ký hiệu HĐ: mua hàng không điền" },
+        "subtotal": { "automationId": "creTotalAmountOC", "description": "Tổng tiền hàng" },
+        "tax_total": { "automationId": "creTotalVATAmountOC", "description": "Tiền thuế GTGT" },
+        "grand_total": { "automationId": "creTotalPaymentAmountOC", "description": "Tổng tiền thanh toán" }
+      },
+      "grids": {
+        "items": {
+          "automationId": "grdDetail",
+          "columns": {
+            "code": "Mã hàng",
+            "name": "Tên hàng",
+            "stock": "Kho",
+            "debit_account": "TK Kho",
+            "credit_account": "TK công nợ",
+            "unit": "ĐVT",
+            "quantity": "Số lượng",
+            "unit_price": "Đơn giá",
+            "amount": "Thành tiền",
+            "tax_rate": "% thuế GTGT",
+            "tax_amount": "Tiền thuế GTGT"
+          }
+        }
+      },
+      "settings": { "stock": "KHH", "stockAccount": "1561", "payableAccount": "331" }
+    },
     "item_lookup": {
       "title": "Tìm nhanh vật tư, hàng hóa (F3)",
       "scope": { "automationId": "frmQuickSearch" },

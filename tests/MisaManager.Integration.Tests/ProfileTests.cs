@@ -3,7 +3,7 @@ using MisaManager.Automation;
 namespace MisaManager.Integration.Tests;
 
 /// <summary>Profile/fake consistency checks that need no desktop.</summary>
-public sealed class ProfileTests
+public sealed class ProfileTests : UiTest
 {
     private static WorkflowProfile Load() => WorkflowProfile.Load(Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json"));
 
@@ -22,6 +22,47 @@ public sealed class ProfileTests
         Assert.Equal(("", ""), (customer.Organization.ControlType, customer.Individual.ControlType));
         Assert.Equal("Hủy bỏ", customer.Cancel.Name);
     }
+
+    [Fact]
+    public void PurchaseProfileDeclaresTheMuaHangScreensAndAccounts()
+    {
+        var profile = WorkflowProfile.Load(Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json"), VoucherKind.Purchase);
+        Assert.True(profile.IsPurchase);
+        Assert.Equal(WorkflowProfile.PurchaseList, profile.ListScreen);
+        foreach (var key in new[] { WorkflowProfile.PurchaseList, WorkflowProfile.PurchaseVoucher })
+            Assert.True(profile.Screens.ContainsKey(key), key);
+        Assert.Equal(("KHH", "1561", "331"), (profile.PurchaseStock, profile.StockAccount, profile.PayableAccount));
+        Assert.False(Load().IsPurchase);
+    }
+
+    [Fact]
+    public Task FakeMisaExposesEveryRequiredPurchaseSelector() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var profile = harness.PurchaseProfile;
+        var opened = await harness.Input.CheckScreensAsync(misa.Window, profile.Screens, token);
+        Assert.True(opened.Ok, opened.Details);
+        var list = opened.Screens.Single(screen => screen.Key == WorkflowProfile.PurchaseList);
+        Assert.True(list.Open, opened.Details);
+        Assert.All(list.Elements.Where(item => item.Required), item => Assert.True(item.Status == ScreenCheckStatus.Ok, item.Key + ": " + opened.Details));
+        Assert.False(opened.Screens.Single(screen => screen.Key == WorkflowProfile.SalesList).Open, opened.Details);
+
+        var purchases = await MisaScreen.TryOpenAsync(harness.Input, misa.Window, profile.Screen(WorkflowProfile.PurchaseList), token)
+            ?? throw new InvalidOperationException("Phân hệ Mua hàng chưa mở.");
+        await purchases.ClickAsync("add", token: token);
+        var voucher = await MisaScreen.OpenAsync(harness.Input, misa.Window, profile.Screen(WorkflowProfile.PurchaseVoucher), token);
+
+        var editor = await harness.Input.CheckScreensAsync(misa.Window, profile.Screens, token);
+        Assert.True(editor.Ok, editor.Details);
+        var detail = editor.Screens.Single(screen => screen.Key == WorkflowProfile.PurchaseVoucher);
+        Assert.True(detail.Open, editor.Details);
+        Assert.All(detail.Elements.Where(item => item.Required),
+            item => Assert.True(item.Status is ScreenCheckStatus.Ok or ScreenCheckStatus.OtherTab, item.Key + ": " + editor.Details));
+        Assert.Contains(detail.Elements, item => item.Key == "grid:items" && item.Status == ScreenCheckStatus.Ok);
+        Assert.StartsWith("NK0", await voucher.ReadAsync("voucher_number", token));
+
+        await voucher.ClickAsync("close", leavesScope: true, token: token);
+        Assert.Null(await MisaScreen.TryOpenAsync(harness.Input, misa.Window, profile.Screen(WorkflowProfile.PurchaseVoucher), token));
+    }, new FakeScenario(Purchase: true));
 
     [Fact]
     public void AutomationIdsAreUniqueWithinEachScreen()

@@ -3,7 +3,8 @@
 Đọc README.md trước (kiến trúc, build, test, phát hành, profile). File này là quy tắc làm việc.
 
 ## Lệnh chuẩn
-- Build: `dotnet build MisaManager.sln -c Release` (Linux: thêm `-p:EnableWindowsTargeting=true`, chỉ biên dịch).
+- Build: `dotnet build MisaManager.sln -c Release` (Linux: thêm `-p:EnableWindowsTargeting=true`, chỉ biên dịch; lock file của
+  App tạo trên Windows làm restore trên Linux lỗi NU1102 – tạm bỏ `src/MisaManager.App/packages.lock.json` khi build rồi trả lại, không commit lock mới).
 - Unit test: `dotnet test tests/MisaManager.Core.Tests` (chạy được trên Linux với `-p:EnableWindowsTargeting=true`).
 - Integration test (Windows có desktop): `$env:MISAMANAGER_UI_TESTS="1"; dotnet test tests/MisaManager.Integration.Tests`.
 - Phát hành: tự động khi merge vào `master` (`.github/workflows/release.yml`), chỉ build và đóng gói MSI, không chạy test.
@@ -40,6 +41,7 @@
 | Tạo khách hàng mới (hộp Thêm Khách hàng, quy tắc mã) | `Automation/Screens/Dialogs/NativeCustomerCatalog.cs`, `CreateCustomerAsync` trong `NativeWorkflowGateway.cs`, `PartyCatalogStore.NewCustomerCode` |
 | Nhóm VTHH, tiền tố mã hàng mới, kiểm tra danh mục | `src/MisaManager.Core/ItemGroups.cs`, `Core/CatalogAudit.cs`, `src/MisaManager.Import/ItemGroupWorkbook.cs` |
 | Hóa đơn đã ghi sổ (bỏ khỏi lượt nhập) | `src/MisaManager.Core/PostedInvoices.cs`, `src/MisaManager.Import/PostedInvoiceWorkbook.cs` |
+| Mua hàng: zip HTML → Excel, hàng hóa/dịch vụ, chế độ Mua hàng | `src/MisaManager.Import/PurchaseInvoiceArchive.cs`, `src/MisaManager.Core/PurchaseInvoices.cs`, `InvoiceWorkbookImporter(reader, purchase: true)`, nhánh `profile.IsPurchase` trong `NativeWorkflowGateway.cs` |
 | Đối chiếu chứng từ đang mở (ngoài phiên nhập) | `src/MisaManager.Automation/Workflows/SalesVoucher/OpenVoucherComparison.cs` |
 | Báo cáo lỗi (zip cho AI) | `src/MisaManager.App/Diagnostics/FailureReports.cs` |
 | Tự cập nhật từ GitHub Releases | `src/MisaManager.App/Updates/` |

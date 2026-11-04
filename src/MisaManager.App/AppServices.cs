@@ -12,7 +12,9 @@ public sealed partial class AppServices : IAsyncDisposable
     public WorkbookReader WorkbookReader { get; } = new();
     public ItemCatalogStore ItemCatalog { get; } = LoadItemCatalog();
     public PartyCatalogStore PartyCatalog { get; } = LoadPartyCatalog();
-    public PostedInvoiceStore PostedInvoices { get; } = LoadPostedInvoices();
+    public PostedInvoiceStore PostedInvoices { get; } = LoadPostedInvoices("posted-invoices.json");
+    /// <summary>Purchase invoices already in MISA ("Mua hàng hóa, dịch vụ" export); kept apart from the sales register.</summary>
+    public PostedInvoiceStore PostedPurchases { get; } = LoadPostedInvoices("posted-purchases.json");
     public ItemGroupStore ItemGroups { get; } = LoadItemGroups();
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
@@ -23,6 +25,7 @@ public sealed partial class AppServices : IAsyncDisposable
     public MigrationRegistry MigrationRegistry { get; } = new(Array.Empty<IStateMigration>());
     public StateMigrationCoordinator Migrations { get; }
     public WorkflowProfile WorkflowProfile { get; } = WorkflowProfile.Load();
+    public WorkflowProfile PurchaseProfile { get; } = WorkflowProfile.Load(kind: VoucherKind.Purchase);
     private readonly NativeWorkflowGateway workflowGateway;
     public WorkflowActivity? Activity => workflowGateway.Activity;
     public WorkflowRunner Workflow { get; }
@@ -32,6 +35,34 @@ public sealed partial class AppServices : IAsyncDisposable
     // Outside generation folders so an update or restart keeps the imported invoice list.
     public ImportSessionStore ImportSessions { get; } = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "import"));
+    public ImportSessionStore PurchaseImportSessions { get; } = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "import-purchase"));
+
+    public PostedInvoiceStore PostedFor(InvoiceDocument invoice) => invoice.IsPurchase() ? PostedPurchases : PostedInvoices;
+    public bool IsPosted(InvoiceDocument invoice) => PostedFor(invoice).Contains(invoice);
+    public WorkflowProfile ProfileFor(InvoiceDocument? invoice) => invoice?.IsPurchase() == true ? PurchaseProfile : WorkflowProfile;
+
+    private static string ModePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        ProductIdentity.TechnicalName, "mode.txt");
+
+    /// <summary>Bán hàng or Mua hàng, as last chosen in the tool.</summary>
+    public VoucherKind Mode
+    {
+        get
+        {
+            try { return File.Exists(ModePath) && File.ReadAllText(ModePath).Trim() == nameof(VoucherKind.Purchase) ? VoucherKind.Purchase : VoucherKind.Sales; }
+            catch (IOException) { return VoucherKind.Sales; }
+        }
+        set
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ModePath)!);
+                File.WriteAllText(ModePath, value.ToString());
+            }
+            catch (IOException) { }
+        }
+    }
     public string LogRoot { get; }
     private readonly SemaphoreSlim workflowGate = new(1, 1);
     private Task initialization;
@@ -59,7 +90,7 @@ public sealed partial class AppServices : IAsyncDisposable
         Input = new(nativeOwner);
         LogRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "logs");
         eventStore = new RunEventStore(LogRoot);
-        workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile);
+        workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile, PurchaseProfile);
         workflowGateway.FailureObserver = CaptureFailureUiAsync;
         workflowGateway.ItemCatalog = ItemCatalog;
         workflowGateway.PartyCatalog = PartyCatalog;
@@ -103,10 +134,10 @@ public sealed partial class AppServices : IAsyncDisposable
         }
     }
 
-    private static PostedInvoiceStore LoadPostedInvoices()
+    private static PostedInvoiceStore LoadPostedInvoices(string fileName)
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            ProductIdentity.TechnicalName, "posted-invoices.json");
+            ProductIdentity.TechnicalName, fileName);
         try { return new PostedInvoiceStore(path); }
         catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
         {

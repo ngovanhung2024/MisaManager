@@ -20,14 +20,32 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
 {
     private readonly MisaWindowDiscovery windows;
     private readonly NativeInputService input;
-    private readonly WorkflowProfile profile;
+    private readonly WorkflowProfile salesProfile;
+    private readonly WorkflowProfile? purchaseProfile;
+    // Profile of the voucher kind being handled; calls are serialized by the caller, so one active profile is enough.
+    private WorkflowProfile profile;
 
-    public NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInputService input, WorkflowProfile profile)
+    public NativeWorkflowGateway(MisaWindowDiscovery windows, NativeInputService input, WorkflowProfile profile,
+        WorkflowProfile? purchaseProfile = null)
     {
         this.windows = windows;
         this.input = input;
-        this.profile = profile;
+        salesProfile = this.profile = profile;
+        this.purchaseProfile = purchaseProfile;
         input.UseProfile(profile);
+    }
+
+    /// <summary>Switches to the sales or purchase screens for this invoice before anything is read or typed.</summary>
+    private void Use(InvoiceDocument invoice) => Use(invoice.IsPurchase()
+        ? purchaseProfile ?? throw new AutomationException("PURCHASE_PROFILE_MISSING", "Profile MISA chưa có màn hình Mua hàng hóa, dịch vụ.")
+        : salesProfile);
+
+    private void Use(WorkflowProfile next)
+    {
+        if (ReferenceEquals(next, profile)) return;
+        profile = next;
+        input.UseProfile(next);
+        workflowTabs.Clear();
     }
 
     private readonly ConcurrentDictionary<string, ConcurrentQueue<long>> checkpointSamples = new(StringComparer.Ordinal);
@@ -173,6 +191,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var inputSequence = input.WorkflowInputSequence;
         try
         {
+            Use(context.Invoice);
             BindTarget(context, activate: false);
             if (status is WorkflowStatus.Ready or WorkflowStatus.PreflightPassed or WorkflowStatus.SalesSurface)
             {
@@ -180,7 +199,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 if (await input.WorkflowScopeExistsAsync(BindTarget(context, activate: false), profile.EditorId, token))
                     throw new AutomationException("EXISTING_EDITOR", "An open voucher cannot be recovered as a pre-entry checkpoint.");
                 var current = await BindSales(context, token, activate: false);
-                return new(true, status, Frame(current), "Đã đọc lại phiên MISA và surface Bán hàng.");
+                return new(true, status, Frame(current), "Đã đọc lại phiên MISA và màn hình " + profile.ModuleCaption + ".");
             }
             if (status is WorkflowStatus.Saved or WorkflowStatus.Discarded)
             {
@@ -236,6 +255,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var checkpointStarted = Stopwatch.GetTimestamp();
         try
         {
+            Use(context.Invoice);
             var stale = transition.Action == WorkflowRunner.ResolveStaleAction;
             var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction),
                 anyProfileRevision: stale);
@@ -278,7 +298,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                     throw new AutomationException("EXISTING_EDITOR", "Có editor chưa gắn với run; cần xử lý trước khi nhập mới.");
                 var current = await BindSales(context, token);
-                return new(true, transition.To, Frame(current), "Đã xác nhận preflight và surface Bán hàng.");
+                return new(true, transition.To, Frame(current), "Đã xác nhận preflight và màn hình " + profile.ModuleCaption + ".");
             }
             if (transition.To == WorkflowStatus.VoucherCreated)
             {
@@ -306,6 +326,21 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     await BindEditor(context, token);
                 switch (transition.To)
                 {
+                    case WorkflowStatus.CustomerVerified when profile.IsPurchase:
+                    {
+                        await Tab(profile.ReceiptTab, token);
+                        StopPoint();
+                        Entering("customer");
+                        // MISA finds the supplier by the MST typed into "Nhà cung cấp" and Enter.
+                        var supplierTax = context.Invoice.Seller.TaxCode.Trim();
+                        await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.Fields["customer"],
+                            supplierTax, supplierTax, NativeValueKind.Exact,
+                            profile.Culture, "Enter", token, selectedCustomer: true, verifyAfterWrite: false), token);
+                        sent = true;
+                        var supplier = await VerifyCustomer(context, token, selecting: true);
+                        await progress(new("customer_reference", supplier.Values["customer"].Value!, Frame(supplier.Frame)), token);
+                        break;
+                    }
                     case WorkflowStatus.CustomerVerified:
                         await Tab(profile.ReceiptTab, token);
                         StopPoint();
@@ -339,7 +374,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     case WorkflowStatus.InvoiceVerified:
                         await Tab(profile.InvoiceTab, token);
                         await Write("number", context.Invoice.Identity.Number, context.Invoice.Identity.Number, NativeValueKind.Exact, "Tab", token); sent = true;
-                        if (context.Invoice.Identity.Series.Length > 0)
+                        // Purchases keep the series MISA proposes (not needed for the purchase register).
+                        if (context.Invoice.Identity.Series.Length > 0 && !profile.IsPurchase)
                             await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token);
                         break;
                     case WorkflowStatus.ItemsVerified:
@@ -848,7 +884,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 metadata = await NativeWait.UntilAsync(async () =>
                     {
                         var read = await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token), boundRow,
-                            [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]], token), token);
+                            MetadataColumns(), token), token);
                         LastItemResolution = LastItemResolution with
                         {
                             NativeName = read.Values[profile.Columns["name"]].Value,
@@ -871,6 +907,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     + $"nhưng MISA đọc lại tên '{metadata.Values[profile.Columns["name"]].Value}'. "
                     + "Hãy xuất lại danh mục vật tư từ MISA và nạp lại file mã hàng; tool không mở Tìm nhanh/kính lúp và không tự đổi mã.", true);
             }
+            if (profile.IsPurchase) metadata = await EnsurePurchaseAccountsAsync(row, code, line, metadata, token);
             var expectedAccount = metadata.Values[profile.Columns["debit_account"]].Value;
             if (string.IsNullOrWhiteSpace(expectedAccount) || !expectedAccount.All(char.IsDigit))
                 throw new AutomationException("ACCOUNT_READBACK_INVALID", $"Row {row + 1}: native account is invalid.");
@@ -949,6 +986,68 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"),
                 tax, tax, NativeValueKind.TaxRate, profile.Culture, token), token);
         }
+        if (profile.IsPurchase) await EnterPurchaseTaxAmountsAsync(context, codes, token);
+    }
+
+    private string[] MetadataColumns() => profile.IsPurchase
+        ? [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"], profile.Columns["stock"], profile.Columns["credit_account"]]
+        : [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]];
+
+    /// <summary>
+    /// Purchase lines go to warehouse KHH, TK Kho 1561 and TK công nợ 331 (profile settings). MISA fills them from the
+    /// item's default warehouse; a cell that differs is typed and read back, never left as MISA proposed it.
+    /// </summary>
+    private async Task<NativeFields> EnsurePurchaseAccountsAsync(int row, string code, InvoiceLine line, NativeFields metadata,
+        CancellationToken token)
+    {
+        var changed = false;
+        foreach (var (key, wanted, commit) in new[] { ("stock", profile.PurchaseStock, "Enter"), ("debit_account", profile.StockAccount, "Tab"),
+                     ("credit_account", profile.PayableAccount, "Tab") })
+        {
+            if (Match(wanted, metadata.Values[profile.Columns[key]].Value, NativeValueKind.Text)) continue;
+            // The warehouse sets TK Kho; read again before deciding to type the account itself.
+            if (changed && key == "debit_account")
+            {
+                metadata = await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token),
+                    new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code), MetadataColumns(), token), token);
+                if (Match(wanted, metadata.Values[profile.Columns[key]].Value, NativeValueKind.Text)) continue;
+            }
+            StopPoint();
+            Entering("line:" + line.LineId + ":" + key);
+            await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, code, key),
+                wanted, wanted, NativeValueKind.Text, profile.Culture, token, commitKey: commit), token);
+            changed = true;
+        }
+        if (!changed) return metadata;
+        var verified = await Steady(async () => await input.ReadRowAsync(await input.CaptureAsync(token),
+            new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code), MetadataColumns(), token), token);
+        foreach (var (key, wanted) in new[] { ("stock", profile.PurchaseStock), ("debit_account", profile.StockAccount), ("credit_account", profile.PayableAccount) })
+            if (!Match(wanted, verified.Values[profile.Columns[key]].Value, NativeValueKind.Text))
+                throw new AutomationException("PURCHASE_ACCOUNT_MISMATCH",
+                    $"Dòng {row + 1}: {profile.Columns[key]} là '{verified.Values[profile.Columns[key]].Value}', cần '{wanted}'.", true);
+        return verified;
+    }
+
+    /// <summary>
+    /// The portal states tax per rate; the importer spreads its rounding over the lines. MISA computes amount × rate per
+    /// line, so a line whose tax differs gets the source tax typed on the "2. Thuế" tab (Cất's tax prompt keeps it).
+    /// </summary>
+    private async Task EnterPurchaseTaxAmountsAsync(WorkflowContext context, IReadOnlyList<string> codes, CancellationToken token)
+    {
+        var grid = await Steady(async () => await input.ReadTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
+            [profile.Columns["code"], profile.Columns["tax_amount"]], token), token);
+        for (var row = 0; row < context.Invoice.Lines.Length; row++)
+        {
+            var line = context.Invoice.Lines[row];
+            if (line.TaxAmount is not { } wanted) continue;
+            var native = row < grid.Rows.Count ? grid.Rows[row].GetValueOrDefault(profile.Columns["tax_amount"]) : null;
+            if (row < grid.Rows.Count && Match(codes[row], grid.Rows[row].GetValueOrDefault(profile.Columns["code"]), NativeValueKind.Exact)
+                && Match(Decimal(wanted), native, NativeValueKind.Decimal))
+                continue;
+            StopPoint();
+            Entering("line:" + line.LineId + ":tax_amount");
+            await Steady(async () => { await WriteCell(row, codes[row], "tax_amount", wanted, token); return true; }, token);
+        }
     }
 
     public async Task<ReconciliationResult> ReconcileAsync(WorkflowContext context, CancellationToken token)
@@ -957,6 +1056,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var failed = true;
         try
         {
+            Use(context.Invoice);
             await BindEditor(context, token);
             // In a live run this follows TotalsVerified directly; reuse that read when nothing was typed since.
             var result = await ReadReconciliationAsync(context, token,
@@ -997,7 +1097,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             foreach (var field in fields)
             {
                 var read = actual.Values[field.Key];
-                values.Add(new(field.Key, field.Expected, read.Value, Match(field.Expected, read.Value, field.Kind), read.Source));
+                values.Add(new(field.Key, field.Expected, read.Value, Match(field.Expected, read.Value, field.Kind)
+                    || profile.IsPurchase && field.Key == "customer_name" && SupplierMatches(context, field.Key, field.Expected, read.Value, false), read.Source));
             }
             return actual.Frame;
         }
@@ -1007,6 +1108,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             StopPoint();
             await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
+                : profile.IsPurchase ? new[] { "code", "name", "stock", "unit", "debit_account", "credit_account", "quantity", "amount", "unit_price" }
                 : new[] { "code", "name", "unit", "debit_account", "quantity", "amount", "unit_price" };
             var table = await Steady(async () => await input.ReadCompleteTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
                 keys.Select(key => profile.Columns[key]).ToArray(), token), token);
@@ -1035,6 +1137,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         ("debit_account", context.NativeValues?.GetValueOrDefault("account:" + line.LineId) ?? "<missing verified account>", NativeValueKind.Exact),
                         ("quantity", Decimal(expectedLine.Quantity), NativeValueKind.Decimal), ("amount", Decimal(line.AmountBeforeTax), NativeValueKind.Decimal),
                         ("unit_price", Decimal(decimal.Round(line.AmountBeforeTax!.Value / expectedLine.Quantity, 2, MidpointRounding.AwayFromZero)), NativeValueKind.Decimal) };
+                // Purchases: warehouse and both accounts are fixed by the profile (KHH, 1561, 331).
+                if (!taxTab && profile.IsPurchase)
+                    expected = [.. expected, ("stock", profile.PurchaseStock, NativeValueKind.Text),
+                        ("credit_account", profile.PayableAccount, NativeValueKind.Exact)];
                 foreach (var (key, wanted, kind) in expected)
                 {
                     var actual = native.Row?.GetValueOrDefault(profile.Columns[key]);
@@ -1046,6 +1152,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         "name" => CatalogNameMatch(wanted, actual),
                         // MISA derives the price from amount / quantity at its own display scale.
                         "unit_price" => NativeComparison.MatchesDerivedUnitPrice(expectedLine.Quantity, line.AmountBeforeTax!.Value, actual, Culture),
+                        "debit_account" when profile.IsPurchase => Match(wanted, actual, kind) && Match(profile.StockAccount, actual, NativeValueKind.Exact),
                         _ => Match(wanted, actual, kind)
                     };
                     values.Add(new($"line:{line.LineId}:{key}", wanted, actual, matched, source));
@@ -1092,15 +1199,16 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var invoiceFields = new List<(string Key, string Expected, NativeValueKind Kind)>
         {
             ("number", context.Invoice.Identity.Number, NativeValueKind.Exact),
-            ("issued_date", context.Invoice.Issued!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date),
-            ("payment", context.Invoice.PaymentMethod, NativeValueKind.Text)
+            ("issued_date", context.Invoice.Issued!.Value.ToString("yyyy-MM-dd"), NativeValueKind.Date)
         };
+        // Purchases are always "Chưa thanh toán" (the editor the Thêm button opens) and keep MISA's series.
+        if (!profile.IsPurchase) invoiceFields.Add(("payment", context.Invoice.PaymentMethod, NativeValueKind.Text));
         // An empty source series keeps MISA's default series; there is nothing to compare.
-        if (context.Invoice.Identity.Series.Length > 0)
+        if (context.Invoice.Identity.Series.Length > 0 && !profile.IsPurchase)
             invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
         // Invoice tab first: entry ends there, and Cất needs the receipt tab, so each header tab is selected once.
         await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
-        var individual = BuyerCodes.IsIndividual(context.Invoice.Buyer);
+        var individual = !profile.IsPurchase && BuyerCodes.IsIndividual(context.Invoice.Buyer);
         if (taxField is { } tax && !taxOnReceipt) values.Add(await CompareCustomerTaxAsync(tax.Expected, BuyerCode(context), individual, token));
         await CompareFields(profile.ReceiptTab, [.. receiptFields]);
         if (taxField is { } receiptTax && taxOnReceipt) values.Add(await CompareCustomerTaxAsync(receiptTax.Expected, BuyerCode(context), individual, token));
@@ -1264,8 +1372,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     ];
 
     private static (string Key, string Expected, NativeValueKind Kind)? CustomerTaxField(WorkflowContext context)
-        => string.IsNullOrWhiteSpace(context.Invoice.Buyer.TaxCode) ? null
-            : ("customer_tax", context.Invoice.Buyer.TaxCode, NativeValueKind.Exact);
+        => string.IsNullOrWhiteSpace(context.Invoice.Partner().TaxCode) ? null
+            : ("customer_tax", context.Invoice.Partner().TaxCode, NativeValueKind.Exact);
 
     // R20 cash sales show the buyer tax code on the "Hóa đơn" tab; "Phiếu thu" has no MST control.
     private string CustomerTaxTab => profile.FieldTabs.GetValueOrDefault("customer_tax", profile.InvoiceTab);
@@ -1328,7 +1436,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         {
             if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                 return new(false, context.Snapshot.Status, "",
-                    $"Chứng từ bán hàng vẫn đang mở trong MISA; chưa xác định được hóa đơn {number} đã Cất hay chưa.",
+                    $"Chứng từ {(profile.IsPurchase ? "mua" : "bán")} hàng vẫn đang mở trong MISA; chưa xác định được hóa đơn {number} đã Cất hay chưa.",
                     ErrorCode: "EXISTING_EDITOR");
             // Without a voucher number the voucher was never identified; MISA's duplicate-number prompt still guards it.
             if (context.NativeValues?.GetValueOrDefault("voucher_number") is not { Length: > 0 } voucher)
@@ -1336,7 +1444,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     $"Lần chạy trước của hóa đơn {number} dừng trước khi có chứng từ; chứng từ đã đóng.");
             // Reuse the window bound without the profile-revision guard; BindSales would re-apply it.
             var sales = await input.TryBindWorkflowScopeAsync(window, profile.SalesScopeId, null, token)
-                ?? throw new AutomationException("SALES_SURFACE_MISSING", "Mở màn hình Bán hàng của dữ liệu đã chọn.");
+                ?? throw SurfaceMissing();
             var register = await input.ReadCompleteTableAsync(sales, profile.SalesGridId, SalesFinishedColumns(), token);
             var saved = register.Rows.Any(row =>
                 Match(voucher, row[profile.SalesColumns["voucher_number"]], NativeValueKind.Exact)
@@ -1362,8 +1470,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var customer = await NativeWait.UntilAsync(() => Steady(async () => await input.ReadFieldsAsync(
             await input.CaptureAsync(token), fields, token), token),
             actual => expected.All(field => Match(field.Expected, actual.Values[field.Key].Value, field.Kind)
-                || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)),
-            "READBACK_MISMATCH", "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.", token, timeoutMilliseconds: 15000);
+                || selecting && field.Key == "customer" && Guid.TryParse(actual.Values[field.Key].Value, out _)
+                || profile.IsPurchase && SupplierMatches(context, field.Key, field.Expected, actual.Values[field.Key].Value, selecting)),
+            "READBACK_MISMATCH", profile.IsPurchase ? "Nhà cung cấp MISA chưa khớp tên/mã sau khi gõ MST." : "Khách hàng MISA chưa khớp mã/tên sau khi chọn mã nguồn.",
+            token, timeoutMilliseconds: 15000);
         // The buyer MST is compared by the reconciliation before Cất, on the tab it is already reading.
         return customer;
     }
@@ -1380,6 +1490,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     {
         await Tab(profile.InvoiceTab, token);
         await Require("number", context.Invoice.Identity.Number, NativeValueKind.Exact, token);
+        if (profile.IsPurchase) return;
         if (context.Invoice.Identity.Series.Length > 0) await Require("series", context.Invoice.Identity.Series, NativeValueKind.Exact, token);
         // R20's domestic VND editor has no currency control; VND is implicit in this surface.
         if (!string.Equals(context.Invoice.Currency, "VND", StringComparison.Ordinal))
@@ -1400,12 +1511,22 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
     private async Task<NativeFrame> BindSales(WorkflowContext context, CancellationToken token, bool activate = true)
         => await input.TryBindWorkflowScopeAsync(BindTarget(context, activate), profile.SalesScopeId, null, token)
-            ?? throw new AutomationException("SALES_SURFACE_MISSING", "Mở màn hình Bán hàng của dữ liệu đã chọn.");
+            ?? throw SurfaceMissing();
+
+    // Same code for both lists so recovery and the UI treat them alike.
+    private AutomationException SurfaceMissing() => new("SALES_SURFACE_MISSING", profile.IsPurchase
+        ? "Mở màn hình Mua hàng hóa, dịch vụ (phân hệ Mua hàng) của dữ liệu đã chọn. Nếu đã mở mà vẫn báo lỗi, bấm Copy lỗi gửi cho AI để cập nhật profile."
+        : "Mở màn hình Bán hàng của dữ liệu đã chọn.");
 
     private static void ValidateDocument(WorkflowContext context)
     {
-        if (context.Invoice.Currency != "VND" || context.Invoice.PaymentMethod != "Tiền mặt"
-            || context.Invoice.InvoiceType != "Hóa đơn bán hàng")
+        if (context.Invoice.IsPurchase())
+        {
+            if (context.Invoice.Currency != "VND")
+                throw new AutomationException("DOCUMENT_TYPE_UNSUPPORTED", "Profile chỉ hỗ trợ mua hàng trong nước VND.");
+        }
+        else if (context.Invoice.Currency != "VND" || context.Invoice.PaymentMethod != "Tiền mặt"
+            || context.Invoice.InvoiceType != InvoiceKinds.Sales)
             throw new AutomationException("DOCUMENT_TYPE_UNSUPPORTED", "Profile chỉ hỗ trợ bán hàng trong nước VND/tiền mặt.");
         if (context.Invoice.Lines.Length > 5000 || context.Invoice.Lines.Select(line => line.LineId).Distinct().Count() != context.Invoice.Lines.Length
             || context.Invoice.Lines.Any(line => string.IsNullOrWhiteSpace(line.LineId)))
@@ -1413,7 +1534,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         if (context.Invoice.Lines.Any(line => string.IsNullOrWhiteSpace(line.Name)
                 || string.IsNullOrWhiteSpace(line.Unit)))
             throw new AutomationException("ITEM_IDENTITY_MISSING", "Each item requires a name and unit; the item code is optional.");
-        var texts = new[] { context.Invoice.Buyer.Code, context.Invoice.Identity.Number, context.Invoice.Identity.Series }
+        var texts = new[] { context.Invoice.Partner().Code, context.Invoice.Partner().TaxCode, context.Invoice.Identity.Number, context.Invoice.Identity.Series }
             .Concat(context.Invoice.Lines.SelectMany(line => new[] { line.ItemCode, line.Name, line.Unit }));
         if (texts.Any(text => text.Length > 32768 || text.Any(char.IsControl)))
             throw new AutomationException("INVALID_TEXT", "Dữ liệu chứa ký tự điều khiển hoặc vượt giới hạn nhập native.");

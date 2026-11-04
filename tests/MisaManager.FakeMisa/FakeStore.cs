@@ -25,6 +25,13 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
         new("NTD", "BÁN CHO NGƯỜI TIÊU DÙNG", "", "")
     ];
 
+    public List<Customer> Suppliers { get; } =
+    [
+        new("NCC_PBH", "CÔNG TY CỔ PHẦN PHÂN BÓN HUẾ", "12 Lê Lợi, Thành phố Huế", "3300555111"),
+        new("NCC_VT", "CÔNG TY TNHH VẬT TƯ NÔNG NGHIỆP MIỀN TRUNG", "45 Hùng Vương, Thành phố Huế", "3300777222"),
+        .. scenario.AdditionalSuppliers
+    ];
+
     public List<CatalogItem> Items { get; } =
     [
         new("CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn", "5%"),
@@ -61,12 +68,17 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
     private int voucherSequence = 2320;
 
     public Customer? FindCustomer(string code) => Customers.FirstOrDefault(customer => string.Equals(customer.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
+    /// <summary>A supplier typed as MST (what the tool sends) or as its code.</summary>
+    public Customer? FindSupplier(string text)
+        => Suppliers.FirstOrDefault(supplier => supplier.TaxCode.Length > 0 && supplier.TaxCode == text.Trim())
+            ?? Suppliers.FirstOrDefault(supplier => string.Equals(supplier.Code, text.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public CatalogItem? FindItem(string code) => Items.FirstOrDefault(item => string.Equals(item.Code, code.Trim(), StringComparison.Ordinal));
 
     public string NextCustomerCode()
         => "NTD" + Customers.Count(customer => customer.Code.StartsWith("NTD", StringComparison.Ordinal)).ToString(CultureInfo.InvariantCulture);
 
-    public string NextVoucherNumber() => "PT0" + (voucherSequence++).ToString(CultureInfo.InvariantCulture);
+    public string NextVoucherNumber(string prefix = "PT0") => prefix + (voucherSequence++).ToString(CultureInfo.InvariantCulture);
 
     public string NextInvoiceNumber()
         => (Vouchers.Select(voucher => int.TryParse(voucher.InvoiceNumber, out var number) ? number : 0).DefaultIfEmpty(999).Max() + 1)

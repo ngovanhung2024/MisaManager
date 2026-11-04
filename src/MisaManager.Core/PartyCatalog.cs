@@ -73,6 +73,16 @@ public sealed partial class PartyCatalogStore
     public static string TaxKey(string? taxCode)
         => new((taxCode ?? "").Normalize(NormalizationForm.FormKC).Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
+    /// <summary>Entries carrying this MST: suppliers first, customers only when no supplier has it.</summary>
+    public IReadOnlyList<PartyCatalogEntry> FindByTax(string? taxCode)
+    {
+        var key = TaxKey(taxCode);
+        if (key.Length == 0) return [];
+        lock (gate)
+            return suppliers.ByTax.GetValueOrDefault(key) is { Length: > 0 } found ? found
+                : customerLookup.ByTax.GetValueOrDefault(key) ?? [];
+    }
+
     /// <summary>Entry with this exact code (customers before suppliers), or null.</summary>
     public PartyCatalogEntry? FindByCode(string? code)
     {

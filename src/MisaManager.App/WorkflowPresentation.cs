@@ -88,7 +88,7 @@ public sealed record HistoryChoice(WorkflowContext Run, ReconciliationAttempt? A
 public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<WorkflowContext> Runs)
 {
     public string Title => $"{Context.Invoice.Identity.Series} {Context.Invoice.Identity.Number}";
-    public string Subtitle => $"{Context.Invoice.Buyer.Name} · {Runs.Count} lần xử lý";
+    public string Subtitle => $"{Context.Invoice.Partner().Name} · {Runs.Count} lần xử lý";
     public string Status => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingLabel
         : Context.Snapshot.Status == WorkflowStatus.Discarded && Context.Reconciliations?.Any(attempt => attempt.Result is { Matched: false }) == true
         ? "Lệch · Đã bỏ" : StatusLabel(Context.Snapshot);
@@ -174,10 +174,11 @@ public partial class MainWindow
             => new(key, label, string.IsNullOrEmpty(value) ? "(trống)" : value, "", section, activity == key);
         void Add(string key, string label, string? value, bool section = false)
             => fields.Add(Create(key, label, value, section));
-        Add("customer", "Mã khách hàng", BuyerCodeDisplay(invoice));
-        Add("customer_name", "Tên khách hàng", invoice.Buyer.Name);
-        if (!string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode)) Add("customer_tax", "Mã số thuế", invoice.Buyer.TaxCode);
-        if (!string.IsNullOrWhiteSpace(invoice.Buyer.Address)) Add("customer_address", "Địa chỉ", invoice.Buyer.Address);
+        var partner = invoice.Partner();
+        Add("customer", invoice.IsPurchase() ? "Nhà cung cấp" : "Mã khách hàng", BuyerCodeDisplay(invoice));
+        Add("customer_name", invoice.IsPurchase() ? "Tên nhà cung cấp" : "Tên khách hàng", partner.Name);
+        if (!string.IsNullOrWhiteSpace(partner.TaxCode)) Add("customer_tax", "Mã số thuế", partner.TaxCode);
+        if (!string.IsNullOrWhiteSpace(partner.Address)) Add("customer_address", "Địa chỉ", partner.Address);
         Add("posted_date", "Ngày hạch toán", FormatDay(invoice.PostedDate));
         Add("voucher_date", "Ngày chứng từ", FormatDay(invoice.VoucherDate));
         Add("issued_date", "Ngày hóa đơn", FormatDay(invoice.Issued));
@@ -377,9 +378,12 @@ public partial class MainWindow
             if (line.value is not null)
                 return $"Hàng {line.index + 1} · {ComparisonLabel(key[("line:" + line.value.LineId + ":").Length..], invoice)}";
         }
+        var purchase = invoice?.IsPurchase() == true;
         return key switch
         {
-            "customer" => "Mã khách hàng", "customer_name" => "Tên khách hàng", "customer_tax" => "Mã số thuế",
+            "customer" => purchase ? "Mã nhà cung cấp" : "Mã khách hàng", "customer_name" => purchase ? "Tên nhà cung cấp" : "Tên khách hàng",
+            "customer_tax" => "Mã số thuế", "stock" => "Kho", "credit_account" => "TK công nợ",
+            "debit_account" when purchase => "TK Kho",
             "customer_address" => "Địa chỉ", "customer_contact" => "Người liên hệ", "voucher_number" => "Số chứng từ",
             "voucher_date" => "Ngày chứng từ", "posted_date" => "Ngày hạch toán", "issued_date" => "Ngày hóa đơn",
             "number" => "Số hóa đơn", "series" => "Ký hiệu", "payment" => "Thanh toán", "currency" => "Tiền tệ",
@@ -395,6 +399,7 @@ public partial class MainWindow
 
     private static string? ResolvedBuyerCode(InvoiceDocument invoice)
     {
+        if (invoice.IsPurchase()) return Parties.FindByTax(invoice.Seller.TaxCode).FirstOrDefault()?.Code;
         try { return BuyerCodes.Resolve(invoice.Buyer, Parties)?.Code; }
         catch (AutomationException) { return null; }
     }
@@ -402,6 +407,14 @@ public partial class MainWindow
     // The code typed into MISA and where it came from (Excel, NTD for consumers, or the customer/supplier list).
     private static string BuyerCodeDisplay(InvoiceDocument invoice)
     {
+        if (invoice.IsPurchase())
+        {
+            // The tool types the MST; MISA picks the supplier.
+            var found = Parties.FindByTax(invoice.Seller.TaxCode);
+            return found.Count > 0 ? $"MST {invoice.Seller.TaxCode} → {found[0].Code}"
+                : Parties.SupplierCount == 0 ? $"MST {invoice.Seller.TaxCode} (MISA tìm theo MST)"
+                : $"MST {invoice.Seller.TaxCode} – chưa có trong danh sách nhà cung cấp";
+        }
         try
         {
             return BuyerCodes.Resolve(invoice.Buyer, Parties) switch
@@ -460,10 +473,11 @@ public partial class MainWindow
         var rows = new List<ComparisonRow>();
         void Add(string field, string? expected)
             => rows.Add(new(new ValueComparison(field, expected ?? "", null, false, ""), ComparisonLabel(field, invoice), SectionOf(field, invoice), true));
+        var partner = invoice.Partner();
         Add("customer", ResolvedBuyerCode(invoice) ?? "");
-        Add("customer_name", invoice.Buyer.Name);
-        if (!string.IsNullOrWhiteSpace(invoice.Buyer.TaxCode)) Add("customer_tax", invoice.Buyer.TaxCode);
-        if (!string.IsNullOrWhiteSpace(invoice.Buyer.Address)) Add("customer_address", invoice.Buyer.Address);
+        Add("customer_name", partner.Name);
+        if (!string.IsNullOrWhiteSpace(partner.TaxCode)) Add("customer_tax", partner.TaxCode);
+        if (!string.IsNullOrWhiteSpace(partner.Address)) Add("customer_address", partner.Address);
         Add("posted_date", FormatDay(invoice.PostedDate));
         Add("voucher_date", FormatDay(invoice.VoucherDate));
         Add("issued_date", FormatDay(invoice.Issued));

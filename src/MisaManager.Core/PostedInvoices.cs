@@ -3,8 +3,11 @@ using System.Text.Json;
 
 namespace MisaManager.Core;
 
-/// <summary>An invoice already posted (ghi sổ) in MISA: one row of MISA's "Danh sách bán hàng" export.</summary>
-public sealed record PostedInvoiceEntry(string Number, string Series = "", string Voucher = "");
+/// <summary>
+/// An invoice already posted (ghi sổ) in MISA: one row of MISA's "Danh sách bán hàng" or "Mua hàng hóa, dịch vụ" export.
+/// <see cref="Party"/> is the supplier name of a purchase; suppliers reuse invoice numbers, so it is part of the match.
+/// </summary>
+public sealed record PostedInvoiceEntry(string Number, string Series = "", string Voucher = "", string Party = "");
 
 public sealed record PostedInvoiceFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? Source,
     IReadOnlyList<PostedInvoiceEntry> Invoices);
@@ -18,7 +21,7 @@ public sealed class PostedInvoiceStore
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly object gate = new();
     private IReadOnlyList<PostedInvoiceEntry> entries = [];
-    private Dictionary<string, string[]> byNumber = new(StringComparer.Ordinal);
+    private Dictionary<string, (string Series, string Party)[]> byNumber = new(StringComparer.Ordinal);
 
     public PostedInvoiceStore(string path)
     {
@@ -41,7 +44,10 @@ public sealed class PostedInvoiceStore
     /// </summary>
     public static string SeriesKey(string? series) => TextKey.Compact(series).TrimStart('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
 
-    public bool Contains(InvoiceDocument invoice) => Contains(invoice.Identity.Number, invoice.Identity.Series);
+    public bool Contains(InvoiceDocument invoice)
+        => Contains(invoice.Identity.Number, invoice.Identity.Series, invoice.IsPurchase() ? invoice.Seller.Name : null);
+
+    public static string PartyKey(string? name) => PartyCatalogStore.RelaxedKey(name);
 
     /// <summary>
     /// The invoices still to enter: posted ones are dropped with their issues, so an invoice MISA already has never
@@ -60,24 +66,29 @@ public sealed class PostedInvoiceStore
         }, posted.Length);
     }
 
-    /// <summary>A missing series on either side matches any series, so an invoice is never entered twice for lack of it.</summary>
-    public bool Contains(string? number, string? series)
+    /// <summary>
+    /// A missing series (or supplier) on either side matches any, so an invoice is never entered twice for lack of it.
+    /// </summary>
+    public bool Contains(string? number, string? series, string? party = null)
     {
         var key = InvoiceLookup.NumberKey(number);
         if (key.Length == 0) return false;
-        string[]? posted;
+        (string Series, string Party)[]? posted;
         lock (gate) posted = byNumber.GetValueOrDefault(key);
         if (posted is null) return false;
         var seriesKey = SeriesKey(series);
-        return seriesKey.Length == 0 || posted.Any(item => item.Length == 0 || item == seriesKey);
+        var partyKey = PartyKey(party);
+        return posted.Any(item => (seriesKey.Length == 0 || item.Series.Length == 0 || item.Series == seriesKey)
+            && (partyKey.Length == 0 || item.Party.Length == 0 || item.Party == partyKey));
     }
 
-    /// <summary>A MISA sales list export is the register at that time, so it replaces the previous one.</summary>
+    /// <summary>A MISA list export is the register at that time, so it replaces the previous one.</summary>
     public int Replace(IEnumerable<PostedInvoiceEntry> source, string sourceFile)
     {
         var cleaned = source.Where(entry => InvoiceLookup.NumberKey(entry.Number).Length > 0)
-            .Select(entry => entry with { Number = entry.Number.Trim(), Series = (entry.Series ?? "").Trim(), Voucher = (entry.Voucher ?? "").Trim() })
-            .DistinctBy(entry => (InvoiceLookup.NumberKey(entry.Number), SeriesKey(entry.Series))).ToArray();
+            .Select(entry => entry with { Number = entry.Number.Trim(), Series = (entry.Series ?? "").Trim(), Voucher = (entry.Voucher ?? "").Trim(),
+                Party = (entry.Party ?? "").Trim() })
+            .DistinctBy(entry => (InvoiceLookup.NumberKey(entry.Number), SeriesKey(entry.Series), PartyKey(entry.Party))).ToArray();
         Update(cleaned, sourceFile);
         return cleaned.Length;
     }
@@ -106,7 +117,8 @@ public sealed class PostedInvoiceStore
         entries = next;
         byNumber = next.GroupBy(entry => InvoiceLookup.NumberKey(entry.Number), StringComparer.Ordinal)
             .Where(group => group.Key.Length > 0)
-            .ToDictionary(group => group.Key, group => group.Select(entry => SeriesKey(entry.Series)).Distinct().ToArray(), StringComparer.Ordinal);
+            .ToDictionary(group => group.Key, group => group.Select(entry => (SeriesKey(entry.Series), PartyKey(entry.Party))).Distinct().ToArray(),
+                StringComparer.Ordinal);
     }
 
     private void SaveLocked()

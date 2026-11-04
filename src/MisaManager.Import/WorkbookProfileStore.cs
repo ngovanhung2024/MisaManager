@@ -49,7 +49,7 @@ public sealed class WorkbookProfileStore(IStateStore state)
     }
 
     private static string HeaderHash(WorkbookMappingSchema schema)
-        => Hash(JsonSerializer.Serialize(new { schema.HeaderRow, schema.Columns, fields = InvoiceWorkbookImporter.Fields }, ContractJson.Compact));
+        => Hash(JsonSerializer.Serialize(new { schema.HeaderRow, schema.Columns, fields = schema.Fields.Select(field => field.Key).ToArray() }, ContractJson.Compact));
     private static string ProfilePath(WorkbookData workbook, string sheet)
         => Path.Combine("import-profiles", Hash(JsonSerializer.Serialize(new[] { workbook.FilePath.ToUpperInvariant(), sheet })) + ".json");
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
