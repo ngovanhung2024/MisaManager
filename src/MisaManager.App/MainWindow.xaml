@@ -171,16 +171,16 @@
         <Button.ContextMenu><ContextMenu>
           <MenuItem x:Name="OpenInvoicesItem" Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập"/>
-          <MenuItem Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
+          <MenuItem x:Name="CatalogMenuItem" Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA; xóa toàn bộ mã hàng cũ và thay bằng dữ liệu trong file"/>
-          <MenuItem Header="Nạp nhóm vật tư, hàng hóa…" Click="ChooseItemGroups_Click" IsEnabled="{Binding CanEditSource}"
+          <MenuItem x:Name="ItemGroupsMenuItem" Header="Nạp nhóm vật tư, hàng hóa…" Click="ChooseItemGroups_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách nhóm VTHH xuất từ MISA (HH, DV, NVL…): mã hàng mới tool tạo bắt đầu bằng mã nhóm, ví dụ HH_337, DV_01"/>
           <MenuItem Header="Kiểm tra danh mục mã hàng" Click="AuditCatalog_Click"
                     ToolTip="Báo trước các mã trùng tên, mã sai quy tắc nhóm VTHH trong danh mục đã nạp"/>
           <Separator/>
-          <MenuItem Header="Nạp mã khách hàng…" Click="ChooseCustomers_Click" IsEnabled="{Binding CanEditSource}"
+          <MenuItem x:Name="CustomersMenuItem" Header="Nạp mã khách hàng…" Click="ChooseCustomers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách khách hàng xuất từ MISA (Mã, Tên, MST) để tìm mã khách hàng theo tên người mua; xóa toàn bộ danh sách cũ và thay bằng dữ liệu trong file"/>
-          <MenuItem Header="Nạp mã nhà cung cấp…" Click="ChooseSuppliers_Click" IsEnabled="{Binding CanEditSource}"
+          <MenuItem x:Name="SuppliersMenuItem" Header="Nạp mã nhà cung cấp…" Click="ChooseSuppliers_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp danh sách nhà cung cấp xuất từ MISA; dùng khi người mua chỉ có trong danh mục nhà cung cấp. Xóa toàn bộ danh sách cũ và thay bằng dữ liệu trong file"/>
           <MenuItem Header="Xóa lịch sử hồ sơ và hiệu năng" Click="ClearComparison_Click"/>
           <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
