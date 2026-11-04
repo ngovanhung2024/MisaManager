@@ -287,10 +287,35 @@ public sealed class VoucherWindow : Window, IGridSource
         Ui.Group("Thông tin chung", Ui.Form(100, ("Nhà cung cấp", CustomerRow()), ("Địa chỉ", Field("address")),
             ("Mã số thuế", Field("customer_tax", scenario.CustomerTaxUnlisted ? "txtUnlistedTaxCode" : FieldId("customer_tax"))),
             ("Diễn giải", Ui.Text(value: "Mua hàng theo hóa đơn")))),
-        Ui.Group("Hoá đơn", Ui.Form(100, ("Mẫu số HĐ", Field("template")),
+        Ui.Group("Hoá đơn", Ui.Form(100, ("Mẫu số HĐ", TemplateCombo()),
             ("Ký hiệu HĐ", Field("series", FieldId("series"))),
             ("Số hóa đơn", Field("number", FieldId("number"))),
             ("Ngày hóa đơn", Field("issued_date", FieldId("issued_date"))))));
+
+    /// <summary>
+    /// R20 phiếu nhập: "Mẫu số HĐ" is combo cboInvTemplateNo whose inner cboInvTemplateNo_EmbeddableTextBox never takes
+    /// UIA focus itself; the value is typed into the combo and accepted with Enter.
+    /// </summary>
+    private ComboBox TemplateCombo()
+    {
+        var id = FieldId("template");
+        var combo = Ui.Combo(id, ["1", "2"], value: header.GetValueOrDefault("template", ""));
+        combo.Loaded += (_, _) =>
+        {
+            if (combo.Template.FindName("PART_EditableTextBox", combo) is not TextBox editor) return;
+            editor.Focusable = false;
+            System.Windows.Automation.AutomationProperties.SetAutomationId(editor, (id.Length > 0 ? id : "cboInvTemplateNo") + "_EmbeddableTextBox");
+        };
+        combo.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            CommitField("template", combo.Text);
+            e.Handled = true;
+            combo.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        };
+        combo.LostKeyboardFocus += (_, _) => { if (!combo.IsKeyboardFocusWithin) CommitField("template", combo.Text); };
+        return combo;
+    }
 
     private Grid IssueTab() => Split(
         Ui.Group("Thông tin chung", Ui.Form(100, ("Khách hàng", CustomerRow()), ("Người nhận", Ui.Text()),
