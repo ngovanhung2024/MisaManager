@@ -378,7 +378,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         if (context.Invoice.Identity.Series.Length > 0)
                             await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token);
                         if (PurchaseTemplate(context) is { } template)
-                            await Write("template", template, template, NativeValueKind.Exact, "Tab", token);
+                            // "Mẫu số HĐ" is a combo: the typed value is accepted with Enter.
+                            await Write("template", template, template, NativeValueKind.Exact, "Enter", token);
                         break;
                     case WorkflowStatus.ItemsVerified:
                         await EnterLines(context, progress, token);

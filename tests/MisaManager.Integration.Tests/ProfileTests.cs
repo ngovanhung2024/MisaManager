@@ -38,6 +38,8 @@ public sealed class ProfileTests : UiTest
         Assert.Equal(new NativeSelector("", "Mua hàng hóa, dịch vụ", "TabItem"), profile.SalesTab);
         // Real R20 (failure report 0.2.136): the purchase receipt shows the supplier name in txtCAAccountObjectName.
         Assert.Equal("txtCAAccountObjectName", profile.Fields["customer_name"].AutomationId);
+        // Real R20 (failure report 0.2.139): "Mẫu số HĐ" is combo cboInvTemplateNo; the label picked its inner textbox (FOCUS_FAILED).
+        Assert.Equal("cboInvTemplateNo", profile.Fields["template"].AutomationId);
         Assert.False(Load().IsPurchase);
     }
 
