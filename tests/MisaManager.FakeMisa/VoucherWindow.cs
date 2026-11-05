@@ -210,7 +210,8 @@ public sealed class VoucherWindow : Window, IGridSource
             "revenue_account" => line.RevenueAccount,
             "unit" => line.Unit,
             "quantity" => Ui.Quantity(line.Quantity),
-            "unit_price" => Ui.Price(line.UnitPrice),
+            // R20 phiếu nhập reports its 2-decimal price padded to 4 decimals ("11571,4300").
+            "unit_price" => purchase ? line.UnitPrice.ToString("N4", FakeStore.Vi) : Ui.Price(line.UnitPrice),
             "amount" => Ui.Money(line.Amount),
             "discount_rate" => "0,00",
             "tax_description" => "Thuế GTGT - " + line.Name,

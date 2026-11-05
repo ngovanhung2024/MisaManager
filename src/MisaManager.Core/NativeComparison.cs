@@ -21,6 +21,9 @@ public static class NativeComparison
         var parts = actual.Trim().Split(separator, StringSplitOptions.None);
         var scale = parts.Length == 2 ? parts[1].Length : 0;
         if (scale > 28) return false;
+        // R20 phiếu nhập keeps the price at 2 decimals but reports it padded to 4 ("11571,4300" for 11.571,43); the zero
+        // padding beyond 2 decimals is not precision. Two decimals stay significant: "10000,0000" is not 10000,4.
+        if (scale > 2) scale = Math.Max(2, parts[1].TrimEnd('0').Length);
         try { return decimal.Round(amount / quantity, scale, MidpointRounding.AwayFromZero) == price; }
         catch (OverflowException) { return false; }
     }

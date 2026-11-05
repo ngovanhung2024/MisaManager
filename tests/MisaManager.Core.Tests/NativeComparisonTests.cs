@@ -254,6 +254,11 @@ public sealed class NativeComparisonTests
     [InlineData("2", "1", "0,5", true)]
     [InlineData("2", "1", "1", true)]
     [InlineData("2", "1", "0", false)]
+    // Report 0.2.147 (HĐ 244): 11571429 / 1000 shown as 11.571,43, read back as "11571,4300".
+    [InlineData("1000", "11571429", "11571,4300", true)]
+    [InlineData("1000", "11571429", "11.571,4290", true)]
+    [InlineData("1000", "11571429", "11571,4400", false)]
+    [InlineData("10", "100004", "10000,0000", false)]
     public void DerivedUnitPriceIsRoundedToTheDisplayedScale(string quantity, string amount, string actual, bool expected)
     {
         var matched = NativeComparison.MatchesDerivedUnitPrice(decimal.Parse(quantity, CultureInfo.InvariantCulture),
