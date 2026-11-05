@@ -821,7 +821,8 @@ public sealed partial class NativeInputService
             {
                 if (waitForCode && string.IsNullOrWhiteSpace(code))
                     throw new AutomationException("TARGET_NOT_FOUND", "Mã hàng vừa chọn chưa cập nhật vào dòng đích.");
-                throw new AutomationException("GRID_ROW_CHANGED", "Mã hàng ở dòng đích đã thay đổi; không nhập tiếp.");
+                throw new AutomationException("GRID_ROW_CHANGED",
+                    $"Mã hàng ở dòng đích đã thay đổi (đọc được '{code}', cần '{cell.ExpectedCode.Trim()}'); không nhập tiếp.");
             }
         }
         if (requireEmptyCode && !string.IsNullOrWhiteSpace(Code(row)))
@@ -922,10 +923,14 @@ public sealed partial class NativeInputService
         return columns.Select(column =>
         {
             token.ThrowIfCancellationRequested();
+            // Rank by the share of the cell inside the column first: when the grid is scrolled sideways, a wide
+            // scrolled cell (Tên hàng) lies under the frozen Mã hàng column and covers its header more than the
+            // slightly inset code cell does (R20 phiếu nhập, report 0.2.143).
             var matches = cells.Select(cell => (cell, overlap: HorizontalOverlap(cell.Bounds.X,
                     cell.Bounds.X + cell.Bounds.Width, column.Left, column.Right)))
                 .Where(item => item.overlap > 0)
-                .OrderByDescending(item => item.overlap)
+                .OrderByDescending(item => Math.Round(item.overlap / Math.Max(1, item.cell.Bounds.Width), 2))
+                .ThenByDescending(item => item.overlap)
                 .ThenBy(item => Math.Abs(item.cell.Bounds.X - column.Left))
                 .ToArray();
             if (matches.Length == 0)

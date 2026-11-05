@@ -1463,7 +1463,8 @@ public partial class MainWindow : Window
                 if (Invoice.IsBlocked) return "Thiếu dữ liệu";
                 if (selection.IsHeld(Invoice)) return "Tạm hoãn";
                 if (LatestRun() is { } record) return ProfileRecord.StatusLabel(record.Snapshot);
-                return "Sẵn sàng nhập";
+                // Without the saved history an invoice entered last session would look new.
+                return selection.HistoryLoaded ? "Sẵn sàng nhập" : "Đang tải lịch sử…";
             }
         }
         /// <summary>Drives the list color: saved green, discarded rose, failed red, uncertain violet, blocked amber.</summary>
@@ -1474,6 +1475,7 @@ public partial class MainWindow : Window
                 if (IsPosted) return "saved";
                 if (Invoice.IsBlocked || selection.IsHeld(Invoice)) return "attention";
                 var snapshot = LatestRun()?.Snapshot;
+                if (snapshot is null && !selection.HistoryLoaded) return "running";
                 if (snapshot is not null && RunOutcome.IsExisting(snapshot)) return "existing";
                 if (snapshot is not null && RunOutcome.IsUnfinished(snapshot)) return "attention";
                 return snapshot?.Status switch

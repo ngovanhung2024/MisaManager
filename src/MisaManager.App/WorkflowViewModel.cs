@@ -275,6 +275,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     }
 
     public IReadOnlyList<WorkflowContext> History { get; private set; } = [];
+    /// <summary>False until the saved run history was read once; rows then show "Đang tải" instead of "Sẵn sàng nhập".</summary>
+    public bool HistoryLoaded { get; private set; }
     public WorkflowActivity? Activity => services.Activity;
     public ObservableCollection<PerformanceTraceEntry> PerformanceEntries { get; } = [];
     public string PerformanceCurrent
@@ -357,6 +359,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public async Task LoadHistoryAsync()
     {
         History = await services.Workflow.ReadHistoryAsync();
+        HistoryLoaded = true;
         NotifyWorkflowChanged();
     }
 

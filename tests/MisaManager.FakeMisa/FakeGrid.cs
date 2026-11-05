@@ -42,6 +42,7 @@ public sealed class FakeGrid : Border
     private readonly List<GridRow> rows = [];
     private IReadOnlyList<GridColumn> columns = [];
     private IGridSource? source;
+    private double horizontalShift;
 
     public FakeGrid(string automationId, double height)
     {
@@ -81,6 +82,29 @@ public sealed class FakeGrid : Border
         Rebuild();
     }
 
+    /// <summary>
+    /// Infragistics-like sideways scroll: the first column stays frozen on top while the second column slides under it.
+    /// As in R20 the frozen cell is inset 2 px from its header, so the wide cell beneath covers the header more.
+    /// </summary>
+    public void ScrollHorizontally(double shift)
+    {
+        horizontalShift = shift;
+        ApplyHorizontalScroll(headerPanel.Children.Cast<FrameworkElement>().ToArray(), header: true);
+        foreach (var row in rows) ApplyHorizontalScroll([.. row.Cells], header: false);
+    }
+
+    private void ApplyHorizontalScroll(IReadOnlyList<FrameworkElement> line, bool header)
+    {
+        if (horizontalShift <= 0 || line.Count < 2) return;
+        Panel.SetZIndex(line[0], 1);
+        if (!header)
+        {
+            line[0].Width = columns[0].Width - 2;
+            line[0].Margin = new Thickness(0, 0, 2, 0);
+        }
+        line[1].Margin = new Thickness(-horizontalShift, 0, 0, 0);
+    }
+
     /// <summary>Re-renders values; recreates rows when the count changed (as Infragistics recreates its providers).</summary>
     public void Refresh(bool force = false)
     {
@@ -107,6 +131,7 @@ public sealed class FakeGrid : Border
         var row = new GridRow(this, index, columns, RowHeight);
         rows.Add(row);
         rowPanel.Children.Add(row);
+        ApplyHorizontalScroll([.. row.Cells], header: false);
     }
 
     /// <summary>Moves keyboard focus to a cell after MISA-like recalculation (next cell, or the new insertion row).</summary>

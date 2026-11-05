@@ -119,18 +119,37 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     private const string StopMessage = "Đã tạm dừng theo yêu cầu (Dừng ngay) sau thao tác vừa hoàn tất; chứng từ chưa Cất.";
     public WorkflowStopSignal StopSignal { get; } = new();
 
+    // Run files only change through their own writes; unchanged ones (same size and write time) are not parsed again.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime Written, long Length, WorkflowContext Record)> historyCache
+        = new(StringComparer.OrdinalIgnoreCase);
+
     public async Task<IReadOnlyList<WorkflowContext>> ReadHistoryAsync(CancellationToken token = default)
     {
         var root = Path.Combine(stateStore.RootPath, "runs");
-        if (!Directory.Exists(root)) return [];
-        var records = new List<WorkflowContext>();
-        foreach (var path in StateFiles.Files(root).Where(path => Path.GetFileName(path) == "workflow.json"))
-        {
-            var record = await stateStore.ReadAsync<WorkflowContext>("workflow-context",
-                Path.GetRelativePath(stateStore.RootPath, path), token);
-            if (record is not null) records.Add(record);
-        }
-        return records.OrderByDescending(record => record.Snapshot.UpdatedAt).ToArray();
+        if (!Directory.Exists(root)) { historyCache.Clear(); return []; }
+        var paths = StateFiles.Files(root).Where(path => Path.GetFileName(path) == "workflow.json").ToArray();
+        var records = new WorkflowContext?[paths.Length];
+        await Parallel.ForEachAsync(Enumerable.Range(0, paths.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8), CancellationToken = token },
+            async (index, cancel) =>
+            {
+                var path = paths[index];
+                var info = new FileInfo(path);
+                if (!info.Exists) return;
+                if (historyCache.TryGetValue(path, out var cached) && cached.Written == info.LastWriteTimeUtc && cached.Length == info.Length)
+                {
+                    records[index] = cached.Record;
+                    return;
+                }
+                var record = await stateStore.ReadAsync<WorkflowContext>("workflow-context",
+                    Path.GetRelativePath(stateStore.RootPath, path), cancel);
+                if (record is null) { historyCache.TryRemove(path, out _); return; }
+                historyCache[path] = (info.LastWriteTimeUtc, info.Length, record);
+                records[index] = record;
+            });
+        var present = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var stale in historyCache.Keys.Where(key => !present.Contains(key)).ToArray()) historyCache.TryRemove(stale, out _);
+        return records.OfType<WorkflowContext>().OrderByDescending(record => record.Snapshot.UpdatedAt).ToArray();
     }
 
     public async Task<int> DeleteAllProfileHistoryAsync(CancellationToken token = default)

@@ -114,6 +114,22 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Single(events, line => line.Contains("row=0 amount <-", StringComparison.Ordinal));
     }, Purchase with { RowRedrawAfterAmountMilliseconds = 400 });
 
+    // Report 0.2.143 (invoice 633): after Thành tiền the grid scrolled sideways, the wide Tên hàng cell lay under the
+    // frozen Mã hàng column and was read as the code ("Mã hàng ở dòng đích đã thay đổi") for the whole 10 s wait.
+    [Fact]
+    public Task GridScrolledSidewaysStillReadsTheFrozenCodeColumn() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2007", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 5, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 2, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(["HH_06", "HH_07"], Assert.Single(misa.State().Vouchers).Lines.Select(line => line.Code));
+        Assert.Single(Events(misa), line => line.Contains("row=0 amount <-", StringComparison.Ordinal));
+    }, Purchase with { ScrollSidewaysAfterAmount = true });
+
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>
     {

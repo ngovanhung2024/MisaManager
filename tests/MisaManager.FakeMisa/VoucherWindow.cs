@@ -424,6 +424,8 @@ public sealed class VoucherWindow : Window, IGridSource
                     line.UnitPrice = line.Quantity == 0 ? 0 : Math.Round(amount / line.Quantity, 2, MidpointRounding.AwayFromZero);
                     Recalculate(line);
                     if (scenario.RowRedrawAfterAmountMilliseconds > 0) RedrawRow(line);
+                    // Tab from Thành tiền moves to a column right of the view; R20 scrolls the grid sideways.
+                    if (scenario.ScrollSidewaysAfterAmount) grid.ScrollHorizontally(150);
                     break;
                 case "tax_rate" when Ui.TaxRate(text) is { } rate:
                     line.TaxRate = rate;

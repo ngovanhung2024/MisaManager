@@ -156,6 +156,23 @@ public sealed class ManualSavedTests : IDisposable
         Assert.Equal(done.Snapshot.RunId, Assert.Single(await runner.ReadHistoryAsync(Token)).Snapshot.RunId);
     }
 
+    // History is cached between reads (opening the app took ~1 minute): a rewritten or deleted run must still show.
+    [Fact]
+    public async Task CachedHistoryFollowsRewrittenAndDeletedRuns()
+    {
+        var (runner, store) = Create();
+        var run = await SeedRunAsync(store, Invoice("1544"), WorkflowStatus.Failed);
+        var other = await SeedRunAsync(store, Invoice("1545"), WorkflowStatus.Saved);
+        Assert.Equal(2, (await runner.ReadHistoryAsync(Token)).Count);
+
+        var saved = run with { Snapshot = run.Snapshot with { Status = WorkflowStatus.Saved, UpdatedAt = run.Snapshot.UpdatedAt.AddMinutes(1) } };
+        await store.WriteAsync("workflow-context", Path.Combine("runs", run.Snapshot.RunId, "workflow.json"), saved, Token);
+        Directory.Delete(RunDirectory(store, other), recursive: true);
+
+        var history = Assert.Single(await runner.ReadHistoryAsync(Token));
+        Assert.Equal((run.Snapshot.RunId, WorkflowStatus.Saved), (history.Snapshot.RunId, history.Snapshot.Status));
+    }
+
     [Fact]
     public async Task AnInvoiceWithoutAnyRunCanBeMarked()
     {

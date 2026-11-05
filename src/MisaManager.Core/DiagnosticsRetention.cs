@@ -38,17 +38,19 @@ public static class DiagnosticsRetention
     public static DiagnosticsRetentionReport Prune(string root, Func<string, bool>? protectedFile = null,
         long quotaBytes = DefaultQuotaBytes, TimeSpan? maximumAge = null)
     {
-        var report = Inspect(root, protectedFile, quotaBytes, maximumAge);
+        // Protection can be costly (audit files are parsed line by line), so it is only asked for files that would
+        // actually be deleted; inspecting every file on each start made opening the app take close to a minute.
+        var report = Inspect(root, null, quotaBytes, maximumAge);
         if (report.Entries.Count == 0) return report;
         var cutoff = DateTime.UtcNow - (maximumAge ?? DefaultAge);
-        var removable = report.Entries.Where(item => !item.Protected)
-            .OrderBy(item => item.LastWriteUtc).ToList();
+        var removable = report.Entries.OrderBy(item => item.LastWriteUtc).ToList();
         var bytes = report.TotalBytes;
         var deleted = 0;
         long deletedBytes = 0;
         foreach (var item in removable)
         {
             if (bytes <= quotaBytes && item.LastWriteUtc >= cutoff) break;
+            if (protectedFile?.Invoke(item.Path) == true) continue;
             try
             {
                 StateFiles.RejectReparse(item.Path);
@@ -58,7 +60,7 @@ public static class DiagnosticsRetention
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             { System.Diagnostics.Trace.TraceWarning("Diagnostics retention kept {0}: {1}", item.Path, error.Message); }
         }
-        var final = Inspect(root, protectedFile, quotaBytes, maximumAge);
+        var final = Inspect(root, null, quotaBytes, maximumAge);
         return final with { DeletedCount = deleted, DeletedBytes = deletedBytes,
             Message = final.Message + $" Đã dọn {deleted} file/{deletedBytes / (1024 * 1024)} MiB." };
     }

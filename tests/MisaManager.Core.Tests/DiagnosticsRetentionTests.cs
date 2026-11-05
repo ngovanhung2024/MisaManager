@@ -150,6 +150,21 @@ public sealed class DiagnosticsRetentionTests : IDisposable
         Assert.True(File.Exists(path));
     }
 
+    // Protection parses audit files; asking it for every file on each start made opening the app slow.
+    [Fact]
+    public void PruneAsksProtectionOnlyForFilesItWouldDelete()
+    {
+        Write("fresh-a.jsonl", 10, ageDays: 1);
+        Write("fresh-b.jsonl", 10, ageDays: 2);
+        var old = Write("old.jsonl", 10, ageDays: 60);
+        var asked = new List<string>();
+
+        DiagnosticsRetention.Prune(temp.Root, path => { asked.Add(path); return false; });
+
+        Assert.All(asked, path => Assert.Equal(old, path));
+        Assert.False(File.Exists(old));
+    }
+
     [Fact]
     public void PruneOfAMissingFolderIsANoOp()
     {

@@ -58,6 +58,8 @@ public sealed record Scenario
     public int LineErrorRow { get; init; } = -1;
     /// <summary>After "Thành tiền" is committed the line's code cell reads empty this long (R20 redrawing the row).</summary>
     public int RowRedrawAfterAmountMilliseconds { get; init; }
+    /// <summary>After "Thành tiền" the grid scrolls sideways: Tên hàng slides under the frozen Mã hàng column (report 0.2.143).</summary>
+    public bool ScrollSidewaysAfterAmount { get; init; }
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
 
