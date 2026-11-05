@@ -336,6 +336,7 @@ public static class BuyerCodes
     public const string MissingCode = "CUSTOMER_CODE_MISSING";
     /// <summary>MISA customer used for buyers who gave no details (accountants' convention in the posted vouchers).</summary>
     public const string RetailCustomerName = "Khách lẻ";
+    public const string RetailCustomerCode = "KL";
     private static readonly string ConsumerKey = TextKey.LettersAndDigits("BÁN CHO NGƯỜI TIÊU DÙNG");
     private static readonly string[] AnonymousKeys =
         [Plain("Khách hàng không cung cấp thông tin"), Plain("Người mua không cung cấp thông tin")];
@@ -381,7 +382,7 @@ public static class BuyerCodes
         .Select(c => c == 'Đ' ? 'D' : c).Where(c => c == ' ' || char.IsAsciiLetterOrDigit(c)).ToArray());
 
     /// <summary>
-    /// The Excel code wins; consumer sales always use NTD; anonymous buyers use the catalog's "Khách lẻ"; otherwise the
+    /// The Excel code wins; consumer sales always use NTD; anonymous buyers always use KL ("Khách lẻ"); otherwise the
     /// customer/supplier catalog is searched by name.
     /// Returns null when no code is known; throws <see cref="AutomationException"/> when the catalog is ambiguous.
     /// </summary>
@@ -390,8 +391,7 @@ public static class BuyerCodes
         if (buyer.Code.Trim().Length > 0) return new(buyer.Code.Trim(), "Excel");
         if (IsConsumer(buyer.Name)) return new(ConsumerCode, "bán cho người tiêu dùng");
         if (IsAnonymous(buyer.Name))
-            return catalog?.FindCode(RetailCustomerName) is { } retail
-                ? new(retail.Code, $"người mua không cung cấp thông tin → {retail.Name}", retail.Name) : null;
+            return new(RetailCustomerCode, $"người mua không cung cấp thông tin → {RetailCustomerName}", RetailCustomerName);
         return catalog?.FindCode(buyer.Name, buyer.TaxCode) is { } match
             ? new(match.Code, $"danh mục {PartyCatalogStore.Label(match.Role)} · {match.Method}", match.Name) : null;
     }

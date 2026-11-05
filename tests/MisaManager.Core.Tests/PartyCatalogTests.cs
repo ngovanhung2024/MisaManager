@@ -189,14 +189,16 @@ public sealed class PartyCatalogTests : IDisposable
         Assert.Null(BuyerCodes.Resolve(Buyer("CÔNG TY CỔ PHẦN DỆT MAY HUẾ"), null));
     }
 
-    /// <summary>The posted vouchers enter every "Khách hàng không cung cấp thông tin" invoice under MISA's "Khách lẻ".</summary>
+    /// <summary>Every "Khách hàng không cung cấp thông tin" invoice is entered under KL "Khách lẻ", with or without a customer list.</summary>
     [Fact]
-    public void AnonymousBuyerUsesTheRetailCustomerOfTheCatalog()
+    public void AnonymousBuyerUsesTheRetailCustomerCode()
     {
         var store = Store();
         Party Buyer(string name, string code = "") => new(name, "", "", code, ValuePresence.NotApplicable);
 
-        Assert.Null(BuyerCodes.Resolve(Buyer("Khách hàng không cung cấp thông tin"), null));
+        Assert.Equal(new BuyerCode("KL", "người mua không cung cấp thông tin → Khách lẻ", "Khách lẻ"),
+            BuyerCodes.Resolve(Buyer("Khách hàng không cung cấp thông tin"), null));
+        Assert.Equal("KL", BuyerCodes.Resolve(Buyer("Khách hàng không cung cấp thông tin"), store)?.Code);
         store.Replace(PartyRole.Customer, [.. Customers, new("KL", "Khách lẻ"), new("NTD", "BÁN CHO NGƯỜI TIÊU DÙNG")], "Khach_hang.xlsx");
 
         Assert.Equal(new BuyerCode("KL", "người mua không cung cấp thông tin → Khách lẻ", "Khách lẻ"),

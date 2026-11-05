@@ -236,8 +236,9 @@ public partial class MainWindow : Window
         var postedDialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
             Title = (Purchase ? "Bước 2/2: Chọn file danh sách mua hàng đã ghi sổ xuất từ MISA (Mua_hang_hoa__dich_vu.xlsx)"
                     : "Bước 2/2: Chọn file danh sách bán hàng đã ghi sổ xuất từ MISA (Ban_hang.xlsx)")
-                + (postedStore.Count > 0 ? $" – Hủy để dùng danh sách đã nạp ({postedStore.Count:N0} hóa đơn)" : " – Hủy nếu MISA chưa có hóa đơn nào") };
-        if (postedDialog.ShowDialog(this) == true)
+                + " – Hủy nếu MISA chưa có hóa đơn nào" };
+        if (postedDialog.ShowDialog(this) != true) await Task.Run(postedStore.Clear);
+        else
         {
             StatusLabel.Text = "Đang đọc file hóa đơn đã ghi sổ...";
             try

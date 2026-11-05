@@ -275,7 +275,7 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase
         }
         else if (BuyerCodes.IsAnonymous(buyerName))
         {
-            // The code (MISA's "Khách lẻ") is looked up in the customer list when the invoice runs.
+            // Entered under MISA's "Khách lẻ" (KL) when the invoice runs; an Excel code still wins.
             buyerKind = PartyKind.Individual;
             if (buyerPresence == ValuePresence.Missing) buyerPresence = ValuePresence.NotApplicable;
         }
