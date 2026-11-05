@@ -192,8 +192,8 @@ public sealed class TaxPromptWindow : Window
             ? new Label { Content = message, Height = 120, Margin = new Thickness(8) }
             : new TextBox { Text = message, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 120, Margin = new Thickness(8) };
         text.Id(profile.Id("tax_rounding_prompt", "message"));
-        var yes = Ui.Button("Có", width: 80);
-        yes.Click += (_, _) => { Adjust = true; Close(); };
+        var yes = Ui.Button("Có", automationId: profile.Id("tax_rounding_prompt", "yes"), width: 80);
+        yes.Click += (_, _) => { FakeLog.Write("Hộp chênh lệch thuế: bấm Có"); Adjust = true; Close(); };
         var no = Ui.Button("Không", automationId: profile.Id("tax_rounding_prompt", "no"), width: 80);
         no.Click += (_, _) => { FakeLog.Write("Hộp chênh lệch thuế: bấm Không"); Close(); };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(8) };

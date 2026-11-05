@@ -1153,6 +1153,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         "name" => CatalogNameMatch(wanted, actual),
                         // MISA derives the price from amount / quantity at its own display scale.
                         "unit_price" => NativeComparison.MatchesDerivedUnitPrice(expectedLine.Quantity, line.AmountBeforeTax!.Value, actual, Culture),
+                        // MISA rounds VAT per line itself; 1 đồng off the e-invoice is accepted (Cất's prompt is answered Có).
+                        "tax_amount" => NativeComparison.MatchesTaxRounding(wanted, actual, Culture),
                         _ => Match(wanted, actual, kind)
                     };
                     values.Add(new($"line:{line.LineId}:{key}", wanted, actual, matched, source));
@@ -1183,7 +1185,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     ("grand_total", context.Invoice.GrandTotal) })
                 {
                     var read = totals.Values[key];
-                    values.Add(new(key, Decimal(wanted), read.Value, Match(Decimal(wanted), read.Value, NativeValueKind.Decimal), read.Source));
+                    // VAT and the total that includes it may be 1 đồng off; the subtotal must be exact.
+                    var matched = key == "subtotal" ? Match(Decimal(wanted), read.Value, NativeValueKind.Decimal)
+                        : NativeComparison.MatchesTaxRounding(Decimal(wanted), read.Value, Culture);
+                    values.Add(new(key, Decimal(wanted), read.Value, matched, read.Source));
                 }
             }
         }
@@ -1262,7 +1267,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
 
     /// <summary>
-    /// Cất can raise MISA's tax-difference prompt (always answered "Không") and then its duplicate-number
+    /// Cất can raise MISA's tax-difference prompt ("Có" for 1 đồng, else "Không") and then its duplicate-number
     /// prompt (answered "No"). Polls for both until <paramref name="waitMilliseconds"/> passes without a prompt.
     /// </summary>
     private async Task<(bool TaxAnswered, string? Duplicate)> AnswerSavePromptsAsync(nint editorHandle, int waitMilliseconds,
@@ -1275,7 +1280,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             if (await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is { } tax)
             {
                 taxAnswered = true;
-                Trace.TraceInformation("Tax difference prompt answered Không: " + tax);
+                Trace.TraceInformation($"Tax difference prompt answered {(tax.Accepted ? "Có" : "Không")}: " + tax.Text);
                 // The duplicate-number prompt, if any, follows the tax prompt.
                 deadline = Math.Max(deadline, Stopwatch.GetTimestamp() + Stopwatch.Frequency * 800 / 1000);
             }
@@ -1313,12 +1318,16 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             "Chưa thấy nút Bỏ ghi và nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
         if (taxPromptAnswered)
         {
-            // "Không" must have kept the source tax; MISA's "Có" would have moved the difference into line 1.
+            // "Có" moves a 1-đồng difference into line 1: VAT and grand total stay within 1 đồng, the subtotal is exact.
             await Tab(profile.ItemTab, token);
-            await RequireFields(token,
-                ("subtotal", Decimal(context.Invoice.Subtotal), NativeValueKind.Decimal),
-                ("tax_total", Decimal(context.Invoice.TaxTotal), NativeValueKind.Decimal),
-                ("grand_total", Decimal(context.Invoice.GrandTotal), NativeValueKind.Decimal));
+            var totals = new (string Key, string Expected)[] { ("subtotal", Decimal(context.Invoice.Subtotal)),
+                ("tax_total", Decimal(context.Invoice.TaxTotal)), ("grand_total", Decimal(context.Invoice.GrandTotal)) };
+            await NativeWait.UntilAsync(() => Steady(async () => await input.ReadFieldsAsync(await input.CaptureAsync(token),
+                    totals.ToDictionary(total => total.Key, total => profile.Fields[total.Key]), token), token),
+                actual => totals.All(total => total.Key == "subtotal"
+                    ? Match(total.Expected, actual.Values[total.Key].Value, NativeValueKind.Decimal)
+                    : NativeComparison.MatchesTaxRounding(total.Expected, actual.Values[total.Key].Value, Culture)),
+                "READBACK_MISMATCH", "Tổng tiền sau khi trả lời hộp chênh lệch thuế lệch nguồn quá 1 đồng.", token);
         }
         for (var attempt = 0; ; attempt++)
         {

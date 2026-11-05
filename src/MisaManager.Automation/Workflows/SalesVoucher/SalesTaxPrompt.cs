@@ -8,17 +8,21 @@ using Windows.Win32.Foundation;
 namespace MisaManager.Automation;
 
 // Sales-voucher specific: MISA's "Tổng tiền thuế GTGT <..> khác ... chênh lệch <..>" prompt shown on Cất.
+/// <summary>Text of MISA's tax-difference prompt and whether it was answered "Có" (difference of at most 1 đồng).</summary>
+public sealed record TaxPromptAnswer(string Text, bool Accepted);
+
 public sealed partial class NativeInputService
 {
     private static readonly string[] TaxPromptKeys = [TextKey.Compact("Tổng tiền thuế"), TextKey.Compact("chênh lệch")];
     private static readonly string[] NoCaptions = ["&No", "No", "&Không", "Không"];
+    private static readonly string[] YesCaptions = ["&Yes", "Yes", "&Có", "Có"];
 
     /// <summary>
-    /// Answers MISA's tax-difference prompt with "Không" whatever the difference, so MISA never moves the
-    /// difference into the first line and the source tax typed by the tool is kept (the saved totals are read
-    /// back afterwards). Returns the prompt text, or null when no such prompt is open.
+    /// Answers MISA's tax-difference prompt: "Có" when its "chênh lệch &lt;d&gt;" is at most 1 đồng (MISA moves it into
+    /// line 1; the user accepts that rounding), otherwise "Không" so the source tax is kept. The saved totals are read
+    /// back afterwards either way. Returns the prompt text and answer, or null when no such prompt is open.
     /// </summary>
-    public async Task<string?> AnswerTaxRoundingPromptAsync(nint editorHandle, CancellationToken token)
+    public async Task<TaxPromptAnswer?> AnswerTaxRoundingPromptAsync(nint editorHandle, CancellationToken token)
     {
         // Finding the prompt only reads. MISA can stop answering UIA while it shows the prompt; that timeout
         // must stay a retryable read (NATIVE_READ_TIMEOUT), not an interrupted input that ends SaveUncertain.
@@ -29,16 +33,22 @@ public sealed partial class NativeInputService
             if (prompts.Count == 0) return null;
             if (prompts.Count > 1)
                 throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Có nhiều hộp thông báo chênh lệch tiền thuế cùng lúc; xử lý trong MISA rồi chạy lại.");
-            var (dialog, text, noHandle, noElement) = prompts[0];
-            if (noHandle != nint.Zero) return new TaxPromptTarget(dialog, text, noHandle, 0, 0, nint.Zero);
-            var bounds = noElement!.BoundingRectangle;
+            var (dialog, text, no, yes) = prompts[0];
+            // Without a readable difference or a single "Có" button, keep the safe answer "Không".
+            var accept = NativeComparison.TaxPromptDifference(text) is { } difference && Math.Abs(difference) <= NativeComparison.TaxRoundingTolerance
+                && (yes.Handle != nint.Zero || yes.Element is not null);
+            var (handle, element) = accept ? yes : no;
+            var caption = accept ? "Có" : "Không";
+            if (handle != nint.Zero) return new TaxPromptTarget(dialog, text, accept, handle, 0, 0, nint.Zero);
+            var bounds = element!.BoundingRectangle;
             if (bounds.Width <= 0 || bounds.Height <= 0)
-                throw new AutomationException("BOUNDS_UNREADABLE", "Nút Không của hộp thông báo thuế không có vị trí hiển thị.");
-            return new TaxPromptTarget(dialog, text, nint.Zero, bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                WorkflowTargetHandle(noElement));
+                throw new AutomationException("BOUNDS_UNREADABLE", $"Nút {caption} của hộp thông báo thuế không có vị trí hiển thị.");
+            return new TaxPromptTarget(dialog, text, accept, nint.Zero, bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
+                WorkflowTargetHandle(element));
         }, token);
         if (found is not { } prompt) return null;
-        return await dispatcher.RunAsync<string?>(() =>
+        var answer = prompt.Accept ? "Có" : "Không";
+        return await dispatcher.RunAsync<TaxPromptAnswer?>(() =>
         {
             if (identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa bind cửa sổ MISA.");
             var dialog = prompt.Dialog;
@@ -47,10 +57,10 @@ public sealed partial class NativeInputService
             token.ThrowIfCancellationRequested();
             MarkWorkflowInput();
             epoch++;
-            if (prompt.NoHandle != nint.Zero)
+            if (prompt.ButtonHandle != nint.Zero)
             {
-                if (SendMessageTimeout(prompt.NoHandle, 0x00F5, 0, nint.Zero, 2, 1000, out _) == nint.Zero)
-                    throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được thao tác bấm Không; không bấm lại.", true);
+                if (SendMessageTimeout(prompt.ButtonHandle, 0x00F5, 0, nint.Zero, 2, 1000, out _) == nint.Zero)
+                    throw new AutomationException("INPUT_UNCERTAIN", $"Không xác nhận được thao tác bấm {answer}; không bấm lại.", true);
             }
             else
                 NativeKeyboard.Click(prompt.X, prompt.Y, identity.WindowHandle, identity.ProcessId, prompt.TargetHandle);
@@ -58,18 +68,19 @@ public sealed partial class NativeInputService
             while (PInvoke.IsWindow((HWND)dialog) && PInvoke.IsWindowVisible((HWND)dialog))
             {
                 if (Environment.TickCount64 > closeBy)
-                    throw new AutomationException("SAVE_PROMPT_NOT_CLOSED", "Hộp thông báo chênh lệch tiền thuế chưa đóng sau khi bấm Không.", true);
+                    throw new AutomationException("SAVE_PROMPT_NOT_CLOSED", $"Hộp thông báo chênh lệch tiền thuế chưa đóng sau khi bấm {answer}.", true);
                 if (token.WaitHandle.WaitOne(50)) token.ThrowIfCancellationRequested();
             }
-            return prompt.Text;
+            return new TaxPromptAnswer(prompt.Text, prompt.Accept);
         }, token, maySendInput: true);
     }
 
-    private sealed record TaxPromptTarget(nint Dialog, string Text, nint NoHandle, int X, int Y, nint TargetHandle);
+    private sealed record TaxPromptTarget(nint Dialog, string Text, bool Accept, nint ButtonHandle, int X, int Y, nint TargetHandle);
 
-    private List<(nint Dialog, string Text, nint NoHandle, AutomationElement? NoElement)> TaxRoundingPrompts(nint editorHandle)
+    private List<(nint Dialog, string Text, (nint Handle, AutomationElement? Element) No, (nint Handle, AutomationElement? Element) Yes)>
+        TaxRoundingPrompts(nint editorHandle)
     {
-        var result = new List<(nint, string, nint, AutomationElement?)>();
+        var result = new List<(nint, string, (nint, AutomationElement?), (nint, AutomationElement?))>();
         var main = identity!.WindowHandle;
         var candidates = new List<nint>();
         EnumWindows((handle, _) =>
@@ -87,18 +98,22 @@ public sealed partial class NativeInputService
         {
             var texts = new List<string>();
             var noButtons = new List<nint>();
+            var yesButtons = new List<nint>();
             EnumChildWindows(handle, (child, _) =>
             {
                 var label = WindowText(child).Trim();
                 if (label.Length > 0) texts.Add(label.Normalize(NormalizationForm.FormC));
-                if (NoCaptions.Contains(label) && PInvoke.IsWindowEnabled((HWND)child) && PInvoke.IsWindowVisible((HWND)child))
-                    noButtons.Add(child);
+                if (PInvoke.IsWindowEnabled((HWND)child) && PInvoke.IsWindowVisible((HWND)child))
+                {
+                    if (NoCaptions.Contains(label)) noButtons.Add(child);
+                    else if (YesCaptions.Contains(label)) yesButtons.Add(child);
+                }
                 return true;
             }, nint.Zero);
             var message = string.Join(" ", texts);
             if (IsTaxPrompt(message) && noButtons.Count == 1)
             {
-                result.Add((handle, message, noButtons[0], null));
+                result.Add((handle, message, (noButtons[0], null), (yesButtons.Count == 1 ? yesButtons[0] : nint.Zero, null)));
                 continue;
             }
             // Windowless (DirectUI/WPF) prompts expose the text and buttons through UIA only.
@@ -112,15 +127,16 @@ public sealed partial class NativeInputService
                     .Where(value => !string.IsNullOrWhiteSpace(value));
                 var uiaMessage = System.Net.WebUtility.HtmlDecode(string.Join(" ", parts));
                 if (!IsTaxPrompt(uiaMessage)) continue;
-                var noId = RequireProfile().TaxPromptNo.AutomationId;
-                var buttons = window.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Button))
-                    .Where(button => button.Properties.IsEnabled.ValueOrDefault && !button.Properties.IsOffscreen.ValueOrDefault
-                        && (noId.Length > 0 && button.Properties.AutomationId.ValueOrDefault == noId
-                            || NoCaptions.Contains(button.Properties.Name.ValueOrDefault?.Trim())))
-                    .ToArray();
+                var enabled = window.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Button))
+                    .Where(button => button.Properties.IsEnabled.ValueOrDefault && !button.Properties.IsOffscreen.ValueOrDefault).ToArray();
+                AutomationElement[] Find(NativeSelector selector, string[] captions) => enabled
+                    .Where(button => selector.AutomationId.Length > 0 && button.Properties.AutomationId.ValueOrDefault == selector.AutomationId
+                        || captions.Contains(button.Properties.Name.ValueOrDefault?.Trim())).ToArray();
+                var buttons = Find(RequireProfile().TaxPromptNo, NoCaptions);
                 if (buttons.Length != 1)
                     throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Không xác định duy nhất nút Không trên hộp thông báo chênh lệch tiền thuế.");
-                result.Add((handle, uiaMessage, nint.Zero, buttons[0]));
+                var yes = Find(RequireProfile().TaxPromptYes, YesCaptions);
+                result.Add((handle, uiaMessage, (nint.Zero, buttons[0]), (nint.Zero, yes.Length == 1 ? yes[0] : null)));
             }
             catch (FlaUI.Core.Exceptions.ElementNotAvailableException) { }
             catch (System.Runtime.InteropServices.COMException) { }

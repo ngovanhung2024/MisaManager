@@ -283,6 +283,30 @@ public sealed class NativeComparisonTests
         => Assert.False(NativeComparison.MatchesDerivedUnitPrice(decimal.Parse(quantity, CultureInfo.InvariantCulture),
             decimal.Parse(amount, CultureInfo.InvariantCulture), actual, Vi));
 
+    // ---- tax rounding (user: 1 đồng of VAT difference is accepted, Cất's prompt answered Có) ----
+
+    [Theory]
+    [InlineData("Tổng tiền thuế GTGT <156.096> khác (Tiền hàng - Tiền chiết khấu) * Thuế suất <156.095>, chênh lệch <1>. Bạn có muốn", "1")]
+    [InlineData("Tổng tiền thuế GTGT &lt;11.000&gt; khác ... chênh lệch &lt;-1&gt;. Bạn có muốn", "-1")]
+    [InlineData("Tổng tiền thuế GTGT <1.000.025> khác ... chênh lệch <25>.", "25")]
+    [InlineData("Tổng tiền thuế GTGT <156.096> khác ... chênh lệch <1.250>.", "1250")]
+    public void TaxPromptDifferenceIsRead(string message, string expected)
+        => Assert.Equal(decimal.Parse(expected, CultureInfo.InvariantCulture), NativeComparison.TaxPromptDifference(message));
+
+    [Theory]
+    [InlineData("Tổng tiền thuế GTGT khác thuế suất, có chênh lệch.")]
+    [InlineData("")]
+    public void TaxPromptWithoutAmountHasNoDifference(string message) => Assert.Null(NativeComparison.TaxPromptDifference(message));
+
+    [Theory]
+    [InlineData("156096", "156.096", true)]
+    [InlineData("156096", "156.095", true)]
+    [InlineData("156096", "156.097", true)]
+    [InlineData("156096", "156.094", false)]
+    [InlineData("156096", null, false)]
+    public void TaxWithinOneDongMatches(string expected, string? actual, bool matched)
+        => Assert.Equal(matched, NativeComparison.MatchesTaxRounding(expected, actual, Vi));
+
     // ---- reconciliation result ----
 
     [Fact]

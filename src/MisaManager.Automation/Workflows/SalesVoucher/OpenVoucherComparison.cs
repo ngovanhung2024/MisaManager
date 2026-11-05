@@ -266,7 +266,7 @@ public sealed partial class NativeWorkflowGateway
                 price, quantity is > 0 && line.AmountBeforeTax is { } total && NativeComparison.MatchesDerivedUnitPrice(quantity.Value, total, price, Culture)
                     || Match(Number(line.UnitPrice), price, NativeValueKind.Decimal));
             Line("tax_rate", line.TaxRate, Actual(taxRow, "tax_rate"), Match(line.TaxRate, Actual(taxRow, "tax_rate"), NativeValueKind.TaxRate));
-            Line("tax_amount", Number(line.TaxAmount), Actual(taxRow, "tax_amount"), Match(Number(line.TaxAmount), Actual(taxRow, "tax_amount"), NativeValueKind.Decimal));
+            Line("tax_amount", Number(line.TaxAmount), Actual(taxRow, "tax_amount"), NativeComparison.MatchesTaxRounding(Number(line.TaxAmount), Actual(taxRow, "tax_amount"), Culture));
         }
         for (var i = 0; i < native.Length; i++)
             if (!used[i])
@@ -275,7 +275,8 @@ public sealed partial class NativeWorkflowGateway
         values.Add(new("item_row_count", invoice.Lines.Length.ToString(CultureInfo.InvariantCulture),
             native.Length.ToString(CultureInfo.InvariantCulture), native.Length == invoice.Lines.Length, "UIA3.GridPattern"));
         foreach (var (key, wanted) in new[] { ("subtotal", invoice.Subtotal), ("tax_total", invoice.TaxTotal), ("grand_total", invoice.GrandTotal) })
-            Add(key, Number(wanted), totals[key], Match(Number(wanted), totals[key].Value, NativeValueKind.Decimal));
+            Add(key, Number(wanted), totals[key], key == "subtotal" ? Match(Number(wanted), totals[key].Value, NativeValueKind.Decimal)
+                : NativeComparison.MatchesTaxRounding(Number(wanted), totals[key].Value, Culture));
         return Identify(read, new(invoice.InvoiceId, invoice.Revision, DateTimeOffset.UtcNow, values, invoice.Source.Sha256), invoice);
     }
 

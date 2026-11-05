@@ -96,6 +96,7 @@ public sealed class WorkflowProfile
         TaxPromptScopeId = Scope(prompt);
         TaxPromptMessage = prompt.Element("message").Selector;
         TaxPromptNo = prompt.Element("no").Selector;
+        TaxPromptYes = prompt.Element("yes").Selector;
 
         foreach (var key in kind == VoucherKind.Purchase ? PurchaseRequiredFields : RequiredFields)
             if (!Fields.ContainsKey(key)) throw new InvalidDataException("Profile thiếu field " + key);
@@ -153,6 +154,7 @@ public sealed class WorkflowProfile
     public string TaxPromptScopeId { get; }
     public NativeSelector TaxPromptMessage { get; }
     public NativeSelector TaxPromptNo { get; }
+    public NativeSelector TaxPromptYes { get; }
 
     /// <summary>True when the bound window shows the enabled sales module and its tab.</summary>
     public bool IsSalesSurface(IReadOnlyList<ElementIdentity> elements)
