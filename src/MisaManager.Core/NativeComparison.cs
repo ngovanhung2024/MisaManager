@@ -14,9 +14,16 @@ public sealed record ReconciliationResult(string InvoiceId, int Revision, DateTi
 
 public static class NativeComparison
 {
+    /// <summary>
+    /// MISA computes "Đơn giá" itself from the typed amount; the tool never types it. Its value matches when it is
+    /// amount / quantity at the displayed scale, or when price × quantity rounds to the amount in whole đồng: R20 phiếu
+    /// nhập showed 11.523.809,67 for 57.619.048 / 5 (HĐ 1065), which still books exactly that amount.
+    /// </summary>
     public static bool MatchesDerivedUnitPrice(decimal quantity, decimal amount, string? actual, CultureInfo culture)
     {
         if (quantity <= 0 || amount < 0 || actual is null || !Number(actual, culture, out var price) || price < 0) return false;
+        try { if (decimal.Round(price * quantity, 0, MidpointRounding.AwayFromZero) == amount) return true; }
+        catch (OverflowException) { return false; }
         var separator = culture.NumberFormat.NumberDecimalSeparator;
         var parts = actual.Trim().Split(separator, StringSplitOptions.None);
         var scale = parts.Length == 2 ? parts[1].Length : 0;

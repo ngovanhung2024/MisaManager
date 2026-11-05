@@ -60,6 +60,8 @@ public sealed record Scenario
     public int RowRedrawAfterAmountMilliseconds { get; init; }
     /// <summary>After "Thành tiền" the grid scrolls sideways: Tên hàng slides under the frozen Mã hàng column (report 0.2.143).</summary>
     public bool ScrollSidewaysAfterAmount { get; init; }
+    /// <summary>Added to the price MISA derives from a typed amount (R20 showed 11.523.809,67 for 57.619.048 / 5).</summary>
+    public decimal UnitPriceDrift { get; init; }
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
 

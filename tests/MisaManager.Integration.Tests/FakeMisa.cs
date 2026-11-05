@@ -33,7 +33,7 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     bool SaveKeepsCatEnabled = false, bool NewCustomerAddressReadOnly = false, int TaxPromptBusyMilliseconds = 0,
     bool Purchase = false, IReadOnlyList<FakeCustomer>? AdditionalSuppliers = null, int PurchaseDefaultsDelayMilliseconds = 0,
     int LineErrorRow = -1, int RowRedrawAfterAmountMilliseconds = 0,
-    bool ScrollSidewaysAfterAmount = false);
+    bool ScrollSidewaysAfterAmount = false, decimal UnitPriceDrift = 0);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

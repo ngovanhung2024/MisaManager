@@ -247,7 +247,9 @@ public sealed class NativeComparisonTests
     [InlineData("3", "10000", "3.333", true)]
     [InlineData("3", "10000", "3.333,3333", true)]
     [InlineData("3", "10000", "3.334", false)]
-    [InlineData("3", "10000", "3.333,34", false)]
+    // 3.333,34 × 3 = 10.000,02: still books 10.000 đồng, so it is MISA's price for that amount.
+    [InlineData("3", "10000", "3.333,34", true)]
+    [InlineData("3", "10000", "3.333,50", false)]
     [InlineData("100", "1542857", "15.428,57", true)]
     [InlineData("100", "1542857", "15.429", true)]
     [InlineData("100", "1542857", "15.428", false)]
@@ -259,6 +261,9 @@ public sealed class NativeComparisonTests
     [InlineData("1000", "11571429", "11.571,4290", true)]
     [InlineData("1000", "11571429", "11571,4400", false)]
     [InlineData("10", "100004", "10000,0000", false)]
+    // Report 0.2.148 (HĐ 1065): 57.619.048 / 5 shown by R20 as 11.523.809,67.
+    [InlineData("5", "57619048", "11523809,6700", true)]
+    [InlineData("5", "57619048", "11523809,8000", false)]
     public void DerivedUnitPriceIsRoundedToTheDisplayedScale(string quantity, string amount, string actual, bool expected)
     {
         var matched = NativeComparison.MatchesDerivedUnitPrice(decimal.Parse(quantity, CultureInfo.InvariantCulture),

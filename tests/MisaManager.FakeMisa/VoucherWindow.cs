@@ -425,7 +425,8 @@ public sealed class VoucherWindow : Window, IGridSource
                 case "amount" when Ui.TryNumber(text, out var amount):
                     line.Amount = amount;
                     // MISA derives the unit price from the typed amount.
-                    line.UnitPrice = line.Quantity == 0 ? 0 : Math.Round(amount / line.Quantity, 2, MidpointRounding.AwayFromZero);
+                    line.UnitPrice = line.Quantity == 0 ? 0 : Math.Round(amount / line.Quantity, 2, MidpointRounding.AwayFromZero)
+                        + scenario.UnitPriceDrift;
                     Recalculate(line);
                     if (scenario.RowRedrawAfterAmountMilliseconds > 0) RedrawRow(line);
                     // Tab from Thành tiền moves to a column right of the view; R20 scrolls the grid sideways.

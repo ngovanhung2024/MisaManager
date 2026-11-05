@@ -185,6 +185,20 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Equal("11.571,4300", price.Actual);
     }, Purchase);
 
+    // Report 0.2.148 (HĐ 1065): 57.619.048 / 5 t; R20 derived 11.523.809,67, not 11.523.809,60. Amount and totals were exact.
+    [Fact]
+    public Task PurchaseUnitPriceMisaDerivesDifferentlyStillMatches() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "1065", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 5, 11_523_809.6m, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var price = Assert.Single(result.Verification.Comparison!.Values, value => value.Field.EndsWith(":unit_price", StringComparison.Ordinal));
+        Assert.Equal("11.523.809,6700", price.Actual);
+    }, Purchase with { UnitPriceDrift = 0.07m });
+
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>
     {
