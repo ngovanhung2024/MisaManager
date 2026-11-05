@@ -70,6 +70,48 @@ public sealed partial class ItemCatalogStore
     [GeneratedRegex(@"\(\s*ĐN\s*\)|(?<![\p{L}\p{Mn}\p{Nd}])ĐN\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex DistributorTag();
 
+    /// <summary>Lines with no catalog code: the tool would create them, which the user can switch off.</summary>
+    public const string MissingCode = "ITEM_CODE_MISSING";
+
+    // Words the e-invoice and MISA add or drop for the same item: distributor tag, packaging, "phân (bón)".
+    private static readonly HashSet<string> LooseNoise = new(new[] { "ĐN", "CHAI", "BAO", "PHÂN", "BÓN" }.Select(TextKey.Canonical),
+        StringComparer.Ordinal);
+
+    private static (string[] Numbers, HashSet<string> Words) LooseTokens(string? value)
+    {
+        var numbers = new List<string>();
+        var words = new HashSet<string>(StringComparer.Ordinal);
+        // "100ml" = "100 ml", "16.16.8" = "16-16-8": digits and letters are separate tokens.
+        foreach (Match token in LooseToken().Matches(TextKey.Canonical(value)))
+        {
+            if (char.IsDigit(token.Value[0])) numbers.Add(token.Value.TrimStart('0') is { Length: > 0 } digits ? digits : "0");
+            else if (!LooseNoise.Contains(token.Value)) words.Add(token.Value);
+        }
+        return ([.. numbers], words);
+    }
+
+    [GeneratedRegex(@"\p{Nd}+|[\p{L}\p{Mn}]+", RegexOptions.CultureInvariant)]
+    private static partial Regex LooseToken();
+
+    /// <summary>
+    /// Same item written differently, e.g. "Chevin 5SC (nano) 100ml (ĐN - Tròn)" and "Chevin 5SC nano - 100ml (ĐN chai tròn)":
+    /// every number (sizes, NPK ratios, concentrations) equal and in the same order, and the words of one name all found in
+    /// the other (ignoring ĐN/chai/bao/phân bón). Needs at least two shared tokens. Callers accept it only when exactly one
+    /// catalog code qualifies, so a vague name ("Phân NPK 16-16-8+13S HCQN") never picks one of several variants.
+    /// </summary>
+    public static bool LooseNameMatch(string? left, string? right)
+    {
+        var (leftNumbers, leftWords) = LooseTokens(left);
+        var (rightNumbers, rightWords) = LooseTokens(right);
+        if (!leftNumbers.SequenceEqual(rightNumbers, StringComparer.Ordinal)) return false;
+        var (small, large) = leftWords.Count <= rightWords.Count ? (leftWords, rightWords) : (rightWords, leftWords);
+        return small.IsSubsetOf(large) && small.Count + leftNumbers.Length >= 2 && small.Count > 0;
+    }
+
+    /// <summary>Exact name identity, or <see cref="LooseNameMatch"/>.</summary>
+    public static bool SameItemName(string? left, string? right)
+        => ItemNameKey(left) == ItemNameKey(right) || LooseNameMatch(left, right);
+
     // Canonical text is decomposed with tones moved, so these words are matched in that same form.
     private static readonly string Fertilizer = TextKey.Canonical("PHÂN");
     private static readonly Regex FertilizerWord = Word(TextKey.Canonical("PHÂN BÓN"));
@@ -95,7 +137,7 @@ public sealed partial class ItemCatalogStore
     public ItemCatalogEntry? Find(string name, string unit, bool allowKgToTon = false)
     {
         var candidates = Candidates(name);
-        if (candidates.Length == 0) return null;
+        if (candidates.Length == 0) return LooseFind(name, unit, allowKgToTon);
         var sameUnit = SameUnit(candidates, unit, allowKgToTon);
         if (sameUnit.Length == 1) return sameUnit[0];
         if (sameUnit.Length > 1)
@@ -119,6 +161,33 @@ public sealed partial class ItemCatalogStore
     {
         var sameUnit = SameUnit(Candidates(name), unit, allowKgToTon);
         return sameUnit.Length > 1 ? sameUnit : [];
+    }
+
+    /// <summary>
+    /// Only when the exact name is unknown. Among codes with the same unit and the same numbers, one whose words equal the
+    /// source's wins; otherwise a single loose match is taken unless it is a generic name with more specific variants in
+    /// the catalog ("Catex 3.6EC 450ml" next to "… nhãn tím" and "… nhãn trắng"), which stays unresolved.
+    /// </summary>
+    private ItemCatalogEntry? LooseFind(string name, string unit, bool allowKgToTon)
+    {
+        ItemCatalogEntry[] usable;
+        lock (gate)
+            usable = items.Where(item => importedCodes is null || importedCodes.Contains(item.Code) || verifiedCodes.Contains(item.Code))
+                .ToArray();
+        var (numbers, words) = LooseTokens(name);
+        var family = SameUnit(usable.Where(item => LooseTokens(item.Name).Numbers.SequenceEqual(numbers, StringComparer.Ordinal)).ToArray(),
+                unit, allowKgToTon)
+            .DistinctBy(item => item.Code, StringComparer.Ordinal)
+            .Select(item => (Item: item, Words: LooseTokens(item.Name).Words)).ToArray();
+        var exact = family.Where(entry => entry.Words.SetEquals(words)).ToArray();
+        if (exact.Length > 0) return exact.Length == 1 && LooseNameMatch(name, exact[0].Item.Name) ? exact[0].Item : null;
+        var loose = family.Where(entry => LooseNameMatch(name, entry.Item.Name)).ToArray();
+        if (loose.Length != 1) return null;
+        var match = loose[0];
+        var generic = match.Words.IsProperSubsetOf(words);
+        if (generic && family.Any(other => other.Item.Code != match.Item.Code && other.Words.IsProperSupersetOf(match.Words)))
+            return null;
+        return match.Item;
     }
 
     private ItemCatalogEntry[] Candidates(string name)

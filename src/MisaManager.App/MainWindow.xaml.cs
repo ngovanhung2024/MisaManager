@@ -1396,6 +1396,26 @@ public partial class MainWindow : Window
             parties.CustomerCount == 0 ? null : $"{parties.CustomerCount:N0} mã{FileSuffix(parties.CustomerSource)}");
         MarkLoaded(SuppliersMenuItem, "Nạp mã nhà cung cấp…",
             parties.SupplierCount == 0 ? null : $"{parties.SupplierCount:N0} mã{FileSuffix(parties.SupplierSource)}");
+        AllowItemCreationItem.IsChecked = services.AllowItemCreation;
+        AllowPartyCreationItem.IsChecked = services.AllowPartyCreation;
+    }
+
+    private void AllowItemCreation_Click(object sender, RoutedEventArgs e)
+    {
+        var services = ((App)Application.Current).Services;
+        services.AllowItemCreation = AllowItemCreationItem.IsChecked;
+        StatusLabel.Text = services.AllowItemCreation
+            ? "Đã bật: tool tự thêm mã hàng mới vào MISA khi mặt hàng chưa có trong danh mục."
+            : "Đã tắt tự thêm mã hàng: hóa đơn có mặt hàng chưa có mã sẽ dừng trước khi nhập (Chưa hoàn thành).";
+    }
+
+    private void AllowPartyCreation_Click(object sender, RoutedEventArgs e)
+    {
+        var services = ((App)Application.Current).Services;
+        services.AllowPartyCreation = AllowPartyCreationItem.IsChecked;
+        StatusLabel.Text = services.AllowPartyCreation
+            ? "Đã bật: tool tự thêm khách hàng mới vào MISA khi người mua chưa có mã."
+            : "Đã tắt tự thêm khách hàng / nhà cung cấp: hóa đơn chưa có mã sẽ dừng trước khi nhập (Chưa hoàn thành).";
     }
 
     private static string FileSuffix(string? path) => string.IsNullOrWhiteSpace(path) ? "" : " · " + Path.GetFileName(path);

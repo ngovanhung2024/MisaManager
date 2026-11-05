@@ -45,7 +45,7 @@ public static class RunOutcome
 
     /// <summary>Stopped before any input because no MISA customer code is known; not an error, the invoice waits for its code.</summary>
     public static bool IsUnfinished(WorkflowSnapshot snapshot)
-        => snapshot.Status == WorkflowStatus.Failed && snapshot.LastErrorCode == BuyerCodes.MissingCode;
+        => snapshot.Status == WorkflowStatus.Failed && snapshot.LastErrorCode is BuyerCodes.MissingCode or ItemCatalogStore.MissingCode;
     public const string UnfinishedLabel = "Chưa hoàn thành";
 
     /// <summary>Saved because the user entered the invoice in MISA by hand (menu chuột phải ở danh sách hóa đơn).</summary>

@@ -119,6 +119,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     public ItemGroupStore? ItemGroups { get; set; }
     /// <summary>Dừng ngay; shared with <see cref="WorkflowRunner.StopSignal"/>.</summary>
     public WorkflowStopSignal? StopSignal { get; set; }
+    /// <summary>Menu "Tự thêm mã hàng mới": off means a line without a catalog code stops the invoice before any input.</summary>
+    public bool AllowItemCreation { get; set; } = true;
+    /// <summary>Menu "Tự thêm khách hàng mới": off means a buyer without a code stops the invoice before any input.</summary>
+    public bool AllowPartyCreation { get; set; } = true;
     // Only entry steps stop mid-checkpoint; opening the voucher, creating an item, Cất and Bỏ always finish.
     private volatile bool stopPointsEnabled;
 
@@ -295,6 +299,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             {
                 // Fails before any input when the customer code cannot be determined or created.
                 RequireCustomer(context);
+                RequireItemCodes(context);
                 if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
                     throw new AutomationException("EXISTING_EDITOR", "Có editor chưa gắn với run; cần xử lý trước khi nhập mới.");
                 var current = await BindSales(context, token);
@@ -538,6 +543,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private async Task<string> CreateCustomerAsync(WorkflowContext context, Func<WorkflowProgress, CancellationToken, Task> progress,
         CancellationToken token)
     {
+        if (!AllowPartyCreation) throw MissingCustomer(context);
         var dialog = profile.NewCustomer;
         var catalog = PartyCatalog;
         var buyer = context.Invoice.Buyer;
@@ -648,9 +654,29 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         => ItemCatalog is { Count: > 0 } catalog ? catalog
             : throw new AutomationException("ITEM_CATALOG_MISSING", "Chưa nạp database mã hàng. Bấm 'Mã hàng' và chọn file danh mục vật tư, hàng hóa.");
 
+    /// <summary>With item creation switched off, every line must already resolve to a code; checked before any input.</summary>
+    private void RequireItemCodes(WorkflowContext context)
+    {
+        if (AllowItemCreation) return;
+        var catalog = RequireCatalog();
+        var missing = context.Invoice.Lines
+            .Where(line => line.ItemCode.Trim().Length == 0
+                && string.IsNullOrWhiteSpace(context.NativeValues?.GetValueOrDefault("line:" + line.LineId))
+                && catalog.FindPending(line.Name, line.Unit) is null
+                && ResolveCatalogName(catalog, line, context.AllowKgToTon) is null)
+            .Select(line => $"'{line.Name}' ({line.Unit})").ToArray();
+        if (missing.Length > 0)
+            throw new AutomationException(ItemCatalogStore.MissingCode, $"Hóa đơn {context.Invoice.Identity.Number}: "
+                + $"{string.Join(", ", missing)} chưa có trong danh mục mã hàng và \"Tự thêm mã hàng mới\" đang tắt. "
+                + "Thêm mã trong MISA rồi nạp lại danh mục, hoặc bật lại ở menu •••, rồi chạy lại.");
+    }
+
     private async Task<string> CreateMissingItemAsync(WorkflowContext context, InvoiceLine line, int row,
         NativeCell codeCell, CancellationToken token)
     {
+        // Preflight already stops such invoices; never create when the user switched it off.
+        if (!AllowItemCreation)
+            throw new AutomationException(ItemCatalogStore.MissingCode, $"Dòng {row + 1}: '{line.Name}' chưa có mã và \"Tự thêm mã hàng mới\" đang tắt.");
         if (profile.ItemNewCode is null || profile.ItemNewName is null || profile.ItemNewUnit is null
             || profile.ItemNewStock is null || profile.ItemNewTaxRate is null || profile.ItemNewSave is null)
             throw new AutomationException("ITEM_MAPPING_REQUIRED", "Profile chưa khai báo native create-item capability.");
@@ -1627,12 +1653,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     // Texts also compare by TextKey, so tone placement, look-alike letters and invisible characters never cause a mismatch.
     private bool Match(string expected, string? actual, NativeValueKind kind) => NativeComparison.Matches(expected, actual, kind, Culture)
         || kind == NativeValueKind.Text && actual is not null && TextKey.Canonical(expected) == TextKey.Canonical(actual);
-    // Names compare ignoring case, spacing and punctuation; the item code is the authoritative identity.
+    // Names compare ignoring case, spacing, punctuation and the e-invoice's extra wording; the item code is the
+    // authoritative identity.
     private static bool CatalogNameMatch(string expected, string? actual)
-    {
-        if (actual is null) return false;
-        return ItemCatalogStore.ItemNameKey(expected) == ItemCatalogStore.ItemNameKey(actual);
-    }
+        => actual is not null && ItemCatalogStore.SameItemName(expected, actual);
     private static string Decimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? throw new InvalidDataException("Thiếu số nguồn.");
     private static string Saved(WorkflowContext context, string key) => context.NativeValues?.GetValueOrDefault(key)
         ?? throw new AutomationException("CHECKPOINT_PROOF_MISSING", "Checkpoint thiếu native proof " + key);

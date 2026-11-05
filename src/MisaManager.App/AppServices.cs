@@ -64,6 +64,44 @@ public sealed partial class AppServices : IAsyncDisposable
         }
     }
     public string LogRoot { get; }
+
+    private static string CreationSettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        ProductIdentity.TechnicalName, "auto-create.txt");
+
+    /// <summary>Menu toggles "Tự thêm mã hàng mới" / "Tự thêm khách hàng mới"; both on unless switched off (remembered).</summary>
+    public bool AllowItemCreation
+    {
+        get => workflowGateway.AllowItemCreation;
+        set { workflowGateway.AllowItemCreation = value; SaveCreationSettings(); }
+    }
+    public bool AllowPartyCreation
+    {
+        get => workflowGateway.AllowPartyCreation;
+        set { workflowGateway.AllowPartyCreation = value; SaveCreationSettings(); }
+    }
+
+    private void LoadCreationSettings()
+    {
+        try
+        {
+            if (!File.Exists(CreationSettingsPath)) return;
+            var off = File.ReadAllLines(CreationSettingsPath).Select(line => line.Trim()).ToHashSet(StringComparer.Ordinal);
+            workflowGateway.AllowItemCreation = !off.Contains("items=off");
+            workflowGateway.AllowPartyCreation = !off.Contains("parties=off");
+        }
+        catch (IOException) { }
+    }
+
+    private void SaveCreationSettings()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(CreationSettingsPath)!);
+            File.WriteAllLines(CreationSettingsPath, [workflowGateway.AllowItemCreation ? "items=on" : "items=off",
+                workflowGateway.AllowPartyCreation ? "parties=on" : "parties=off"]);
+        }
+        catch (IOException) { }
+    }
     private readonly SemaphoreSlim workflowGate = new(1, 1);
     private Task initialization;
     private readonly object initializationGate = new();
@@ -95,6 +133,7 @@ public sealed partial class AppServices : IAsyncDisposable
         workflowGateway.ItemCatalog = ItemCatalog;
         workflowGateway.PartyCatalog = PartyCatalog;
         workflowGateway.ItemGroups = ItemGroups;
+        LoadCreationSettings();
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
         workflowGateway.StopSignal = Workflow.StopSignal;
         Drafts = new(State);

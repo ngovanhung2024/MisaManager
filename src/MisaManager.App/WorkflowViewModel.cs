@@ -518,7 +518,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 {
                     handledInBatch.Add(fingerprint);
                     unfinishedNumbers.Add(invoice.Identity.Number);
-                    Status = $"{position} · chưa hoàn thành (chưa có mã khách hàng), đã lưu hồ sơ; chuyển sang hóa đơn kế tiếp.";
+                    Status = $"{position} · chưa hoàn thành (chưa có mã khách hàng/mã hàng), đã lưu hồ sơ; chuyển sang hóa đơn kế tiếp.";
                     NotifyWorkflowChanged();
                     continue;
                 }
@@ -552,7 +552,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (skipped > 0) parts.Add($"{skipped} bỏ qua (đã nhập trước đó)");
                     if (held > 0) parts.Add($"{held} tạm hoãn (mặt hàng trùng tên nhiều mã)");
                     if (unfinishedNumbers.Count > 0)
-                        parts.Add($"{unfinishedNumbers.Count} chưa hoàn thành, chưa có mã khách hàng ({string.Join(", ", unfinishedNumbers.Take(5))})");
+                        parts.Add($"{unfinishedNumbers.Count} chưa hoàn thành, chưa có mã khách hàng/mã hàng ({string.Join(", ", unfinishedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
                     Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy trong danh sách đã tick."
                         : $"Xong các hóa đơn đã tick: {string.Join(" · ", parts)}.";

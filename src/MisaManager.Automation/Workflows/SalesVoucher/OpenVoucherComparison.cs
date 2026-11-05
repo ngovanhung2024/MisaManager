@@ -56,7 +56,8 @@ public sealed partial class NativeWorkflowGateway
 
     private AutomationException MissingCustomer(WorkflowContext context)
         => new(BuyerCodes.MissingCode, $"Hóa đơn {context.Invoice.Identity.Number}: chưa có mã khách hàng cho '{context.Invoice.Buyer.Name}'. "
-            + (PartyCatalog is { CustomerCount: > 0 }
+            + (!AllowPartyCreation ? "\"Tự thêm khách hàng mới\" đang tắt: thêm khách hàng trong MISA rồi nạp lại danh mục khách hàng, hoặc bật lại ở menu •••."
+                : PartyCatalog is { CustomerCount: > 0 }
                 ? "Ghi mã vào cột Mã khách hàng của file Excel rồi chạy lại."
                 : "Nạp danh mục khách hàng ở menu ••• (tool tra mã, không có thì tự tạo khách hàng mới trong MISA) hoặc ghi mã vào cột Mã khách hàng của file Excel, rồi chạy lại."));
 
@@ -73,7 +74,7 @@ public sealed partial class NativeWorkflowGateway
             return;
         }
         if (CreatedCustomer(context) is not null || BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog) is not null) return;
-        if (profile.NewCustomer is not null && BuyerCodes.CanCreate(context.Invoice.Buyer, PartyCatalog)) return;
+        if (AllowPartyCreation && profile.NewCustomer is not null && BuyerCodes.CanCreate(context.Invoice.Buyer, PartyCatalog)) return;
         throw MissingCustomer(context);
     }
 

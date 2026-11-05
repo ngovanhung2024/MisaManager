@@ -111,6 +111,57 @@ public sealed class SalesVoucherTests : UiTest
          new("HH_340", "Hàng khác trong MISA", "kg", "5%")]),
         catalog: [new("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg")]);
 
+    // User report: "Chevin 5SC (nano) 100ml (ĐN - Tròn)" on the e-invoice is HH_47 "Chevin 5SC nano - 100ml (ĐN chai tròn)".
+    [Fact]
+    public Task ItemWrittenDifferentlyOnTheInvoiceUsesItsCatalogCode() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1666", Invoices.Consumer,
+            Invoices.Line(0, "", "Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Chai", 3, 41_904.76m, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("HH_47", Assert.Single(Assert.Single(misa.State().Vouchers).Lines).Code);
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.DoesNotContain("F9 new item", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(AdditionalItems: [new("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai", "5%")]),
+        catalog: [new("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai")]);
+
+    // Menu "Tự thêm mã hàng mới" off: an item missing from the catalog stops the invoice before the voucher is opened.
+    [Fact]
+    public Task ItemCreationSwitchedOffStopsBeforeAnyInput() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Gateway.AllowItemCreation = false;
+        var invoice = Invoices.Build(TempDirectory(misa), "1667", Invoices.Consumer,
+            Invoices.Line(0, "", "Hàng chưa có trong danh mục", "Gói", 1, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "failed", Describe(result));
+        Assert.Equal(ItemCatalogStore.MissingCode, result.Context.Snapshot.LastErrorCode);
+        Assert.True(result.MisaClean, Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Empty(misa.State().CreatedItems);
+        Assert.DoesNotContain("F9 new item", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, catalog: [new("HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai")]);
+
+    // Menu "Tự thêm khách hàng mới" off: a buyer without a code is not added to MISA.
+    [Fact]
+    public Task CustomerCreationSwitchedOffStopsBeforeAnyInput() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Gateway.AllowPartyCreation = false;
+        var buyer = new Party("TRUNG TÂM DỊCH VỤ SỰ NGHIỆP CÔNG XÃ PHÚ LỘC", "3301747760", "Xã Phú Lộc", "", ValuePresence.Provided);
+        var invoice = Invoices.Build(TempDirectory(misa), "1668", buyer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.Equal(BuyerCodes.MissingCode, result.Context.Snapshot.LastErrorCode);
+        Assert.True(result.MisaClean, Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Empty(misa.State().CreatedCustomers ?? []);
+    }, customers: [new("DMH", "CÔNG TY CỔ PHẦN DỆT MAY HUẾ", "3300100628")]);
+
     [Fact]
     public Task Invoice1665UsesImportedPunctuationVariantWithoutCacheAmbiguity() => WithFakeAsync(async (misa, harness, token) =>
     {

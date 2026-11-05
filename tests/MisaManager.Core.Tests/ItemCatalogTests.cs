@@ -19,6 +19,43 @@ public sealed class ItemCatalogTests : IDisposable
 
     private static ItemCatalogEntry Item(string code, string name, string unit, string conversion = "") => new(code, name, unit, conversion);
 
+    // ---- loose names: same item written differently by the e-invoice (report: Chevin 5SC 100ml) ----
+
+    private ItemCatalogStore RealCatalog() => NewStore(
+        Item("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai"), Item("HH_48", "Chevin 5SC nano - 900ml (ĐN)", "Chai"),
+        Item("HH_138", "Catex 3.6EC 450ml", "Chai"), Item("HH_333", "Catex 3.6EC 450ml (ĐN - chai tím - nhãn tím - nước trong)", "Chai"),
+        Item("HH_05", "Phân NPK 16.16.8.6S", "kg"), Item("HH_150", "Đầu Trâu NPK 16-16-8+6S", "kg"),
+        Item("HH_207", "Phân NPK 16-16-8-13S MM HCQN (50 Kg)", "kg"), Item("HH_330", "Phân NPK 16-16-8+13S HCQN (BM-BV) (50Kg)", "kg"),
+        Item("HH_209", "Phân NPK 16-16-8+13S HCQN (BM-25 kg-OPP)- xanh", "kg"),
+        Item("HH_332", "Phân NPK 16-16-8+13S HCQN (BM-25 kg-OPP)- xanh -TN", "kg"),
+        Item("HH_104", "Pazol 700WP - 35gr", "Gói"), Item("HH_300", "Pazol 700WP 45g", "Gói"), Item("HH_179", "NÓN TAI BÈO", "Cái"));
+
+    [Theory]
+    [InlineData("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Chai", "HH_47")]
+    [InlineData("Chevin 5SC (nano) 100ml (ĐN - TQ Tròn - Pyvil USA)", "Chai", "HH_47")]
+    [InlineData("Chevin 5SC (nano) 900ml (ĐN - Siêu khô vằn)", "Chai", "HH_48")]
+    [InlineData("Phân Đầu Trâu NPK 16-16-8+6S", "Kg", "HH_150")]
+    [InlineData("Phân NPK 16-16-8+13S HCQN (MM) -50Kg", "Kg", "HH_207")]
+    [InlineData("Pazol 700WP 35gr (NTD)", "Gói", "HH_104")]
+    public void TheSameItemWrittenDifferentlyFindsItsCode(string name, string unit, string code)
+        => Assert.Equal(code, RealCatalog().Find(name, unit)?.Code);
+
+    [Theory]
+    // A generic catalog name with more specific variants: which one is meant is unknown.
+    [InlineData("Catex 3.6EC 450ml (ĐN - Chai tím - Sư tử)", "Chai")]
+    // Fits both "… xanh" and "… xanh -TN".
+    [InlineData("Phân NPK 16-16-8+13S HCQN (BM – 25 kg – Xanh)", "Kg")]
+    // Another size, another unit, or a single shared word is never the same item.
+    [InlineData("Chevin 5SC (nano) 450ml (ĐN)", "Chai")]
+    [InlineData("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Thùng")]
+    [InlineData("Nón", "Cái")]
+    public void UncertainLooseNamesStayUnresolved(string name, string unit)
+        => Assert.Null(RealCatalog().Find(name, unit));
+
+    [Fact]
+    public void ReadbackOfTheLooselyMatchedNameIsAccepted()
+        => Assert.True(ItemCatalogStore.SameItemName("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Chevin 5SC nano - 100ml (ĐN chai tròn)"));
+
     // ---- registered units ----
 
     [Fact]
