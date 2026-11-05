@@ -466,7 +466,7 @@ public sealed class SalesVoucherTests : UiTest
         Assert.True(result.Outcome is "failed" or "discarded", Describe(result));
         Assert.True(result.MisaClean, "Chứng từ lệch phải được Bỏ (Đóng → Không cất). " + Describe(result));
         Assert.Empty(misa.State().Vouchers);
-    }, new FakeScenario(TaxOffset: 2));
+    }, new FakeScenario(TaxOffset: 3));
 
     [Fact]
     public Task SaveThatKeepsTheEditorReadOnlyIsConfirmed() => WithFakeAsync(async (misa, harness, token) =>

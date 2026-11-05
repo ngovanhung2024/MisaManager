@@ -8,7 +8,7 @@ using Windows.Win32.Foundation;
 namespace MisaManager.Automation;
 
 // Sales-voucher specific: MISA's "Tổng tiền thuế GTGT <..> khác ... chênh lệch <..>" prompt shown on Cất.
-/// <summary>Text of MISA's tax-difference prompt and whether it was answered "Có" (difference of at most 1 đồng).</summary>
+/// <summary>Text of MISA's tax-difference prompt and whether it was answered "Có" (difference of at most 2 đồng).</summary>
 public sealed record TaxPromptAnswer(string Text, bool Accepted);
 
 public sealed partial class NativeInputService
@@ -18,7 +18,7 @@ public sealed partial class NativeInputService
     private static readonly string[] YesCaptions = ["&Yes", "Yes", "&Có", "Có"];
 
     /// <summary>
-    /// Answers MISA's tax-difference prompt: "Có" when its "chênh lệch &lt;d&gt;" is at most 1 đồng (MISA moves it into
+    /// Answers MISA's tax-difference prompt: "Có" when its "chênh lệch &lt;d&gt;" is at most 2 đồng (MISA moves it into
     /// line 1; the user accepts that rounding), otherwise "Không" so the source tax is kept. The saved totals are read
     /// back afterwards either way. Returns the prompt text and answer, or null when no such prompt is open.
     /// </summary>

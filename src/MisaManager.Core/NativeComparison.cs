@@ -36,7 +36,7 @@ public static class NativeComparison
     }
 
     /// <summary>VAT rounding MISA may differ by (its per-line/per-rate rounding vs the e-invoice); accepted by the user.</summary>
-    public const decimal TaxRoundingTolerance = 1m;
+    public const decimal TaxRoundingTolerance = 2m;
 
     /// <summary>
     /// The amount of MISA's Cất prompt "... Thuế suất &lt;156.095&gt;, chênh lệch &lt;1&gt;. Bạn có muốn ..." (1); null when the
@@ -50,7 +50,7 @@ public static class NativeComparison
         return match.Success && TryNumber(match.Groups[1].Value, CultureInfo.GetCultureInfo("vi-VN"), out var value) ? value : null;
     }
 
-    /// <summary>Tax amount or total equal to the source within <see cref="TaxRoundingTolerance"/> (1 đồng).</summary>
+    /// <summary>Tax amount or total equal to the source within <see cref="TaxRoundingTolerance"/> (2 đồng).</summary>
     public static bool MatchesTaxRounding(string expected, string? actual, CultureInfo culture)
         => actual is not null && TryNumber(expected, CultureInfo.InvariantCulture, out var left) && TryNumber(actual, culture, out var right)
             && Math.Abs(left - right) <= TaxRoundingTolerance;
