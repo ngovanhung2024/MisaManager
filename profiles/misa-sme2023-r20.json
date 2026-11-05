@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-purchase-template-combo-20261104",
+  "revision": "r20-purchase-totals-label-20261105",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -104,9 +104,9 @@
         "number": { "automationId": "txtInvNo", "tab": "invoice", "description": "Số hóa đơn" },
         "series": { "automationId": "txtInvSeries", "tab": "invoice", "required": false, "description": "Ký hiệu HĐ (vd C26THC)" },
         "template": { "automationId": "cboInvTemplateNo", "tab": "invoice", "required": false, "description": "Mẫu số HĐ (vd 1): ô chọn; gõ giá trị rồi Enter. Ô con cboInvTemplateNo_EmbeddableTextBox không nhận focus UIA" },
-        "subtotal": { "automationId": "creTotalAmountOC", "description": "Tổng tiền hàng" },
-        "tax_total": { "automationId": "creTotalVATAmountOC", "description": "Tiền thuế GTGT" },
-        "grand_total": { "automationId": "creTotalPaymentAmountOC", "description": "Tổng tiền thanh toán" }
+        "subtotal": { "label": "Tổng tiền hàng", "controlType": "Edit", "description": "Tổng tiền hàng: ID phiếu nhập R20 khác form bán hàng (creTotalAmountOC không có, báo cáo 0.2.145) nên chọn theo nhãn" },
+        "tax_total": { "label": "Tiền thuế GTGT", "controlType": "Edit", "description": "Tiền thuế GTGT (chọn theo nhãn)" },
+        "grand_total": { "label": "Tổng tiền thanh toán", "controlType": "Edit", "description": "Tổng tiền thanh toán (chọn theo nhãn)" }
       },
       "grids": {
         "items": {

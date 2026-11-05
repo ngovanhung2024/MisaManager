@@ -154,6 +154,23 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Equal("2008", Assert.Single(misa.State().Vouchers).InvoiceNumber);
     }, Purchase);
 
+    // Report 0.2.145 (invoice 633): every line was entered, then reconciliation waited for "creTotalAmountOC", an ID the
+    // R20 phiếu nhập does not have (RECONCILIATION_PENDING). The fake's purchase totals carry IDs the profile never names.
+    [Fact]
+    public Task PurchaseTotalsAreReadByTheirCaptions() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2009", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 3, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 2, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var totals = result.Verification.Comparison!.Values.Where(value => value.Field is "subtotal" or "tax_total" or "grand_total").ToArray();
+        Assert.Equal(3, totals.Length);
+        Assert.All(totals, value => Assert.True(value.Matched, value.Field + ": " + value.Actual));
+    }, Purchase);
+
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>
     {

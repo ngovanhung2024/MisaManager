@@ -40,6 +40,9 @@ public sealed class ProfileTests : UiTest
         Assert.Equal("txtCAAccountObjectName", profile.Fields["customer_name"].AutomationId);
         // Real R20 (failure report 0.2.139): "Mẫu số HĐ" is combo cboInvTemplateNo; the label picked its inner textbox (FOCUS_FAILED).
         Assert.Equal("cboInvTemplateNo", profile.Fields["template"].AutomationId);
+        // Real R20 (failure report 0.2.145): creTotalAmountOC does not exist on phiếu nhập; totals are found by caption.
+        Assert.Equal(("Tổng tiền hàng", "Tiền thuế GTGT", "Tổng tiền thanh toán"),
+            (profile.Fields["subtotal"].Label, profile.Fields["tax_total"].Label, profile.Fields["grand_total"].Label));
         Assert.False(Load().IsPurchase);
     }
 

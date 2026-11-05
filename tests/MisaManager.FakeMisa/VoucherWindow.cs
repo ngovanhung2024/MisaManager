@@ -127,10 +127,13 @@ public sealed class VoucherWindow : Window, IGridSource
         DockPanel.SetDock(headerTabs, Dock.Top);
         root.Children.Add(headerTabs);
 
-        subtotal = Ui.Text(profile.Id(screen, "subtotal"), 140, "0", readOnly: true);
+        // R20 phiếu nhập exposes its totals under IDs of its own (not the sales form's creTotal…); the tool finds them by
+        // their captions, so the fake gives purchase totals IDs the profile never names.
+        string TotalId(string key, string purchaseId) => profile.Id(screen, key) is { Length: > 0 } id ? id : purchase ? purchaseId : "";
+        subtotal = Ui.Text(TotalId("subtotal", "crePUTotalAmount"), 140, "0", readOnly: true);
         discount = Ui.Text("", 140, "0", readOnly: true);
-        taxTotal = Ui.Text(profile.Id(screen, "tax_total"), 140, "0", readOnly: true);
-        grandTotal = Ui.Text(profile.Id(screen, "grand_total"), 140, "0", readOnly: true);
+        taxTotal = Ui.Text(TotalId("tax_total", "crePUTotalVATAmount"), 140, "0", readOnly: true);
+        grandTotal = Ui.Text(TotalId("grand_total", "crePUTotalPaymentAmount"), 140, "0", readOnly: true);
         var totals = new WrapPanel { Margin = new Thickness(6, 2, 6, 2) };
         totals.Children.Add(Ui.Button("Phân bổ chiết khấu...", true));
         totals.Children.Add(Ui.Button("Xem công nợ", true));
