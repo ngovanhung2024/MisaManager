@@ -127,6 +127,20 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(AdditionalItems: [new("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai", "5%")]),
         catalog: [new("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai")]);
 
+    // User request: sales fill "Mẫu số HĐ" from the Excel "Mẫu số" column, like purchases.
+    [Fact]
+    public Task SalesTemplateIsTypedFromExcel() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildWithTemplate(TempDirectory(misa), "1824", "1", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("field template <- '1'", events, StringComparison.Ordinal);
+    });
+
     // User: "Nón" is HH_179 "NÓN TAI BÈO", free "Thau nhựa (Hàng khuyến mãi không thu tiền)" is HH_21, not the KM codes.
     [Fact]
     public Task ShortAndPromotionalNamesUseTheOrdinaryCatalogCode() => WithFakeAsync(async (misa, harness, token) =>

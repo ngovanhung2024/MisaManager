@@ -332,7 +332,7 @@ public sealed class VoucherWindow : Window, IGridSource
             ("Mã số thuế", Field("customer_tax", scenario.CustomerTaxUnlisted ? "txtUnlistedTaxCode" : FieldId("customer_tax"))),
             ("Diễn giải", Ui.Text(value: "Xuất hóa đơn")),
             ("Người mua hàng", Field("buyer")), ("Hình thức TT", Field("payment", FieldId("payment"))))),
-        Ui.Group("Hoá đơn", Ui.Form(100, ("Mẫu số HĐ", Field("template")),
+        Ui.Group("Hoá đơn", Ui.Form(100, ("Mẫu số HĐ", TemplateCombo()),
             ("Ký hiệu HĐ", Field("series", FieldId("series"))),
             ("Số hóa đơn", Field("number", FieldId("number"))),
             ("Ngày hóa đơn", Field("issued_date", FieldId("issued_date"))))));

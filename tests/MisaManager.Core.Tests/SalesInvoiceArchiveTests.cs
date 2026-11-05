@@ -16,14 +16,14 @@ public sealed class SalesInvoiceArchiveTests : IDisposable
 
     /// <summary>Tax portal "bản thể hiện" of an own sales invoice (seller = our company).</summary>
     private static string Html(string number, int day, (string Label, string Value)[] buyer,
-        (string Name, string Unit, string Quantity, string Price, string Amount)[] lines, string tax, string total)
+        (string Name, string Unit, string Quantity, string Price, string Amount)[] lines, string tax, string total, string template = "1")
     {
         static string Encode(string text) => WebUtility.HtmlEncode(text);
         static string Item(string label, string value)
             => $"<li><div class=\"data-item\"><div class=\"di-label\"><span>{Encode(label)}</span></div><div class=\"di-value\"><div>{Encode(value)}</div></div></div></li>";
         var html = new StringBuilder()
             .Append("<html><body><div class=\"code-content\">")
-            .Append($"<b>{Encode("Mẫu số")}: 1</b><br><b>{Encode("Ký hiệu")}: C26MLV</b><br><b>{Encode("Số")}: {number}</b></div>")
+            .Append($"<b>{Encode("Mẫu số")}: {template}</b><br><b>{Encode("Ký hiệu")}: C26MLV</b><br><b>{Encode("Số")}: {number}</b></div>")
             .Append($"<p>{Encode($"Ngày {day:00} tháng 10 năm 2026")}</p><ul>")
             .Append(Item("Tên người bán:", "CÔNG TY TNHH THƯƠNG MẠI MẪU")).Append(Item("Mã số thuế:", "3301000999"))
             .Append(Item("Địa chỉ:", "Xã Lộc An"));
@@ -89,11 +89,13 @@ public sealed class SalesInvoiceArchiveTests : IDisposable
                 Buyer("CÔNG TY TNHH LÂM NGHIỆP MẪU", "Trần Văn Mẫu", "3300100999", address: "48 Đại Nam, Thành Phố Huế"),
                 [("NÓN TAI BÈO", "Cái", "1", "0", "0"), ("Bassa 50EC - Chai 90ml", "Chai", "28", "16.000", "448.000")], "22.400", "470.400")),
             ("3301000999_1_C26MLV_1880_dung_c.html", Html("1880", 7, Buyer("Lê Thị Mẫu", id: "046172000999", address: "Xã Nam Đông"),
-                [("Ni-tin 300EC - 10ml", "Cốc", "39", "7.000", "273.000")], "13.650", "286.650")),
+                [("Ni-tin 300EC - 10ml", "Cốc", "39", "7.000", "273.000")], "13.650", "286.650", template: "2")),
             ("3301000999_1_C26MLV_1881_huy_d.html", Html("1881", 7, Buyer("BÁN CHO NGƯỜI TIÊU DÙNG"),
                 [("Ni-tin 300EC - 10ml", "Cốc", "1", "7.000", "7.000")], "350", "7.350")));
 
         Assert.Equal(["1805", "1824", "1880"], result.Invoices.Select(invoice => invoice.Identity.Number));
+        // "Mẫu số" is read per invoice (typed into MISA "Mẫu số HĐ"): 1 or 2.
+        Assert.Equal(["1", "1", "2"], result.Invoices.Select(invoice => invoice.Template));
         Assert.All(result.Invoices, invoice =>
         {
             Assert.False(invoice.IsBlocked, string.Join("; ", invoice.Issues.Select(issue => issue.Message)));

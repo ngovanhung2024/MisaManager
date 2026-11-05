@@ -41,6 +41,10 @@ public static class Invoices
     public static InvoiceDocument Build(string directory, string number, Party buyer, params InvoiceLine[] lines)
         => Create(directory, number, Seller, buyer, InvoiceKinds.Sales, "Tiền mặt", lines);
 
+    /// <summary>A sales invoice whose Excel row carries "Mẫu số" (the tax-portal export always does).</summary>
+    public static InvoiceDocument BuildWithTemplate(string directory, string number, string template, Party buyer, params InvoiceLine[] lines)
+        => Create(directory, number, Seller, buyer, InvoiceKinds.Sales, "Tiền mặt", lines, template);
+
     /// <summary>A purchase invoice as the tax-portal importer builds it: the supplier is the seller, the shop the buyer.</summary>
     public static InvoiceDocument BuildPurchase(string directory, string number, Party supplier, params InvoiceLine[] lines)
         => Create(directory, number, supplier, Seller, InvoiceKinds.Purchase, InvoiceKinds.PurchasePayment, lines, template: "1");

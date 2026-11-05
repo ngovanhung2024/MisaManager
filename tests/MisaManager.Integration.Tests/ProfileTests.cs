@@ -44,6 +44,8 @@ public sealed class ProfileTests : UiTest
         Assert.Equal(("Tổng tiền hàng", "Tiền thuế GTGT", "Tổng tiền thanh toán"),
             (profile.Fields["subtotal"].Label, profile.Fields["tax_total"].Label, profile.Fields["grand_total"].Label));
         Assert.False(Load().IsPurchase);
+        // Sales "Mẫu số HĐ" is the same combo as on phiếu nhập.
+        Assert.Equal("cboInvTemplateNo", Load().Fields["template"].AutomationId);
     }
 
     [Fact]

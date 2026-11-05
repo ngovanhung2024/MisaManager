@@ -69,7 +69,8 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase
         ["notes"] = ["ghi chú", "ghi chu", "notes", "note"],
         ["itemNature"] = ["phân loại", "phan loai", "loại hàng", "hàng hóa/dịch vụ", "item nature"]
     };
-    private static readonly string[] SelectedFields = ["number", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
+    // "template" (Mẫu số, 1 or 2 per invoice) is typed into "Mẫu số HĐ"; optional, and not part of the sales InvoiceId.
+    private static readonly string[] SelectedFields = ["number", "template", "issued", "signed", "buyer", "buyerCompany", "buyerCode", "buyerTaxCode", "itemCode", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] Required = ["number", "issued", "buyer", "name", "unit", "unitPrice", "quantity", "amount", "taxRate", "taxAmount", "lineTotal"];
     private static readonly string[] IdentityFields = ["number", "buyerCode", "buyerTaxCode"];
     private static readonly string[] PurchaseFields = ["number", "series", "template", "issued", "seller", "sellerTaxCode", "sellerAddress", "sellerCode",

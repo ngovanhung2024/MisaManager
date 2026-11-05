@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-purchase-totals-label-20261105",
+  "revision": "r20-sales-template-20261105",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -43,6 +43,7 @@
         "issued_date": { "automationId": "dteInvDate", "tab": "invoice", "description": "Ngày hóa đơn" },
         "number": { "automationId": "txtInvNo", "tab": "invoice", "description": "Số hóa đơn" },
         "series": { "automationId": "txtInvSeries", "tab": "invoice", "description": "Ký hiệu HĐ" },
+        "template": { "automationId": "cboInvTemplateNo", "tab": "invoice", "required": false, "description": "Mẫu số HĐ (vd 1): ô chọn như phiếu nhập; gõ giá trị rồi Enter. MISA để trống khi chọn ký hiệu" },
         "payment": { "automationId": "cboPaymentMethodType", "tab": "invoice", "description": "Hình thức TT" },
         "currency": { "automationId": "cboCurrencyID", "required": false, "description": "Loại tiền" },
         "subtotal": { "automationId": "creTotalTotalSaleAmountOC", "description": "Tổng tiền hàng" },

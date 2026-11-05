@@ -382,7 +382,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         await Write("number", context.Invoice.Identity.Number, context.Invoice.Identity.Number, NativeValueKind.Exact, "Tab", token); sent = true;
                         if (context.Invoice.Identity.Series.Length > 0)
                             await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token);
-                        if (PurchaseTemplate(context) is { } template)
+                        if (InvoiceTemplate(context) is { } template)
                             // "Mẫu số HĐ" is a combo: the typed value is accepted with Enter.
                             await Write("template", template, template, NativeValueKind.Exact, "Enter", token);
                         break;
@@ -1022,10 +1022,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         ? [profile.Columns["name"], profile.Columns["unit"]]
         : [profile.Columns["name"], profile.Columns["unit"], profile.Columns["debit_account"]];
 
-    // Only purchases type "Mẫu số HĐ"; sales keep the template of the chosen invoice series.
-    private string? PurchaseTemplate(WorkflowContext context)
-        => profile.IsPurchase && profile.Fields.ContainsKey("template") && context.Invoice.Template.Trim() is { Length: > 0 } template
-            ? template : null;
+    // "Mẫu số HĐ" of the source, typed on both vouchers when the profile declares the field (MISA leaves it empty).
+    private string? InvoiceTemplate(WorkflowContext context)
+        => profile.Fields.ContainsKey("template") && context.Invoice.Template.Trim() is { Length: > 0 } template ? template : null;
 
     /// <summary>
     /// The portal states tax per rate; the importer spreads its rounding over the lines. MISA computes amount × rate per
@@ -1202,7 +1201,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // An empty source series keeps MISA's default series; there is nothing to compare.
         if (context.Invoice.Identity.Series.Length > 0)
             invoiceFields.Add(("series", context.Invoice.Identity.Series, NativeValueKind.Exact));
-        if (PurchaseTemplate(context) is { } template) invoiceFields.Add(("template", template, NativeValueKind.Exact));
+        if (InvoiceTemplate(context) is { } template) invoiceFields.Add(("template", template, NativeValueKind.Exact));
         // Invoice tab first: entry ends there, and Cất needs the receipt tab, so each header tab is selected once.
         await CompareFields(profile.InvoiceTab, [.. invoiceFields]);
         var individual = !profile.IsPurchase && BuyerCodes.IsIndividual(context.Invoice.Buyer);
@@ -1488,7 +1487,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         await Tab(profile.InvoiceTab, token);
         await Require("number", context.Invoice.Identity.Number, NativeValueKind.Exact, token);
         if (context.Invoice.Identity.Series.Length > 0) await Require("series", context.Invoice.Identity.Series, NativeValueKind.Exact, token);
-        if (PurchaseTemplate(context) is { } template) await Require("template", template, NativeValueKind.Exact, token);
+        if (InvoiceTemplate(context) is { } template) await Require("template", template, NativeValueKind.Exact, token);
         if (profile.IsPurchase) return;
         // R20's domestic VND editor has no currency control; VND is implicit in this surface.
         if (!string.Equals(context.Invoice.Currency, "VND", StringComparison.Ordinal))
