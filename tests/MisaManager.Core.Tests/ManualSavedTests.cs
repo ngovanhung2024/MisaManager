@@ -102,6 +102,35 @@ public sealed class ManualSavedTests : IDisposable
         Assert.Equal(next.Snapshot.RunId, restarted.Current!.Snapshot.RunId);
     }
 
+    // Report 0.2.144: a saved Bán hàng session blocked the first Mua hàng invoice with "Mở màn hình Bán hàng".
+    [Fact]
+    public async Task ASavedRunOfTheOtherModuleDoesNotNeedNativeProofBeforeTheNextInvoice()
+    {
+        var (_, store) = Create();
+        await SeedRunAsync(store, Invoice("1544"), WorkflowStatus.Saved, session: true);
+        var runner = new WorkflowRunner(new NoNative(), store, new RunEventStore(directory.Combine("logs")));
+        await runner.InitializeAsync(Token);
+        var purchase = Invoice("633") with { InvoiceType = InvoiceKinds.Purchase };
+        purchase = purchase with { Fingerprint = InvoiceFingerprint.Compute(purchase) };
+
+        var next = await runner.StartAsync(purchase, "company", "window", Token);
+
+        Assert.Equal(WorkflowStatus.Ready, next.Snapshot.Status);
+        Assert.True(next.Invoice.IsPurchase());
+    }
+
+    [Fact]
+    public async Task ASavedRunOfTheSameModuleIsStillProvedBeforeTheNextInvoice()
+    {
+        var (_, store) = Create();
+        await SeedRunAsync(store, Invoice("1544"), WorkflowStatus.Saved, session: true);
+        var runner = new WorkflowRunner(new NoNative(), store, new RunEventStore(directory.Combine("logs")));
+        await runner.InitializeAsync(Token);
+
+        // NoNative throws: the native proof of the saved voucher was requested.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runner.StartAsync(Invoice("1545"), "company", "window", Token));
+    }
+
     [Fact]
     public async Task MarkingClearsASessionThatWasNotLoadedYet()
     {

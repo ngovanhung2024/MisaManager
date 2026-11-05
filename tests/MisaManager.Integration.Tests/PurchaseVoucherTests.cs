@@ -130,6 +130,30 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Single(Events(misa), line => line.Contains("row=0 amount <-", StringComparison.Ordinal));
     }, Purchase with { ScrollSidewaysAfterAmount = true });
 
+    // Report 0.2.144: the last session was a saved Bán hàng invoice; with only Mua hàng open the first purchase invoice
+    // stopped with "Cannot prepare the next invoice: Mở màn hình Bán hàng của dữ liệu đã chọn."
+    [Fact]
+    public Task SavedSalesSessionDoesNotBlockTheFirstPurchaseInvoice() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var sale = Invoices.Build(TempDirectory(misa), "1824", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+        var runId = Guid.NewGuid().ToString("N");
+        var saved = new WorkflowContext(sale,
+            new WorkflowSnapshot(runId, sale.InvoiceId, sale.Revision, WorkflowStatus.Saved, "", misa.WindowIdentityText, null,
+                DateTimeOffset.UtcNow, "0.2.144.0", ProductIdentity.StateSchemaVersion), "", misa.WindowIdentityText);
+        var state = new JsonStateStore(Path.Combine(misa.Root, "state"));
+        await state.WriteAsync("workflow-context", Path.Combine("runs", runId, "workflow.json"), saved, token);
+        await state.WriteAsync("workflow-session", "session.json", saved, token);
+        await using var restarted = new AutomationHarness(misa.Root);
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2008", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await restarted.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("2008", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+    }, Purchase);
+
     [Fact]
     public Task PurchaseLineTaxDifferingFromMisaIsTypedOnTheTaxTab() => WithFakeAsync(async (misa, harness, token) =>
     {

@@ -452,7 +452,10 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             }
             var previous = Current;
             var detachedSaved = await ResolveDetachedInvoiceAsync(invoice, companyIdentity, windowIdentity, cancellationToken);
-            if (previous?.Snapshot.Status == WorkflowStatus.Saved && previous.Snapshot.RunId != resolvedSavedRunId)
+            // A saved run of the other module (Bán hàng ↔ Mua hàng) is final in history and its list is not the one open now;
+            // proving it would look for the wrong screen ("Mở màn hình Bán hàng…" while on Mua hàng).
+            if (previous?.Snapshot.Status == WorkflowStatus.Saved && previous.Snapshot.RunId != resolvedSavedRunId
+                && previous.Invoice.IsPurchase() == invoice.IsPurchase())
             {
                 // Recovery can confirm Save while its read-only editor remains
                 // open. Finish that verified editor before replacing its run.
