@@ -137,8 +137,12 @@ public sealed class SalesVoucherTests : UiTest
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.True(result.Outcome == "saved", Describe(result));
+        // The fake clears series and number when the template is chosen (as R20 does): they must be typed after it.
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(("1C26MLV", "1824"), (voucher.Series, voucher.InvoiceNumber));
         var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
-        Assert.Contains("field template <- '1'", events, StringComparison.Ordinal);
+        var template = events.IndexOf("field template <- '1'", StringComparison.Ordinal);
+        Assert.True(template >= 0 && template < events.IndexOf("field number <- '1824'", StringComparison.Ordinal), events);
     });
 
     // User: "Nón" is HH_179 "NÓN TAI BÈO", free "Thau nhựa (Hàng khuyến mãi không thu tiền)" is HH_21, not the KM codes.

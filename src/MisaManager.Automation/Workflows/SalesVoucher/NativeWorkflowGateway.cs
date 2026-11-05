@@ -379,12 +379,17 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         break;
                     case WorkflowStatus.InvoiceVerified:
                         await Tab(profile.InvoiceTab, token);
-                        await Write("number", context.Invoice.Identity.Number, context.Invoice.Identity.Number, NativeValueKind.Exact, "Tab", token); sent = true;
-                        if (context.Invoice.Identity.Series.Length > 0)
-                            await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token);
+                        // Template first: choosing "Mẫu số HĐ" (a combo, accepted with Enter) makes the sales voucher clear
+                        // "Ký hiệu HĐ" and "Số hóa đơn" (0.2.149), so both are typed after it.
                         if (InvoiceTemplate(context) is { } template)
-                            // "Mẫu số HĐ" is a combo: the typed value is accepted with Enter.
-                            await Write("template", template, template, NativeValueKind.Exact, "Enter", token);
+                        {
+                            await Write("template", template, template, NativeValueKind.Exact, "Enter", token); sent = true;
+                        }
+                        if (context.Invoice.Identity.Series.Length > 0)
+                        {
+                            await Write("series", context.Invoice.Identity.Series, context.Invoice.Identity.Series, NativeValueKind.Exact, "Tab", token); sent = true;
+                        }
+                        await Write("number", context.Invoice.Identity.Number, context.Invoice.Identity.Number, NativeValueKind.Exact, "Tab", token); sent = true;
                         break;
                     case WorkflowStatus.ItemsVerified:
                         await EnterLines(context, progress, token);

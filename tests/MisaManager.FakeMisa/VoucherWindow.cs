@@ -348,6 +348,12 @@ public sealed class VoucherWindow : Window, IGridSource
         if (header.GetValueOrDefault(key) == value && key != "customer") return;
         header[key] = value;
         dirty = true;
+        // R20 sales voucher: choosing "Mẫu số HĐ" clears "Ký hiệu HĐ" and "Số hóa đơn" (screenshot 0.2.149).
+        if (key == "template" && !purchase)
+        {
+            header["series"] = header["number"] = "";
+            FakeLog.Write("template chosen: series and number cleared");
+        }
         // Purchases find the supplier by the MST typed into "Nhà cung cấp".
         if (key == "customer" && (purchase ? store.FindSupplier(value) : store.FindCustomer(value)) is { } customer)
         {

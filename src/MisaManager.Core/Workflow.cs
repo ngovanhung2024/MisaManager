@@ -523,7 +523,9 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         {
             if (!old.SessionDetached
                 || InvoiceLookup.ByNumber([old.Invoice], invoice.Identity.Number, invoice.Identity.Series) is null
-                || TextKey.Compact(old.Invoice.Identity.Series) != TextKey.Compact(invoice.Identity.Series)
+                // Sales runs before 0.2.150 carry no series: they still denote this invoice.
+                || TextKey.Compact(old.Invoice.Identity.Series) is { Length: > 0 } oldSeries
+                    && TextKey.Compact(invoice.Identity.Series) is { Length: > 0 } newSeries && oldSeries != newSeries
                 || TextKey.Compact(old.Invoice.Identity.SellerTaxCode) != TextKey.Compact(invoice.Identity.SellerTaxCode)
                 || old.CompanyIdentity.Length > 0 && companyIdentity.Length > 0 && old.CompanyIdentity != companyIdentity)
                 continue;
