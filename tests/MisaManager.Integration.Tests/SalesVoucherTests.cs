@@ -127,6 +127,25 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(AdditionalItems: [new("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai", "5%")]),
         catalog: [new("HH_47", "Chevin 5SC nano - 100ml (ĐN chai tròn)", "Chai")]);
 
+    // User: "Nón" is HH_179 "NÓN TAI BÈO", free "Thau nhựa (Hàng khuyến mãi không thu tiền)" is HH_21, not the KM codes.
+    [Fact]
+    public Task ShortAndPromotionalNamesUseTheOrdinaryCatalogCode() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "3121", Invoices.Consumer,
+            Invoices.Line(0, "", "Nón", "Cái", 10, 20_000, "5%"),
+            Invoices.Line(1, "", "Thau nhựa (Hàng khuyến mãi không thu tiền)", "Cái", 5, 30_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(["HH_179", "HH_21"], Assert.Single(misa.State().Vouchers).Lines.Select(line => line.Code));
+        Assert.Empty(misa.State().CreatedItems);
+    }, new FakeScenario(AdditionalItems:
+        [new("HH_179", "NÓN TAI BÈO", "Cái", "5%"), new("KM1", "Nón tai bèo (Hàng khuyến mãi không thu tiền)", "Cái", "5%"),
+         new("HH_21", "Thau nhựa", "Cái", "5%"), new("KM", "Thau nhựa rải phân (Hàng khuyến mãi không thu tiền)", "Cái", "5%")]),
+        catalog: [new("HH_179", "NÓN TAI BÈO", "Cái"), new("KM1", "Nón tai bèo (Hàng khuyến mãi không thu tiền)", "Cái"),
+            new("HH_21", "Thau nhựa", "Cái"), new("KM", "Thau nhựa rải phân (Hàng khuyến mãi không thu tiền)", "Cái")]);
+
     // Menu "Tự thêm mã hàng mới" off: an item missing from the catalog stops the invoice before the voucher is opened.
     [Fact]
     public Task ItemCreationSwitchedOffStopsBeforeAnyInput() => WithFakeAsync(async (misa, harness, token) =>

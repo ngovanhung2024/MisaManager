@@ -28,7 +28,9 @@ public sealed class ItemCatalogTests : IDisposable
         Item("HH_207", "Phân NPK 16-16-8-13S MM HCQN (50 Kg)", "kg"), Item("HH_330", "Phân NPK 16-16-8+13S HCQN (BM-BV) (50Kg)", "kg"),
         Item("HH_209", "Phân NPK 16-16-8+13S HCQN (BM-25 kg-OPP)- xanh", "kg"),
         Item("HH_332", "Phân NPK 16-16-8+13S HCQN (BM-25 kg-OPP)- xanh -TN", "kg"),
-        Item("HH_104", "Pazol 700WP - 35gr", "Gói"), Item("HH_300", "Pazol 700WP 45g", "Gói"), Item("HH_179", "NÓN TAI BÈO", "Cái"));
+        Item("HH_104", "Pazol 700WP - 35gr", "Gói"), Item("HH_300", "Pazol 700WP 45g", "Gói"), Item("HH_179", "NÓN TAI BÈO", "Cái"),
+        Item("KM1", "Nón tai bèo (Hàng khuyến mãi không thu tiền)", "Cái"), Item("HH_21", "Thau nhựa", "Cái"),
+        Item("KM", "Thau nhựa rải phân (Hàng khuyến mãi không thu tiền)", "Cái"), Item("HH_183", "BIA HUDA LON", "Thùng"));
 
     [Theory]
     [InlineData("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Chai", "HH_47")]
@@ -37,6 +39,11 @@ public sealed class ItemCatalogTests : IDisposable
     [InlineData("Phân Đầu Trâu NPK 16-16-8+6S", "Kg", "HH_150")]
     [InlineData("Phân NPK 16-16-8+13S HCQN (MM) -50Kg", "Kg", "HH_207")]
     [InlineData("Pazol 700WP 35gr (NTD)", "Gói", "HH_104")]
+    // User: "Nón" is HH_179, free "Thau nhựa (Hàng khuyến mãi không thu tiền)" is HH_21 (not the KM promotion codes).
+    [InlineData("Nón", "Cái", "HH_179")]
+    [InlineData("Nón tai bèo", "Cái", "HH_179")]
+    [InlineData("Thau nhựa (Hàng khuyến mãi không thu tiền)", "Cái", "HH_21")]
+    [InlineData("Nón tai bèo (Hàng khuyến mãi không thu tiền)", "Cái", "KM1")]
     public void TheSameItemWrittenDifferentlyFindsItsCode(string name, string unit, string code)
         => Assert.Equal(code, RealCatalog().Find(name, unit)?.Code);
 
@@ -48,13 +55,19 @@ public sealed class ItemCatalogTests : IDisposable
     // Another size, another unit, or a single shared word is never the same item.
     [InlineData("Chevin 5SC (nano) 450ml (ĐN)", "Chai")]
     [InlineData("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Thùng")]
-    [InlineData("Nón", "Cái")]
+    [InlineData("Nón", "Chiếc")]
+    [InlineData("Lon (Pepsi)", "Thùng")]
     public void UncertainLooseNamesStayUnresolved(string name, string unit)
         => Assert.Null(RealCatalog().Find(name, unit));
 
     [Fact]
     public void ReadbackOfTheLooselyMatchedNameIsAccepted()
-        => Assert.True(ItemCatalogStore.SameItemName("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Chevin 5SC nano - 100ml (ĐN chai tròn)"));
+    {
+        Assert.True(ItemCatalogStore.SameItemName("Chevin 5SC (nano) 100ml (ĐN - Tròn)", "Chevin 5SC nano - 100ml (ĐN chai tròn)"));
+        Assert.True(ItemCatalogStore.SameItemName("Nón", "NÓN TAI BÈO"));
+        Assert.True(ItemCatalogStore.SameItemName("Thau nhựa (Hàng khuyến mãi không thu tiền)", "Thau nhựa"));
+        Assert.False(ItemCatalogStore.SameItemName("Nón", "Thau nhựa"));
+    }
 
     // ---- registered units ----
 

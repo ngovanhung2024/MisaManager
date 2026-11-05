@@ -77,17 +77,33 @@ public sealed partial class ItemCatalogStore
     private static readonly HashSet<string> LooseNoise = new(new[] { "ĐN", "CHAI", "BAO", "PHÂN", "BÓN" }.Select(TextKey.Canonical),
         StringComparer.Ordinal);
 
+    // "(Hàng khuyến mãi[, tặng] không thu tiền)": the same goods given free; the user books them on the ordinary code.
+    private static readonly string[] PromotionLead = new[] { "HÀNG", "KHUYẾN" }.Select(TextKey.Canonical).ToArray();
+    private static readonly HashSet<string> PromotionWords = new(new[] { "HÀNG", "KHUYẾN", "MÃI", "MẠI", "TẶNG", "KHÔNG", "THU", "TIỀN" }
+        .Select(TextKey.Canonical), StringComparer.Ordinal);
+
     private static (string[] Numbers, HashSet<string> Words) LooseTokens(string? value)
     {
+        var (numbers, words, _, _) = LooseParts(value);
+        return (numbers, words);
+    }
+
+    private static (string[] Numbers, HashSet<string> Words, string? FirstWord, bool Promotion) LooseParts(string? value)
+    {
         var numbers = new List<string>();
-        var words = new HashSet<string>(StringComparer.Ordinal);
+        var ordered = new List<string>();
         // "100ml" = "100 ml", "16.16.8" = "16-16-8": digits and letters are separate tokens.
         foreach (Match token in LooseToken().Matches(TextKey.Canonical(value)))
         {
             if (char.IsDigit(token.Value[0])) numbers.Add(token.Value.TrimStart('0') is { Length: > 0 } digits ? digits : "0");
-            else if (!LooseNoise.Contains(token.Value)) words.Add(token.Value);
+            else if (!LooseNoise.Contains(token.Value)) ordered.Add(token.Value);
         }
-        return ([.. numbers], words);
+        var lead = Enumerable.Range(0, Math.Max(0, ordered.Count - 1))
+            .FirstOrDefault(index => ordered[index] == PromotionLead[0] && ordered[index + 1] == PromotionLead[1], -1);
+        var promotion = lead >= 0;
+        if (promotion)
+            ordered = [.. ordered.Take(lead), .. ordered.Skip(lead).SkipWhile(word => PromotionWords.Contains(word))];
+        return ([.. numbers], new HashSet<string>(ordered, StringComparer.Ordinal), ordered.FirstOrDefault(), promotion);
     }
 
     [GeneratedRegex(@"\p{Nd}+|[\p{L}\p{Mn}]+", RegexOptions.CultureInvariant)]
@@ -101,11 +117,14 @@ public sealed partial class ItemCatalogStore
     /// </summary>
     public static bool LooseNameMatch(string? left, string? right)
     {
-        var (leftNumbers, leftWords) = LooseTokens(left);
-        var (rightNumbers, rightWords) = LooseTokens(right);
-        if (!leftNumbers.SequenceEqual(rightNumbers, StringComparer.Ordinal)) return false;
-        var (small, large) = leftWords.Count <= rightWords.Count ? (leftWords, rightWords) : (rightWords, leftWords);
-        return small.IsSubsetOf(large) && small.Count + leftNumbers.Length >= 2 && small.Count > 0;
+        var l = LooseParts(left);
+        var r = LooseParts(right);
+        if (!l.Numbers.SequenceEqual(r.Numbers, StringComparer.Ordinal)) return false;
+        var (small, large) = l.Words.Count <= r.Words.Count ? (l, r) : (r, l);
+        if (small.Words.Count == 0 || !small.Words.IsSubsetOf(large.Words)) return false;
+        if (small.Words.Count + l.Numbers.Length >= 2) return true;
+        // A one-word name is the leading word of the full name: "Nón" = "NÓN TAI BÈO".
+        return small.FirstWord!.Length >= 3 && small.FirstWord == large.FirstWord;
     }
 
     /// <summary>Exact name identity, or <see cref="LooseNameMatch"/>.</summary>
@@ -178,10 +197,13 @@ public sealed partial class ItemCatalogStore
         var family = SameUnit(usable.Where(item => LooseTokens(item.Name).Numbers.SequenceEqual(numbers, StringComparer.Ordinal)).ToArray(),
                 unit, allowKgToTon)
             .DistinctBy(item => item.Code, StringComparer.Ordinal)
-            .Select(item => (Item: item, Words: LooseTokens(item.Name).Words)).ToArray();
-        var exact = family.Where(entry => entry.Words.SetEquals(words)).ToArray();
+            .Select(item => (Item: item, Words: LooseTokens(item.Name).Words, LooseParts(item.Name).Promotion)).ToArray();
+        // "Nón tai bèo" (HH_179) and "Nón tai bèo (Hàng khuyến mãi không thu tiền)" (KM1): the ordinary code wins.
+        static T[] Ordinary<T>(T[] found, Func<T, bool> promotion) => found.Any(item => !promotion(item))
+            ? found.Where(item => !promotion(item)).ToArray() : found;
+        var exact = Ordinary(family.Where(entry => entry.Words.SetEquals(words)).ToArray(), entry => entry.Promotion);
         if (exact.Length > 0) return exact.Length == 1 && LooseNameMatch(name, exact[0].Item.Name) ? exact[0].Item : null;
-        var loose = family.Where(entry => LooseNameMatch(name, entry.Item.Name)).ToArray();
+        var loose = Ordinary(family.Where(entry => LooseNameMatch(name, entry.Item.Name)).ToArray(), entry => entry.Promotion);
         if (loose.Length != 1) return null;
         var match = loose[0];
         var generic = match.Words.IsProperSubsetOf(words);
