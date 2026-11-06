@@ -8,7 +8,11 @@ param(
     # PFX file for CI signing; its password is read from MISAMANAGER_SIGNING_PASSWORD, never from the command line.
     [string]$CertificatePath = '',
     [string]$SignToolPath = '',
-    [string]$TimestampUrl = ''
+    [string]$TimestampUrl = '',
+    # CI speed-ups (release.yml): a faster cabinet codec and no ICE validation when the installer authoring is unchanged.
+    # Local publishing keeps the WiX defaults and full validation.
+    [ValidateSet('', 'none', 'low', 'medium', 'high', 'mszip')][string]$InstallerCompression = '',
+    [switch]$SkipInstallerValidation
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -210,9 +214,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Runtime restore failed.' }
     & $dotnet restore $appProject -r win-x64 --locked-mode --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Locked restore failed.' }
-    & $dotnet build $appProject -c Release --no-restore -p:Version=$Version --nologo
-    if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-    if (-not $releaseRoot) { return }
+    # Staging publishes (and so compiles) the same project below; a separate build only doubled the compile time.
+    if (-not $releaseRoot) {
+        & $dotnet build $appProject -c Release --no-restore -p:Version=$Version --nologo
+        if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+        return
+    }
 
     $publish = Join-Path $releaseRoot 'payload'
     foreach ($component in @('App')) {
@@ -287,7 +294,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Locked installer restore failed.' }
     $installerOutput = Join-Path $releaseRoot 'installer'
         New-Item -ItemType Directory -Path $installerOutput -Force | Out-Null
-        & $dotnet build installer\MisaManager.wixproj -c Release --no-restore -p:PackageVersion=$Version -p:PublishRoot=$publish -p:OutputPath=$installerOutput --nologo
+        $wixArguments = @('build', 'installer\MisaManager.wixproj', '-c', 'Release', '--no-restore', "-p:PackageVersion=$Version",
+            "-p:PublishRoot=$publish", "-p:OutputPath=$installerOutput", '--nologo')
+        if ($InstallerCompression) { $wixArguments += "-p:DefaultCompressionLevel=$InstallerCompression" }
+        if ($SkipInstallerValidation) { $wixArguments += '-p:SuppressValidation=true' }
+        & $dotnet @wixArguments
         if ($LASTEXITCODE -ne 0) { throw 'WiX installer build failed.' }
         $msi = Join-Path $installerOutput 'MisaManager.msi'
         # WiX 4 writes the package to its intermediate directory when a custom

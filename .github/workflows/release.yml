@@ -32,13 +32,17 @@ jobs:
       HAS_SIGNING: ${{ secrets.CODE_SIGNING_PFX_BASE64 != '' }}
       PUBLISH: ${{ github.event_name != 'pull_request' }}
     steps:
+      # Full history for the commit-count version, without the blobs of old commits.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
 
       - name: Resolve version
         shell: pwsh
@@ -54,6 +58,20 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$raw' must be major.minor.build" }
           "VERSION=$version" >> $env:GITHUB_ENV
           Write-Host "Version $version"
+          # ICE validation runs when the installer authoring or release script changed since the previous master push
+          # (and on manual/tag runs); otherwise it only re-checks an unchanged package layout.
+          $validate = 'true'
+          $before = '${{ github.event.before }}'
+          if ('${{ github.event_name }}' -eq 'push' -and '${{ github.ref_type }}' -eq 'branch' -and $before -match '^[0-9a-f]{40}$' -and $before -notmatch '^0+$') {
+            git cat-file -e "$before^{commit}" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $changed = @(git diff --name-only $before HEAD -- installer scripts/release.ps1 scripts/payload-runtime.ps1 Directory.Build.props)
+              if ($LASTEXITCODE -eq 0 -and $changed.Count -eq 0) { $validate = 'false' }
+            }
+          }
+          $global:LASTEXITCODE = 0
+          "VALIDATE_INSTALLER=$validate" >> $env:GITHUB_ENV
+          Write-Host "Installer ICE validation: $validate"
 
       - name: Import code-signing certificate
         if: env.HAS_SIGNING == 'true' && env.PUBLISH == 'true'
@@ -77,7 +95,8 @@ jobs:
         env:
           MISAMANAGER_SIGNING_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
         run: |
-          $arguments = @{ Stage = $true; Installer = $true; Version = $env:VERSION; DotnetPath = (Get-Command dotnet).Source }
+          $arguments = @{ Stage = $true; Installer = $true; Version = $env:VERSION; DotnetPath = (Get-Command dotnet).Source
+            InstallerCompression = 'mszip'; SkipInstallerValidation = ($env:VALIDATE_INSTALLER -ne 'true') }
           if ($env:SIGNING_PFX) { $arguments.CertificatePath = $env:SIGNING_PFX }
           # Tee keeps build/WiX output in the log; the manifest path is the script's last output line.
           & .\scripts\release.ps1 @arguments | Tee-Object -Variable releaseOutput | Out-Host
