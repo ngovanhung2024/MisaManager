@@ -658,6 +658,25 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("grid cells unavailable for 11000 ms after Thuế tab", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(GridUnavailableAfterTaxTabMilliseconds: 11_000));
 
+    // HĐ 81/82 on the VPS (0.2.160): reading one cell made R20 recreate the row's cell accessibles, so the reconcile read,
+    // which touched every cell of the row live for each column, hit a stale cell on every pass for 30 s and Bỏ the voucher.
+    // Cells are mapped from the row snapshot and a vanished cell is read again from a freshly resolved row.
+    [Fact]
+    public Task GridCellsRecreatedWhileReadingAreReadFromAFreshRow() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1084", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
+        Assert.Contains("grid recreates a row's cells after each cell read", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(GridCellsRecreatedOnReadAfterTaxTab: true));
+
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {

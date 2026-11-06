@@ -65,6 +65,8 @@ public sealed class FakeGrid : Border
     /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
     public DateTime CellsUnavailableUntil { get; set; }
     internal bool CellsUnavailable => DateTime.UtcNow < CellsUnavailableUntil;
+    /// <summary>Reading a data cell's value recreates that row's text cells, as R20's grid did on the VPS (0.2.160).</summary>
+    public bool RecreateCellsOnRead { get; set; }
     public int FooterCountOffset { get; init; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
@@ -254,9 +256,30 @@ internal sealed class GridRow : StackPanel
         }
     }
 
+    // Replaces the row's text cells with new controls; the old ones become stale for UIA clients still holding them.
+    internal void RecreateTextCells()
+    {
+        foreach (var column in columns.Where(column => column.Kind != CellKind.Combo))
+        {
+            var old = (GridTextBox)cells[column.Key];
+            var fresh = CreateText(column);
+            fresh.Width = old.Width;
+            fresh.Height = old.Height;
+            fresh.Margin = old.Margin;
+            fresh.Tag = old.Tag;
+            fresh.Text = old.Text;
+            Panel.SetZIndex(fresh, Panel.GetZIndex(old));
+            old.Stale = true;
+            Children[Children.IndexOf(old)] = fresh;
+            cells[column.Key] = fresh;
+        }
+        UpdateLayout();
+        UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
+    }
+
     private TextBox CreateText(GridColumn column)
     {
-        var text = new GridTextBox(grid)
+        var text = new GridTextBox(grid, this)
         {
             IsReadOnly = column.Kind == CellKind.ReadOnly,
             BorderThickness = new Thickness(0, 0, 1, 1),
@@ -305,20 +328,33 @@ internal sealed class GridRow : StackPanel
 
     protected override AutomationPeer OnCreateAutomationPeer() => new RowPeer(this);
 
-    private sealed class GridTextBox(FakeGrid grid) : TextBox
+    private sealed class GridTextBox(FakeGrid grid, GridRow row) : TextBox
     {
-        protected override AutomationPeer OnCreateAutomationPeer() => new CellPeer(this, grid);
+        public bool Stale { get; set; }
+        protected override AutomationPeer OnCreateAutomationPeer() => new CellPeer(this, grid, row);
     }
 
     // Re-implements IValueProvider so a read can fail the way a vanished Infragistics cell does.
-    private sealed class CellPeer(TextBox cell, FakeGrid grid) : TextBoxAutomationPeer(cell), System.Windows.Automation.Provider.IValueProvider
+    private sealed class CellPeer(GridTextBox cell, FakeGrid grid, GridRow row) : TextBoxAutomationPeer(cell), System.Windows.Automation.Provider.IValueProvider
     {
-        private TextBox Cell => (TextBox)Owner;
-        bool System.Windows.Automation.Provider.IValueProvider.IsReadOnly => Cell.IsReadOnly;
+        private GridTextBox Cell => (GridTextBox)Owner;
+        private void ThrowIfStale() { if (Cell.Stale) throw new ElementNotAvailableException(); }
+        protected override System.Windows.Rect GetBoundingRectangleCore() { ThrowIfStale(); return base.GetBoundingRectangleCore(); }
+        bool System.Windows.Automation.Provider.IValueProvider.IsReadOnly { get { ThrowIfStale(); return Cell.IsReadOnly; } }
         string System.Windows.Automation.Provider.IValueProvider.Value
-            => grid.CellsUnavailable ? throw new ElementNotAvailableException() : Cell.Text;
+        {
+            get
+            {
+                ThrowIfStale();
+                if (grid.CellsUnavailable) throw new ElementNotAvailableException();
+                var value = Cell.Text;
+                if (grid.RecreateCellsOnRead && row.Index is not null) row.RecreateTextCells();
+                return value;
+            }
+        }
         void System.Windows.Automation.Provider.IValueProvider.SetValue(string value)
         {
+            ThrowIfStale();
             if (!IsEnabled() || Cell.IsReadOnly) throw new ElementNotEnabledException();
             Cell.Text = value;
         }

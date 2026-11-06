@@ -75,6 +75,11 @@ public sealed record Scenario
     /// (report 0.2.159, HĐ 82: RECONCILIATION_PENDING "Native element disappeared during readback").
     /// </summary>
     public int GridUnavailableAfterTaxTabMilliseconds { get; init; }
+    /// <summary>
+    /// After the detail tab first switches to "Thuế", reading a grid cell's value makes the grid recreate that row's text
+    /// cells; references to the old cells answer "element not available" for good (VPS report 0.2.160, HĐ 81/82).
+    /// </summary>
+    public bool GridCellsRecreatedOnReadAfterTaxTab { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

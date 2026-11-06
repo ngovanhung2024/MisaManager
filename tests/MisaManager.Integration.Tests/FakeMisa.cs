@@ -34,7 +34,8 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     bool Purchase = false, IReadOnlyList<FakeCustomer>? AdditionalSuppliers = null, int PurchaseDefaultsDelayMilliseconds = 0,
     int LineErrorRow = -1, int RowRedrawAfterAmountMilliseconds = 0,
     bool ScrollSidewaysAfterAmount = false, decimal UnitPriceDrift = 0, bool TaxPromptPerRate = false,
-    int QuantityIgnoredRow = -1, bool TaxpayerStatusPrompt = false, int GridUnavailableAfterTaxTabMilliseconds = 0);
+    int QuantityIgnoredRow = -1, bool TaxpayerStatusPrompt = false, int GridUnavailableAfterTaxTabMilliseconds = 0,
+    bool GridCellsRecreatedOnReadAfterTaxTab = false);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

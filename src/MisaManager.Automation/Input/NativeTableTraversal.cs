@@ -233,7 +233,7 @@ public sealed partial class NativeInputService
         if (grid.Patterns.Grid.IsSupported || grid.Patterns.Table.IsSupported || grid.Patterns.Scroll.IsSupported)
             return null;
         var exposed = Snapshots(grid, TrueCondition.Default);
-        var declared = exposed.Select(item => TryParseDataRowCount(item.Element.Properties.ItemStatus.ValueOrDefault))
+        var declared = exposed.Select(item => TryParseDataRowCount(TryLive(() => item.Element.Properties.ItemStatus.ValueOrDefault)))
             .FirstOrDefault(value => value is not null);
         if (declared is { } declaredCount)
         {
@@ -249,7 +249,7 @@ public sealed partial class NativeInputService
         foreach (var region in regions)
         {
             token.ThrowIfCancellationRequested();
-            if (TryParseDataRowCount(region.Element.Properties.ItemStatus.ValueOrDefault) is not { } count)
+            if (TryParseDataRowCount(TryLive(() => region.Element.Properties.ItemStatus.ValueOrDefault)) is not { } count)
                 continue;
             var rows = NumericRows(region.Element);
             if (rows.Length == count && rows.Select(row => row.Ordinal)
@@ -278,12 +278,27 @@ public sealed partial class NativeInputService
 
     private (int Ordinal, FlaUI.Core.AutomationElements.AutomationElement Element)[] NumericRows(
         FlaUI.Core.AutomationElements.AutomationElement scope)
+        => NumericRowSnapshots(scope).Select(row => (row.Ordinal, row.Row.Element)).ToArray();
+
+    private (int Ordinal, ElementSnapshot Row)[] NumericRowSnapshots(FlaUI.Core.AutomationElements.AutomationElement scope)
         => Snapshots(scope, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
                 identity!.ProcessId, enabled: false, onscreen: false))
             .Where(row => int.TryParse(row.AutomationId, out var ordinal) && ordinal >= 0)
-            .Select(row => (Ordinal: int.Parse(row.AutomationId, System.Globalization.CultureInfo.InvariantCulture), row.Element))
+            .Select(row => (Ordinal: int.Parse(row.AutomationId, System.Globalization.CultureInfo.InvariantCulture), Row: row))
             .GroupBy(row => row.Ordinal).Where(group => group.Count() == 1)
             .Select(group => group.Single()).OrderBy(row => row.Ordinal).ToArray();
+
+    // UIA_E_ELEMENTNOTAVAILABLE, raw or wrapped by FlaUI.
+    private static bool Vanished(Exception error)
+        => error is FlaUI.Core.Exceptions.ElementNotAvailableException
+            || error is System.Runtime.InteropServices.COMException { HResult: unchecked((int)0x80040201) };
+
+    // A vanished candidate (row region) is simply not a candidate; never used for a value that is compared.
+    private static T? TryLive<T>(Func<T> read)
+    {
+        try { return read(); }
+        catch (Exception error) when (Vanished(error)) { return default; }
+    }
 
     private NativeTable ReadCustomCompleteTable(FlaUI.Core.AutomationElements.AutomationElement grid,
         IReadOnlyList<string> requestedColumns, int expectedRowCount, CancellationToken token)
@@ -304,49 +319,79 @@ public sealed partial class NativeInputService
             throw new AutomationException("GRID_COLUMN_AMBIGUOUS", "Native grid is missing requested column(s): " + string.Join(", ", missing));
         headers = headers.Where(column => requested.Count == 0 || requested.Contains(column.Name)).ToArray();
 
-        var rowScope = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.Tree),
-                identity!.ProcessId, enabled: false, onscreen: false))
-            .Where(region => TryParseDataRowCount(region.Element.Properties.ItemStatus.ValueOrDefault) == expectedRowCount)
-            .Select(region => (Scope: region.Element, Rows: NumericRows(region.Element)))
-            .FirstOrDefault(candidate => candidate.Rows.Length == expectedRowCount
-                && candidate.Rows.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)));
-        var rows = rowScope.Scope is not null ? rowScope.Rows : NumericRows(grid);
-        if (rows.Length != expectedRowCount
-            || !rows.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)))
-            throw new AutomationException("GRID_INCOMPLETE", "Native row ordinals do not cover the complete register.");
+        (int Ordinal, ElementSnapshot Row)[] CompleteRows()
+        {
+            var rowScope = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.Tree),
+                    identity!.ProcessId, enabled: false, onscreen: false))
+                .Where(region => TryParseDataRowCount(TryLive(() => region.Element.Properties.ItemStatus.ValueOrDefault)) == expectedRowCount)
+                .Select(region => (Scope: region.Element, Rows: NumericRowSnapshots(region.Element)))
+                .FirstOrDefault(candidate => candidate.Rows.Length == expectedRowCount
+                    && candidate.Rows.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)));
+            var found = rowScope.Scope is not null ? rowScope.Rows : NumericRowSnapshots(grid);
+            if (found.Length != expectedRowCount
+                || !found.Select(row => row.Ordinal).SequenceEqual(Enumerable.Range(0, expectedRowCount)))
+                throw new AutomationException("GRID_INCOMPLETE", "Native row ordinals do not cover the complete register.");
+            return found;
+        }
+        var rows = CompleteRows();
 
         // Hidden (zero-area) rows keep their ordinal for the proof but have no cells to read.
-        var shownRows = rows.Where(row => row.Element.BoundingRectangle is { Width: > 0, Height: > 0 }).ToArray();
+        // Bounds, names and cell mapping come from the search snapshot: R20 recreates a row's cell accessibles
+        // while one of them is read, and a live read of every sibling then failed on every pass (VPS, 0.2.160).
+        var shownRows = rows.Where(row => row.Row.HasArea).ToArray();
         if (TryReadCustomFooterCount(grid) is { } footer && footer != shownRows.Length && footer != rows.Length)
             throw FooterMismatch(footer, shownRows.Length, rows.Length - shownRows.Length);
+        ElementSnapshot[] RowCells(AutomationElement row)
+            => Snapshots(row, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
+                identity!.ProcessId, enabled: false, onscreen: false));
+        AutomationElement MapCell(ElementSnapshot[] cells, CustomCompleteColumn column)
+        {
+            var visible = cells.Where(item => item.HasArea)
+                .Select(item => (item.Element, Overlap: HorizontalOverlap(item.Bounds.X, item.Bounds.Right,
+                    column.Left, column.Right)))
+                .Where(item => item.Overlap > 0)
+                .OrderByDescending(item => item.Overlap).FirstOrDefault().Element;
+            return visible ?? cells.Where(cell => string.Equals(cell.Name, column.Name, StringComparison.Ordinal)).ToArray() switch
+            {
+                { Length: 1 } match => match[0].Element,
+                _ => throw new AutomationException("GRID_COLUMNS_INVALID",
+                    "Không ánh xạ được ô native cho cột " + column.Name)
+            };
+        }
         var values = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
         var sources = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
         foreach (var row in shownRows)
         {
             token.ThrowIfCancellationRequested();
-            var cells = Snapshots(row.Element, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
-                    identity!.ProcessId, enabled: false, onscreen: false))
-                .Select(item => item.Element).ToArray();
+            var cells = RowCells(row.Row.Element);
             var rowValues = new Dictionary<string, string>(StringComparer.Ordinal);
             var rowSources = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var column in headers)
             {
-                var visible = cells.Select(cell => (Cell: cell, Bounds: cell.BoundingRectangle))
-                    .Where(item => item.Bounds.Width > 0 && item.Bounds.Height > 0)
-                    .Select(item => (item.Cell, Overlap: HorizontalOverlap(item.Bounds.X, item.Bounds.Right,
-                        column.Left, column.Right)))
-                    .Where(item => item.Overlap > 0)
-                    .OrderByDescending(item => item.Overlap).FirstOrDefault().Cell;
-                var target = visible ?? cells.Where(cell => string.Equals(cell.Properties.Name.ValueOrDefault,
-                    column.Name, StringComparison.Ordinal)).ToArray() switch
+                for (var attempt = 0; ; attempt++)
                 {
-                    { Length: 1 } match => match[0],
-                    _ => throw new AutomationException("GRID_COLUMNS_INVALID",
-                        "Không ánh xạ được ô native cho cột " + column.Name)
-                };
-                var text = ReadCustomCellText(target, column.Name);
-                rowValues[column.Name] = text.Value;
-                rowSources[column.Name] = text.Source + "+UIA3.CustomGrid.DataItem";
+                    try
+                    {
+                        var text = ReadCustomCellText(MapCell(cells, column), column.Name);
+                        rowValues[column.Name] = text.Value;
+                        rowSources[column.Name] = text.Source + "+UIA3.CustomGrid.DataItem";
+                        break;
+                    }
+                    catch (Exception error) when (Vanished(error) && attempt < 3)
+                    {
+                        // Only reads happen here, so reading again from the row resolved anew by ordinal is safe.
+                        token.ThrowIfCancellationRequested();
+                        var fresh = CompleteRows().Single(item => item.Ordinal == row.Ordinal).Row;
+                        if (!fresh.HasArea)
+                            throw new AutomationException("GRID_CHANGED", "Dòng native bị ẩn trong khi đọc.");
+                        cells = RowCells(fresh.Element);
+                    }
+                    catch (Exception error) when (Vanished(error))
+                    {
+                        throw new AutomationException("NATIVE_ELEMENT_UNAVAILABLE",
+                            $"Ô lưới MISA biến mất khi đọc (dòng {row.Ordinal + 1}, cột {column.Name}); cần đọc lại.", false, error);
+                    }
+                }
             }
             values.Add(rowValues);
             sources.Add(rowSources);
