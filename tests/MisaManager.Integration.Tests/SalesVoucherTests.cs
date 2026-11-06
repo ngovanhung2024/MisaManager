@@ -770,6 +770,41 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
     }, new FakeScenario(GridShadowOverlayOnTaxTab: true, GridFooterOutside: true));
 
+    // HĐ 81 on the VPS (0.2.166): every step began by activating MISA's main window, which deactivated the owned voucher
+    // window (focus at failure: grdList of the Bán hàng list). Its "Thuế" grid then exposed only cell-less ordinal rows and
+    // every reconcile pass failed ("Không ánh xạ được ô native cho cột Mã hàng"). Editor steps keep the voucher active.
+    [Fact]
+    public Task ThuếGridIsReadWithTheVoucherWindowKeptActive() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1090", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
+    }, new FakeScenario(GridCelllessWhileEditorInactive: true));
+
+    // Same grid, but the user clicks MISA's main window during reconcile: the next pass activates the voucher again.
+    [Fact]
+    public Task ThuếGridIsReadAgainAfterTheUserDeactivatesTheVoucher() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1091", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(["HH_06", "HH_07"], Assert.Single(misa.State().Vouchers).Lines.Select(line => line.Code));
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("voucher window inactive", events, StringComparison.Ordinal);
+        Assert.Contains("voucher window active: Thuế grid exposes its cells again", events, StringComparison.Ordinal);
+    }, new FakeScenario(GridCelllessWhileEditorInactive: true, MainActivatedOnFirstTaxAmountRead: true));
+
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {

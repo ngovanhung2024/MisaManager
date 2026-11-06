@@ -78,6 +78,11 @@ public sealed class FakeGrid : Border
     /// and the visible rows carry ids that are not the ordinal ("r0", "r1", …).
     /// </summary>
     public bool ShadowOverlay { get; set; }
+    /// <summary>
+    /// R20 on the VPS (0.2.166): the visible rows leave the UIA tree and only enabled, cell-less ordinal rows remain over
+    /// them (<see cref="HideRowsFromUia"/>).
+    /// </summary>
+    public bool RowsHidden { get; private set; }
     public bool FooterOutside { get; }
     public Border FooterBar { get; }
     /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
@@ -94,6 +99,19 @@ public sealed class FakeGrid : Border
         UpdateLayout();
         UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
     }
+
+    public void HideRowsFromUia(bool hidden)
+    {
+        if (RowsHidden == hidden) return;
+        RowsHidden = hidden;
+        BuildShadow();
+        UpdateLayout();
+        UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
+    }
+
+    public event EventHandler? TaxAmountRead;
+    internal void RaiseTaxAmountRead() => TaxAmountRead?.Invoke(this, EventArgs.Empty);
+
     public int FooterCountOffset { get; set; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
@@ -156,8 +174,14 @@ public sealed class FakeGrid : Border
         if (ShowInsertionRow) AddRow(null);
         foreach (var row in rows) row.Load(source, force: true);
         footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
-        shadow.Build(ShadowBand || ShadowOverlay ? source.RowCount : 0, columns,
-            ShadowOverlay ? index => rows.FirstOrDefault(row => row.Index == index) : null);
+        BuildShadow();
+    }
+
+    private void BuildShadow()
+    {
+        var overlay = ShadowOverlay || RowsHidden;
+        shadow.Build(ShadowBand || overlay ? source?.RowCount ?? 0 : 0, columns,
+            overlay ? index => rows.FirstOrDefault(row => row.Index == index) : null, enabled: RowsHidden);
     }
 
     private void AddRow(int? index)
@@ -201,8 +225,9 @@ public sealed class FakeGrid : Border
                 if (UIElementAutomationPeer.CreatePeerForElement(header) is { } peer) children.Add(peer);
             if (owner.shadow.Count > 0 && UIElementAutomationPeer.CreatePeerForElement(owner.shadow) is { } shadowPeer)
                 children.Add(shadowPeer);
-            foreach (var row in owner.Rows)
-                if (UIElementAutomationPeer.CreatePeerForElement(row) is { } peer) children.Add(peer);
+            if (!owner.RowsHidden)
+                foreach (var row in owner.Rows)
+                    if (UIElementAutomationPeer.CreatePeerForElement(row) is { } peer) children.Add(peer);
             if (!owner.FooterOutside && UIElementAutomationPeer.CreatePeerForElement(owner.Footer) is { } footerPeer) children.Add(footerPeer);
             return children;
         }
@@ -215,7 +240,7 @@ internal sealed class ShadowRegion : StackPanel
     public int Count { get; private set; }
 
     /// <param name="overlay">When set, row i reports the bounds of that visible row and has no cells.</param>
-    public void Build(int count, IReadOnlyList<GridColumn> columns, Func<int, UIElement?>? overlay = null)
+    public void Build(int count, IReadOnlyList<GridColumn> columns, Func<int, UIElement?>? overlay = null, bool enabled = false)
     {
         Children.Clear();
         Count = count;
@@ -223,7 +248,7 @@ internal sealed class ShadowRegion : StackPanel
         for (var index = 0; index < count; index++)
         {
             var ordinal = index;
-            var row = new ShadowRow { Orientation = Orientation.Horizontal, Height = 2, Width = 300, IsEnabled = false,
+            var row = new ShadowRow { Orientation = Orientation.Horizontal, Height = 2, Width = 300, IsEnabled = enabled,
                 HorizontalAlignment = HorizontalAlignment.Left, Over = overlay is null ? null : () => overlay(ordinal) };
             AutomationProperties.SetAutomationId(row, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (overlay is null)
@@ -415,6 +440,7 @@ internal sealed class GridRow : StackPanel
                 ThrowIfStale();
                 if (grid.CellsUnavailable) throw new ElementNotAvailableException();
                 var value = Cell.Text;
+                if (row.Index is not null && Equals(Cell.Tag, "tax_amount")) grid.RaiseTaxAmountRead();
                 if (grid.RecreateCellsOnRead && row.Index is not null && Equals(Cell.Tag, "tax_amount")) grid.RecreateRows();
                 return value;
             }

@@ -248,6 +248,12 @@ public sealed partial class AppServices : IAsyncDisposable
             return new(requestId, status, message, result.Context.Snapshot.InputMayHaveBeenSent, data);
         }
         catch (OperationCanceledException) { throw; }
+        catch (Exception error) when (WorkflowRunner.RefusedBeforeStart(error)
+            && (Workflow.Current is not { } current || WorkflowRunner.IsTerminal(current.Snapshot.Status)))
+        {
+            return new(requestId, OperationStatuses.Blocked, "Chưa nhập hóa đơn này vào MISA: " + error.Message, false,
+                error.ToString(), RefusedBeforeStart: true);
+        }
         catch (Exception error)
         {
             return new(requestId, OperationStatuses.Blocked, "Không thể bắt đầu nhập hóa đơn: " + error.Message, false, error.ToString());

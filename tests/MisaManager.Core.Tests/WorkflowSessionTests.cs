@@ -137,17 +137,30 @@ public sealed class WorkflowSessionTests
         Assert.Equal(proof, journal.Snapshot.Status);
     }
 
-    [Fact]
-    public async Task SameUncertainInvoiceCannotBeReplayedInAnotherMisaSession()
+    // "Tạm dừng" (Paused) is the user's case: a run stopped in an earlier MISA session. The refusal sends nothing, so a
+    // batch may skip the invoice and go on instead of stopping.
+    [Theory]
+    [InlineData(WorkflowStatus.SaveUncertain)]
+    [InlineData(WorkflowStatus.Paused)]
+    public async Task SameUncertainInvoiceCannotBeReplayedInAnotherMisaSession(WorkflowStatus status)
     {
         using var directory = new TempDirectory();
-        var (runner, _, native, old) = await SeedAsync(directory, WorkflowStatus.SaveUncertain);
+        var (runner, _, native, old) = await SeedAsync(directory, status);
         await runner.AbandonStoppedSessionAsync(Token);
 
-        await Assert.ThrowsAsync<AutomationException>(() => runner.StartAsync(old.Invoice, old.CompanyIdentity, "other-window", Token));
+        var error = await Assert.ThrowsAsync<AutomationException>(() => runner.StartAsync(old.Invoice, old.CompanyIdentity, "other-window", Token));
 
         Assert.Empty(native.Actions);
         Assert.Null(runner.Current);
+        Assert.True(WorkflowRunner.RefusedBeforeStart(error));
+    }
+
+    [Fact]
+    public void OnlyARefusalWithoutInputLetsABatchSkipTheInvoice()
+    {
+        Assert.False(WorkflowRunner.RefusedBeforeStart(new AutomationException("DETACHED_INVOICE_UNCERTAIN", "x", inputMayHaveBeenSent: true)));
+        Assert.False(WorkflowRunner.RefusedBeforeStart(new AutomationException("EXISTING_EDITOR", "x")));
+        Assert.False(WorkflowRunner.RefusedBeforeStart(new InvalidOperationException("Hóa đơn 81 của lần chạy trước chưa xác định được kết quả")));
     }
 
     private static async Task<(WorkflowRunner Runner, JsonStateStore Store, Native Native, WorkflowContext Old)> SeedAsync(

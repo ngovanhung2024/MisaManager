@@ -34,6 +34,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly bool purchase;
     private readonly Scenario scenario;
     private bool gridWentUnavailable;
+    private bool mainActivatedOnce;
     private readonly FakeStore store;
     private readonly MainWindow main;
     private readonly List<LineModel> lines = [];
@@ -161,6 +162,15 @@ public sealed class VoucherWindow : Window, IGridSource
         grid.CellCommitted += OnCellCommitted;
         grid.QuickAddRequested += (_, row) => QuickAddItem(row);
         grid.QuickSearchRequested += (_, _) => new ItemLookupWindow(profile, store) { Owner = main }.ShowDialog();
+        Activated += (_, _) => UpdateInactiveGrid();
+        Deactivated += (_, _) => UpdateInactiveGrid();
+        grid.TaxAmountRead += (_, _) =>
+        {
+            if (!scenario.MainActivatedOnFirstTaxAmountRead || mainActivatedOnce) return;
+            mainActivatedOnce = true;
+            FakeLog.Write("user activates the main window after the first Tiền thuế GTGT read");
+            Dispatcher.BeginInvoke(() => main.Activate());
+        };
         if (scenario.GridFooterOutside)
         {
             // Footer drawn over the grid's bottom edge, a UIA sibling of the grid (not its descendant).
@@ -209,11 +219,21 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void BindLayout() => grid.Bind(detailTabs.SelectedIndex == 1 ? taxLayout : itemLayout, this);
 
+    private void UpdateInactiveGrid()
+    {
+        var hidden = scenario.GridCelllessWhileEditorInactive && !IsActive && detailTabs.SelectedIndex == 1;
+        if (hidden == grid.RowsHidden) return;
+        FakeLog.Write(hidden ? "voucher window inactive: Thuế grid exposes cell-less ordinal rows only"
+            : "voucher window active: Thuế grid exposes its cells again");
+        grid.HideRowsFromUia(hidden);
+    }
+
     private void OnDetailTabChanged()
     {
         grid.ShadowBand = scenario.GridShadowBandOnTaxTab && detailTabs.SelectedIndex == 1;
         grid.ShadowOverlay = scenario.GridShadowOverlayOnTaxTab && detailTabs.SelectedIndex == 1;
         BindLayout();
+        UpdateInactiveGrid();
         if (detailTabs.SelectedIndex == 1 && scenario.GridCellsRecreatedOnReadAfterTaxTab && !grid.RecreateCellsOnRead)
         {
             grid.RecreateCellsOnRead = true;

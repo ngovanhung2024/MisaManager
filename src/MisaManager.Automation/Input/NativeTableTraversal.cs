@@ -399,7 +399,8 @@ public sealed partial class NativeInputService
                 + string.Join(", ", headers.Select(column => $"{column.Name}[{column.Left:0}-{column.Right:0}]"))
                 + $". {candidates.Length} dòng ứng viên: " + Clip(string.Join(" | ", tried), 1200)
                 + $". DataItem trong lưới ({gridRows.Length}): " + Clip(string.Join(", ", gridRows.Take(8).Select(item =>
-                    $"#{item.AutomationId} {(item.Enabled ? "bật" : "tắt")} [{item.Bounds.X},{item.Bounds.Y} {item.Bounds.Width}x{item.Bounds.Height}]")), 600));
+                    $"#{item.AutomationId} {(item.Enabled ? "bật" : "tắt")} [{item.Bounds.X},{item.Bounds.Y} {item.Bounds.Width}x{item.Bounds.Height}]")), 600)
+                + ". Cửa sổ chứng từ " + ScopeActivation());
         }
         var values = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
         var sources = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);

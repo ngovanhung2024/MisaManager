@@ -21,6 +21,9 @@ internal static class NativeKeyboard
         }
     }
 
+    internal static bool IsForegroundRoot(nint handle)
+        => handle != nint.Zero && (nint)PInvoke.GetAncestor((HWND)handle, GET_ANCESTOR_FLAGS.GA_ROOT) == (nint)PInvoke.GetForegroundWindow();
+
     private static void ActivateOnce(nint targetHandle, nint windowHandle, int processId)
     {
         var root = InputRoot(targetHandle, windowHandle, processId);

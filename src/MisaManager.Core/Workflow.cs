@@ -790,6 +790,13 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     public const string ErrorDiscardedOutcome = "error_discarded";
 
     /// <summary>
+    /// The start was refused for this invoice alone, before any run existed: an earlier run of the same invoice is still
+    /// unresolved in history (e.g. "Tạm dừng" in another MISA session). Nothing was sent to MISA, so a batch skips it.
+    /// </summary>
+    public static bool RefusedBeforeStart(Exception error)
+        => error is AutomationException { Code: "DETACHED_INVOICE_UNCERTAIN", InputMayHaveBeenSent: false };
+
+    /// <summary>
     /// Bỏ the voucher of a failed attempt so the batch can go on with the next invoice. The gateway proves the voucher
     /// is unsaved before Bỏ (a save in doubt needs fresh register absence). The Discarded run keeps the original error;
     /// on failure a save in doubt stays SaveUncertain so the invoice can never be entered twice.

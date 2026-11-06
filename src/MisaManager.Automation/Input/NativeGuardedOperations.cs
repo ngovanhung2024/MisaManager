@@ -54,6 +54,22 @@ public sealed partial class NativeInputService
             return frame;
         }, token);
 
+    // R20 can show the voucher as a window owned by MISA's main window. Its grid must be read while that window is active:
+    // inactive, its "Thuế" grid exposed rows without cells (VPS 0.2.166, HĐ 81). Sends nothing when it is already in front.
+    public Task<NativeFrame> ActivateWorkflowScopeAsync(NativeFrame frame, CancellationToken token)
+        => dispatcher.RunAsync(() =>
+        {
+            GuardWorkflow(frame, forInput: true);
+            NativeKeyboard.Activate(KeyboardHandle(root!), identity!.WindowHandle, identity.ProcessId, token);
+            return Capture();
+        }, token);
+
+    private string ScopeActivation()
+    {
+        try { return NativeKeyboard.IsForegroundRoot(KeyboardHandle(root!)) ? "đang active" : "không active"; }
+        catch (Exception error) when (error is AutomationException or COMException || Vanished(error)) { return "không rõ"; }
+    }
+
     private AutomationElement[] WorkflowScopes(WindowIdentity window, string scopeId)
     {
         RecordQuery(false);

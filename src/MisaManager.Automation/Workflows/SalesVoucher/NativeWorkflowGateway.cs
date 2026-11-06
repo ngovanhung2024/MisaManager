@@ -262,7 +262,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             Use(context.Invoice);
             var stale = transition.Action == WorkflowRunner.ResolveStaleAction;
             var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction),
-                anyProfileRevision: stale);
+                anyProfileRevision: stale,
+                editor: transition.To is not (WorkflowStatus.PreflightPassed or WorkflowStatus.SalesSurface or WorkflowStatus.VoucherCreated));
             ValidateDocument(context);
             stopPointsEnabled = transition.Action != "verify_only"
                 && transition.To is >= WorkflowStatus.CustomerVerified and <= WorkflowStatus.AwaitingSave;
@@ -1096,6 +1097,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
 
     private async Task<ReconciliationResult> ReadReconciliationPassAsync(WorkflowContext context, CancellationToken token)
     {
+        // A click elsewhere (MISA's list, this tool) leaves the voucher inactive and its grid unreadable on R20: each pass,
+        // including the retries of a failed one, reads from an active voucher window. Best effort: the read decides.
+        try { await input.ActivateWorkflowScopeAsync(await input.CaptureAsync(token), token); }
+        catch (AutomationException error) when (error.Code is "FOCUS_FAILED" or "KEY_TARGET_INVALID")
+        {
+            Trace.TraceInformation("Không đưa được chứng từ lên trước khi đối chiếu: " + error.Message);
+        }
         var values = new List<ValueComparison>();
         async Task<NativeFrame> CompareFields(string tab, params (string Key, string Expected, NativeValueKind Kind)[] fields)
         {
@@ -1543,8 +1551,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private async Task<NativeFrame> BindEditor(WorkflowContext context, CancellationToken token)
     {
         ValidateDocument(context);
-        return await input.TryBindWorkflowScopeAsync(BindTarget(context), profile.EditorId, null, token)
+        var frame = await input.TryBindWorkflowScopeAsync(BindTarget(context, editor: true), profile.EditorId, null, token)
             ?? throw new AutomationException("EDITOR_NOT_FOUND", "Không có editor chứng từ đã chọn.");
+        return await input.ActivateWorkflowScopeAsync(frame, token);
     }
     private async Task<NativeFrame> BindSales(WorkflowContext context, CancellationToken token, bool activate = true)
         => await input.TryBindWorkflowScopeAsync(BindTarget(context, activate), profile.SalesScopeId, null, token)
@@ -1579,15 +1588,18 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private async Task<NativeFrame?> WaitEditor(WorkflowContext context, bool visible, CancellationToken token)
     {
         if (visible)
-            return await NativeWait.UntilAsync(() => input.TryBindWorkflowScopeAsync(BindTarget(context), profile.EditorId, null, token, waitForEnabled: true),
+        {
+            var editor = await NativeWait.UntilAsync(() => input.TryBindWorkflowScopeAsync(BindTarget(context, editor: true), profile.EditorId, null, token, waitForEnabled: true),
                 frame => frame is not null, "EDITOR_NOT_FOUND", "Editor chưa sẵn sàng.", token, timeoutMilliseconds: 60000);
+            return await input.ActivateWorkflowScopeAsync(editor!, token);
+        }
         await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(BindTarget(context), profile.EditorId, token),
             exists => !exists, "EDITOR_STILL_OPEN", "Editor chưa đóng; cần kiểm tra Cất/Bỏ.", token, timeoutMilliseconds: 15000);
         return null;
     }
     // resolve_stale only reads the sales register with the current profile, so a checkpoint left by an older
     // profile revision can still be settled; any step that types or reads the editor keeps the revision guard.
-    private WindowIdentity BindTarget(WorkflowContext context, bool activate = true, bool anyProfileRevision = false)
+    private WindowIdentity BindTarget(WorkflowContext context, bool activate = true, bool anyProfileRevision = false, bool editor = false)
     {
         if (!anyProfileRevision && context.ProfileRevision != profile.Revision)
             throw new AutomationException("PROFILE_REVISION_CHANGED", "Checkpoint thuộc profile khác; cần đối chiếu và migration explicit trước khi nhập.");
@@ -1604,7 +1616,12 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             || !window.Title.StartsWith(profile.VersionTitle + " - ", StringComparison.Ordinal))
             throw new AutomationException("WINDOW_IDENTITY_CHANGED",
                 "Phiên MISA đã thay đổi (MISA mở lại, đổi dữ liệu hoặc đang ở màn hình đăng nhập). Đăng nhập/mở đúng dữ liệu rồi bấm Kết nối lại.");
-        return activate ? windows.Focus((nint)handle, pid) : window;
+        if (!activate) return window;
+        if (!editor) return windows.Focus((nint)handle, pid);
+        // Activating the main window deactivates R20's owned voucher window (focus moved to the Bán hàng list), whose grid
+        // then exposed rows without cells (VPS 0.2.166, HĐ 81). Editor steps only restore MISA and activate the voucher itself.
+        MisaWindowDiscovery.RestoreIfMinimized((nint)handle);
+        return windows.Bind((nint)handle, pid);
     }
     private Task<Readback> Field(string key, CancellationToken token)
         => Steady(async () => await input.ReadFieldAsync(await input.CaptureAsync(token), profile.Fields[key], token), token);

@@ -520,7 +520,10 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     && services.Workflow.LastLiveRun is { MisaClean: true } skippedRun
                     && skippedRun.Context.Invoice.Fingerprint == fingerprint && RunOutcome.IsUnfinished(skippedRun.Context.Snapshot);
                 // Invoice errors are kept in Hiệu năng (Copy lỗi) instead of a popup; the batch moves on whenever MISA is clean.
-                var cleanFailure = response.Status != "completed" && !unfinished && failed && lastLive is { MisaClean: true };
+                // A start refused for this invoice alone (an earlier run still unresolved, e.g. "Tạm dừng" in another MISA
+                // session) touched nothing in MISA either.
+                var cleanFailure = response.Status != "completed" && !unfinished && failed
+                    && (lastLive is { MisaClean: true } || response.RefusedBeforeStart);
                 if (failed && !unfinished) RaiseError(response.Message, Serialize(response.Data), popup: false);
                 if (response.Status != "completed" && !unfinished && !cleanFailure) performanceOutcome = response.Status;
                 // Update history in memory instead of re-reading every run file from disk.

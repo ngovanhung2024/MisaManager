@@ -95,6 +95,14 @@ public sealed record Scenario
     /// not ordinals (VPS report 0.2.164, HĐ 81: "#0 bật [458,538 1003x23] … 0 ô").
     /// </summary>
     public bool GridShadowOverlayOnTaxTab { get; init; }
+    /// <summary>
+    /// R20 on the VPS (0.2.166, HĐ 81): while the voucher window is not the active window (the tool had activated MISA's
+    /// main window; focus sat on the Bán hàng list), its grid on "Thuế" exposes only the DataRowCount region's ordinal rows,
+    /// laid over the visible rows with no cells ("#0 bật [458,538 1003x23] … 0 ô"). Once active again it shows its cells.
+    /// </summary>
+    public bool GridCelllessWhileEditorInactive { get; init; }
+    /// <summary>The user clicks MISA's main window once, right after the first "Tiền thuế GTGT" read (only reconcile reads it).</summary>
+    public bool MainActivatedOnFirstTaxAmountRead { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

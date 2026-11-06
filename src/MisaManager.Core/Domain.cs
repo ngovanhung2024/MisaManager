@@ -215,7 +215,9 @@ public sealed record OperationResult(
     string Status,
     string Message,
     bool InputMayHaveBeenSent = false,
-    object? Data = null);
+    object? Data = null,
+    // Refused before a run started (WorkflowRunner.RefusedBeforeStart): nothing reached MISA, a batch moves on.
+    bool RefusedBeforeStart = false);
 
 // A live run is an end-to-end business attempt.  It is deliberately separate
 // from checkpoint state so both a saved invoice and a verified discard remain
