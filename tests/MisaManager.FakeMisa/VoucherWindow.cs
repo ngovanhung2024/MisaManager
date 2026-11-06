@@ -33,6 +33,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly string screen;
     private readonly bool purchase;
     private readonly Scenario scenario;
+    private bool gridWentUnavailable;
     private readonly FakeStore store;
     private readonly MainWindow main;
     private readonly List<LineModel> lines = [];
@@ -148,7 +149,7 @@ public sealed class VoucherWindow : Window, IGridSource
         foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", "4. Thống kê", "5. Khác" })
             detailTabs.Items.Add(new TabItem { Header = caption });
         detailTabs.SelectedIndex = 0;
-        detailTabs.SelectionChanged += (_, e) => { if (e.Source == detailTabs) BindLayout(); };
+        detailTabs.SelectionChanged += (_, e) => { if (e.Source == detailTabs) OnDetailTabChanged(); };
         detailTabs.Margin = new Thickness(4, 4, 4, 0);
         DockPanel.SetDock(detailTabs, Dock.Top);
         root.Children.Add(detailTabs);
@@ -194,6 +195,15 @@ public sealed class VoucherWindow : Window, IGridSource
     }
 
     private void BindLayout() => grid.Bind(detailTabs.SelectedIndex == 1 ? taxLayout : itemLayout, this);
+
+    private void OnDetailTabChanged()
+    {
+        BindLayout();
+        if (detailTabs.SelectedIndex != 1 || scenario.GridUnavailableAfterTaxTabMilliseconds <= 0 || gridWentUnavailable) return;
+        gridWentUnavailable = true;
+        grid.CellsUnavailableUntil = DateTime.UtcNow.AddMilliseconds(scenario.GridUnavailableAfterTaxTabMilliseconds);
+        FakeLog.Write($"grid cells unavailable for {scenario.GridUnavailableAfterTaxTabMilliseconds} ms after Thuế tab");
+    }
 
     int IGridSource.RowCount => lines.Count;
 

@@ -17,9 +17,11 @@ internal static class NativeWait
 
     // Poll readback only. Never replay the action that started an asynchronous UI update.
     // The default leaves room for a slow MISA (server lookups, cold dialogs); callers pass less where speed matters.
+    // readFailureTimeoutMilliseconds: while the latest observation is a transient read failure (not a value),
+    // keep polling up to this long, so a nested wait that used up timeoutMilliseconds still gets a fresh pass.
     public static async Task<T> UntilAsync<T>(Func<Task<T>> observe, Func<T, bool> ready,
         string code, string message, CancellationToken token, int timeoutMilliseconds = 10000,
-        bool returnLastMismatch = false)
+        bool returnLastMismatch = false, int readFailureTimeoutMilliseconds = 0)
     {
         var started = Stopwatch.GetTimestamp();
         var delay = 20;
@@ -46,7 +48,8 @@ internal static class NativeWait
             {
                 pending = error.Message;
             }
-            var remaining = timeoutMilliseconds - Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            var limit = pending is null ? timeoutMilliseconds : Math.Max(timeoutMilliseconds, readFailureTimeoutMilliseconds);
+            var remaining = limit - Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (remaining <= 0)
             {
                 if (returnLastMismatch && hasLast && pending is null) return last!;

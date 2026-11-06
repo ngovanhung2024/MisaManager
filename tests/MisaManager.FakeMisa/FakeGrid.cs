@@ -62,6 +62,9 @@ public sealed class FakeGrid : Border
     }
 
     public bool ShowInsertionRow { get; set; }
+    /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
+    public DateTime CellsUnavailableUntil { get; set; }
+    internal bool CellsUnavailable => DateTime.UtcNow < CellsUnavailableUntil;
     public int FooterCountOffset { get; init; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
@@ -253,7 +256,7 @@ internal sealed class GridRow : StackPanel
 
     private TextBox CreateText(GridColumn column)
     {
-        var text = new TextBox
+        var text = new GridTextBox(grid)
         {
             IsReadOnly = column.Kind == CellKind.ReadOnly,
             BorderThickness = new Thickness(0, 0, 1, 1),
@@ -301,6 +304,25 @@ internal sealed class GridRow : StackPanel
     }
 
     protected override AutomationPeer OnCreateAutomationPeer() => new RowPeer(this);
+
+    private sealed class GridTextBox(FakeGrid grid) : TextBox
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new CellPeer(this, grid);
+    }
+
+    // Re-implements IValueProvider so a read can fail the way a vanished Infragistics cell does.
+    private sealed class CellPeer(TextBox cell, FakeGrid grid) : TextBoxAutomationPeer(cell), System.Windows.Automation.Provider.IValueProvider
+    {
+        private TextBox Cell => (TextBox)Owner;
+        bool System.Windows.Automation.Provider.IValueProvider.IsReadOnly => Cell.IsReadOnly;
+        string System.Windows.Automation.Provider.IValueProvider.Value
+            => grid.CellsUnavailable ? throw new ElementNotAvailableException() : Cell.Text;
+        void System.Windows.Automation.Provider.IValueProvider.SetValue(string value)
+        {
+            if (!IsEnabled() || Cell.IsReadOnly) throw new ElementNotEnabledException();
+            Cell.Text = value;
+        }
+    }
 
     private sealed class RowPeer(GridRow owner) : FrameworkElementAutomationPeer(owner)
     {

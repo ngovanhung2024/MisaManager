@@ -639,6 +639,25 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("Hộp tình trạng MST: bấm Có", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(TaxpayerStatusPrompt: true));
 
+    // HĐ 82 (0.2.159): after the switch to "Thuế" R20's grid answered "element not available" longer than one table
+    // settle (10 s), which used the whole reconcile wait: RECONCILIATION_PENDING and Bỏ. A failed read is not a
+    // mismatch, so reconcile re-reads freshly (tab, frame, grid) and saves once MISA answers again.
+    [Fact]
+    public Task GridUnavailableAfterTaxTabIsReadAgainBeforeReconcileGivesUp() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1083", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
+        Assert.Contains("grid cells unavailable for 11000 ms after Thuế tab", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(GridUnavailableAfterTaxTabMilliseconds: 11_000));
+
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {

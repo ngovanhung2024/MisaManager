@@ -46,7 +46,7 @@ public static class RunOutcome
         => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode is { Length: > 0 } code
             && code != ExistingCode && code != WorkflowRunner.StoppedByUserCode;
     public const string ErrorDiscardLabel = "Lỗi · đã bỏ chứng từ";
-    public const string ErrorDiscardOutcome = "Lỗi khi nhập; đã Bỏ chứng từ (không Cất). Copy lỗi ở tab Hiệu năng.";
+    public const string ErrorDiscardOutcome = "Lỗi khi nhập; đã Bỏ chứng từ (không Cất). Bấm Copy lỗi bên dưới để gửi cho AI.";
     /// <summary>Listed in the MISA sales export loaded by "Bỏ hóa đơn đã ghi sổ".</summary>
     public const string PostedLabel = "Đã ghi sổ";
 
@@ -352,8 +352,10 @@ public partial class MainWindow
     private void ShowProfileError(WorkflowContext? context)
     {
         var snapshot = context?.Snapshot;
+        // Batch errors end as Discarded (Bỏ, không Cất) but keep their error, so Copy lỗi must stay available here.
         var failed = snapshot is { Status: WorkflowStatus.Failed or WorkflowStatus.Blocked or WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain }
-            && !RunOutcome.IsExisting(snapshot);
+            && !RunOutcome.IsExisting(snapshot)
+            || snapshot is not null && RunOutcome.IsErrorDiscard(snapshot);
         profileErrorContext = failed ? context : null;
         ProfileErrorBox.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
         if (!failed) return;

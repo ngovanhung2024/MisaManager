@@ -1080,8 +1080,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             && last.ValueInputs == input.ValueInputSequence && DateTimeOffset.UtcNow - last.At < TimeSpan.FromSeconds(30))
             return last.Result;
         Entering("reconcile");
+        // One grid read may itself wait 10 s for the rows to settle; a pass that ends in a read failure (HĐ 82: element
+        // gone after the Thuế tab) gets fresh passes for longer, while a real mismatch is still reported after 10 s.
         var result = await NativeWait.UntilAsync(() => ReadReconciliationPassAsync(context, token), result => result.Matched,
-            "RECONCILIATION_PENDING", "MISA values have not settled.", token, returnLastMismatch: true);
+            "RECONCILIATION_PENDING", "MISA values have not settled.", token, returnLastMismatch: true,
+            readFailureTimeoutMilliseconds: 30000);
         lastReconciliation = (context.Snapshot.RunId, context.Invoice.Fingerprint, input.ValueInputSequence, DateTimeOffset.UtcNow, result);
         return result;
     }

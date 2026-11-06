@@ -70,6 +70,11 @@ public sealed record Scenario
     public decimal UnitPriceDrift { get; init; }
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
+    /// <summary>
+    /// After the detail tab first switches to "Thuế", grid cells answer UIA with "element not available" this long
+    /// (report 0.2.159, HĐ 82: RECONCILIATION_PENDING "Native element disappeared during readback").
+    /// </summary>
+    public int GridUnavailableAfterTaxTabMilliseconds { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";
