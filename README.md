@@ -86,6 +86,10 @@ CI (`.github/workflows/ci.yml`) chỉ chạy khi bấm **Actions → CI → Run 
    `scripts/release.ps1 -Stage -Installer` (build self-contained, health-check, MSI, ký số nếu có secret) rồi tạo GitHub
    Release dạng draft gồm `MisaManager-<version>.msi`, `SHA256SUMS.txt`, `release-manifest.json` và công bố khi đủ file.
    Workflow không chạy unit test hoặc integration test và không chờ CI.
+   PR vào `master` (cùng repo) chạy sẵn job này cho kết quả merge (squash), không phát hành, lưu artifact `prebuilt`.
+   Khi merge, `release.yml` chỉ công bố MSI đó nếu cây mã (`HEAD^{tree}`), version và trạng thái ký trùng khớp; PR build
+   còn đang chạy thì chờ tối đa 8 phút; mọi trường hợp khác build đầy đủ như cũ. Tag trỏ vào commit master; mã commit
+   ghi trong app là commit merge tạm của PR (cùng cây mã).
 2. Version là `<major>.<minor>.<số commit của master>`; `major.minor` lấy từ `Directory.Build.props`. Chạy tay
    **Actions → Release → Run workflow** để phát hành lại hoặc với version cụ thể (không chạy test).
    `scripts/publish-local.ps1 -Publish` (Windows có desktop) vẫn dùng được khi GitHub Actions không chạy được; không chạy

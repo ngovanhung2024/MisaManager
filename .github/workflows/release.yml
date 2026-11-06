@@ -3,8 +3,13 @@ name: Release
 # Every merge to master publishes a GitHub Release that the in-app updater installs.
 # Release only builds and packages; tests run separately on local or through manual CI.
 # Version = major.minor of Directory.Build.props + commit count of master.
+# Pull requests prebuild the MSI of their merge result; the master push publishes that MSI
+# without rebuilding when its tree and version match exactly, otherwise it builds as usual.
 on:
   push:
+    branches: [master]
+    paths-ignore: ["**/*.md", "licenses/**"]
+  pull_request:
     branches: [master]
     paths-ignore: ["**/*.md", "licenses/**"]
   workflow_dispatch:
@@ -15,10 +20,12 @@ on:
 
 permissions:
   contents: write
+  actions: read
+  pull-requests: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOTNET_NOLOGO: "true"
@@ -26,6 +33,8 @@ env:
 
 jobs:
   release:
+    # Fork PRs get no secrets and cannot produce a reusable build.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -38,12 +47,6 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-          cache: true
-          cache-dependency-path: "**/packages.lock.json"
-
       - name: Resolve version
         shell: pwsh
         run: |
@@ -51,7 +54,8 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($raw)) {
             $base = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
             $parts = ([Version]$base)
-            $count = [int](git rev-list --count HEAD)
+            # A PR checks out its merge commit; a squash merge adds one commit to the base.
+            $count = if ('${{ github.event_name }}' -eq 'pull_request') { [int](git rev-list --count HEAD^1) + 1 } else { [int](git rev-list --count HEAD) }
             $raw = "$($parts.Major).$($parts.Minor).$count"
           }
           $version = $raw.Trim().TrimStart('v', 'V')
@@ -62,7 +66,9 @@ jobs:
           # (and on manual/tag runs); otherwise it only re-checks an unchanged package layout.
           $validate = 'true'
           $before = '${{ github.event.before }}'
-          if ('${{ github.event_name }}' -eq 'push' -and '${{ github.ref_type }}' -eq 'branch' -and $before -match '^[0-9a-f]{40}$' -and $before -notmatch '^0+$') {
+          $compare = '${{ github.event_name }}' -eq 'push' -and '${{ github.ref_type }}' -eq 'branch'
+          if ('${{ github.event_name }}' -eq 'pull_request') { $before = (git rev-parse HEAD^1).Trim(); $compare = $true }
+          if ($compare -and $before -match '^[0-9a-f]{40}$' -and $before -notmatch '^0+$') {
             git cat-file -e "$before^{commit}" 2>$null
             if ($LASTEXITCODE -eq 0) {
               $changed = @(git diff --name-only $before HEAD -- installer scripts/release.ps1 scripts/payload-runtime.ps1 Directory.Build.props)
@@ -73,8 +79,57 @@ jobs:
           "VALIDATE_INSTALLER=$validate" >> $env:GITHUB_ENV
           Write-Host "Installer ICE validation: $validate"
 
+      - name: Reuse PR build
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Any mismatch or failure falls back to a full build; never fails the job.
+          try {
+            $repo = $env:GITHUB_REPOSITORY
+            $tree = (git rev-parse 'HEAD^{tree}').Trim()
+            $pr = @(gh api "repos/$repo/commits/$env:GITHUB_SHA/pulls" | ConvertFrom-Json) |
+              Where-Object { $_.merged_at -and $_.base.ref -eq '${{ github.ref_name }}' } | Select-Object -First 1
+            if (-not $pr) { throw 'no merged pull request for this commit' }
+            $runsUrl = "repos/$repo/actions/workflows/release.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=1"
+            # A merge right after the last push may find the PR build still running; waiting is shorter than rebuilding.
+            $deadline = [DateTime]::UtcNow.AddMinutes(8)
+            while ($true) {
+              $run = (gh api $runsUrl | ConvertFrom-Json).workflow_runs | Select-Object -First 1
+              if (-not $run) { throw "no PR build for $($pr.head.sha)" }
+              if ($run.status -eq 'completed') { break }
+              if ([DateTime]::UtcNow -gt $deadline) { throw "PR build $($run.id) still $($run.status)" }
+              Write-Host "Waiting for PR build $($run.id) ($($run.status))"
+              Start-Sleep -Seconds 10
+            }
+            if ($run.conclusion -ne 'success') { throw "PR build $($run.id) concluded $($run.conclusion)" }
+            gh run download $run.id -R $repo -n prebuilt -D prebuilt
+            if ($LASTEXITCODE -ne 0) { throw 'artifact download failed' }
+            $info = Get-Content prebuilt\build-info.json -Raw | ConvertFrom-Json
+            if ($info.tree -ne $tree) { throw "tree $($info.tree) differs from master $tree" }
+            if ($info.version -ne $env:VERSION) { throw "version $($info.version) differs from $env:VERSION" }
+            if (($info.signing -eq 'signed') -ne ($env:HAS_SIGNING -eq 'true')) { throw "signing $($info.signing) does not match this release" }
+            $msi = "prebuilt\dist\MisaManager-$env:VERSION.msi"
+            $hash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ((Get-Content prebuilt\dist\SHA256SUMS.txt -Raw).Trim() -ne "$hash  MisaManager-$env:VERSION.msi") { throw 'MSI hash mismatch' }
+            Move-Item prebuilt\dist dist
+            "PREBUILT=true" >> $env:GITHUB_ENV
+            Write-Host "Reusing MSI from PR #$($pr.number) build $($run.id) (commit $($info.commit), tree $tree)"
+          } catch {
+            Write-Host "Full build: $_"
+          }
+          $global:LASTEXITCODE = 0
+
+      - uses: actions/setup-dotnet@v4
+        if: env.PREBUILT != 'true'
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+
       - name: Import code-signing certificate
-        if: env.HAS_SIGNING == 'true' && env.PUBLISH == 'true'
+        if: env.HAS_SIGNING == 'true' && env.PREBUILT != 'true'
         shell: pwsh
         env:
           PFX_BASE64: ${{ secrets.CODE_SIGNING_PFX_BASE64 }}
@@ -91,6 +146,7 @@ jobs:
           "SIGNING_PFX=$pfx" >> $env:GITHUB_ENV
 
       - name: Build, publish and package MSI
+        if: env.PREBUILT != 'true'
         shell: pwsh
         env:
           MISAMANAGER_SIGNING_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
@@ -109,6 +165,10 @@ jobs:
           $hash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  MisaManager-$env:VERSION.msi" | Set-Content -Encoding ascii dist\SHA256SUMS.txt
           Get-AuthenticodeSignature $msi | Format-List Status, SignerCertificate
+          if ('${{ github.event_name }}' -eq 'pull_request') {
+            [ordered]@{ tree = (git rev-parse 'HEAD^{tree}').Trim(); commit = (git rev-parse HEAD).Trim(); version = $env:VERSION
+              signing = (Get-Content $manifest -Raw | ConvertFrom-Json).signing } | ConvertTo-Json | Set-Content -Encoding utf8 build-info.json
+          }
 
       - name: Publish GitHub Release
         if: env.PUBLISH == 'true'
@@ -129,6 +189,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: prebuilt
+          path: |
+            dist/**
+            build-info.json
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && env.PREBUILT != 'true'
         with:
           name: MisaManager-${{ env.VERSION }}
           path: dist/**
