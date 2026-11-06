@@ -431,6 +431,13 @@ public partial class MainWindow : Window
 
     private void AuditCatalog_Click(object sender, RoutedEventArgs e) => ShowCatalogAudit(onlyWhenFindings: false);
 
+    private void PreferredItems_Click(object sender, RoutedEventArgs e)
+    {
+        var catalog = ((App)Application.Current).Services.ItemCatalog;
+        if (PreferredItemPrompt.Edit(this, catalog))
+            StatusLabel.Text = $"Đã lưu {catalog.PreferredCodes().Count:N0} mã dùng khi trùng tên.";
+    }
+
     private void ShowCatalogAudit(bool onlyWhenFindings)
     {
         var services = ((App)Application.Current).Services;
@@ -439,7 +446,7 @@ public partial class MainWindow : Window
             if (!onlyWhenFindings) StatusLabel.Text = "Chưa nạp danh mục mã hàng để kiểm tra.";
             return;
         }
-        var findings = CatalogAudit.Items(services.ItemCatalog.Snapshot(), services.ItemGroups);
+        var findings = CatalogAudit.Items(services.ItemCatalog.Snapshot(), services.ItemGroups, services.ItemCatalog.PreferredCodes());
         if (findings.Count == 0 && onlyWhenFindings) return;
         var groups = services.ItemGroups.Count == 0 ? "Chưa nạp nhóm VTHH: mã hàng mới sẽ theo dạng HH_n.\n\n" : "";
         MessageBox.Show(this, groups + (findings.Count == 0 ? "Không phát hiện vấn đề trong danh mục mã hàng."

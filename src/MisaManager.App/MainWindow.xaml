@@ -177,6 +177,8 @@
                     ToolTip="Nạp danh sách nhóm VTHH xuất từ MISA (HH, DV, NVL…): mã hàng mới tool tạo bắt đầu bằng mã nhóm, ví dụ HH_337, DV_01"/>
           <MenuItem Header="Kiểm tra danh mục mã hàng" Click="AuditCatalog_Click"
                     ToolTip="Báo trước các mã trùng tên, mã sai quy tắc nhóm VTHH trong danh mục đã nạp"/>
+          <MenuItem Header="Chọn mã dùng khi trùng tên…" Click="PreferredItems_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Tên hàng trùng nhiều mã cùng ĐVT (ví dụ Phân kali = HH_03, HH_50): chọn mã tool sẽ dùng thay vì tạm hoãn hóa đơn"/>
           <MenuItem x:Name="AllowItemCreationItem" Header="Tự thêm mã hàng mới vào MISA" IsCheckable="True" Click="AllowItemCreation_Click"
                     IsEnabled="{Binding CanEditSource}"
                     ToolTip="Bật: mặt hàng chưa có trong danh mục được tool tạo mã mới (F9) trong MISA. Tắt: hóa đơn đó dừng trước khi nhập, ghi Chưa hoàn thành."/>

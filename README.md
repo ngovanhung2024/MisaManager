@@ -143,7 +143,10 @@ mới nhất từ MISA. Chỉ mã hàng đang chờ xác nhận Cất bắt đ�
 Khi danh mục có nhiều mã cùng ĐVT trùng tên hoặc gần trùng theo quy tắc trên (`Phân kali` = HH_03/HH_50,
 `FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`), hóa đơn có dòng không ghi mã dùng tên đó được đánh dấu
 **Tạm hoãn** ở tab Hóa đơn: không tick được, không nhập, không ghi lỗi; lý do hiện khi chọn hóa đơn. Ngừng theo dõi mã thừa
-trong MISA rồi nạp lại danh mục (hoặc ghi mã vào cột Mã hàng) thì hóa đơn tự mở lại.
+trong MISA rồi nạp lại danh mục (hoặc ghi mã vào cột Mã hàng) thì hóa đơn tự mở lại. Không muốn sửa MISA thì dùng
+**••• → Chọn mã dùng khi trùng tên**: mỗi nhóm chọn một mã (ví dụ Phân kali → HH_03, FUJI ONE → HH_203), tool dùng mã đó
+và hóa đơn mở lại ngay. Lựa chọn lưu trong `item-catalog.json` (`preferredCodes`), giữ khi nạp lại hoặc xóa danh mục; chọn
+hai mã trong cùng nhóm thì vẫn tạm hoãn.
 File hóa đơn có thể thêm cột **Mã hàng** (không bắt buộc): dòng có mã dùng thẳng mã đó, không tra theo tên — cách xử lý
 tên trùng nhiều mã (`ITEM_AMBIGUOUS`) hoặc khác ĐVT (`ITEM_UNIT_CONFLICT`).
 Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.

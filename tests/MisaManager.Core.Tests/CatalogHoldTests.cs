@@ -62,4 +62,35 @@ public sealed class CatalogHoldTests : IDisposable
         Assert.All(free, invoice => Assert.Empty(CatalogHold.Issues(invoice, catalog)));
         Assert.Empty(CatalogHold.Issues(new InvoiceBuilder().WithLines(line).Build(), Catalog()));
     }
+    [Fact]
+    public void ChosenCodeSettlesTheDuplicateAndSurvivesReload()
+    {
+        var path = temp.Combine("state", "item-catalog.json");
+        var catalog = Catalog(Duplicated);
+        catalog.SetPreferred(["HH_03", "hh_203"]);
+        InvoiceDocument Invoice(string name, string unit) => new InvoiceBuilder().WithLines(InvoiceBuilder.Line(0, name, unit, 1, 10_000m)).Build();
+
+        Assert.Empty(CatalogHold.Issues(Invoice("PHÂN KALI", "Kg"), catalog));
+        Assert.Empty(CatalogHold.Issues(Invoice("FUJI ONE 40EC 100CC PET", "Chai"), catalog));
+        Assert.Equal("HH_03", catalog.Find("Phân kali", "kg")?.Code);
+        Assert.Equal("HH_203", catalog.Find("FUJI ONE 40EC 100CC PET", "Chai")?.Code);
+        Assert.DoesNotContain(CatalogAudit.Items(Duplicated, new ItemGroupStore(temp.Combine("state", "groups.json")), catalog.PreferredCodes()),
+            finding => finding.Contains("trùng", StringComparison.Ordinal));
+
+        // A fresh catalog export replaces the rows but keeps the user's choice.
+        var reloaded = new ItemCatalogStore(path);
+        reloaded.Import(Duplicated, temp.Combine("export2.xlsx"));
+        Assert.Equal("HH_03", reloaded.Find("phân kali", "kg")?.Code);
+        Assert.Equal("HH_203", new ItemCatalogStore(path).Find("FUJI ONE 40EC-100CC PET", "Chai")?.Code);
+    }
+
+    [Fact]
+    public void TwoChosenCodesForOneNameStayAmbiguous()
+    {
+        var catalog = Catalog(Duplicated);
+        catalog.SetPreferred(["HH_03", "HH_50"]);
+
+        Assert.Single(CatalogHold.Issues(new InvoiceBuilder().WithLines(InvoiceBuilder.Line(0, "Phân kali", "kg", 1, 10_000m)).Build(), catalog));
+        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => catalog.Find("Phân kali", "kg")).Code);
+    }
 }

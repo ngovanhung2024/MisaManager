@@ -6,7 +6,15 @@ namespace MisaManager.Core;
 /// </summary>
 public static class CatalogAudit
 {
-    public static IReadOnlyList<string> Items(IReadOnlyList<ItemCatalogEntry> items, ItemGroupStore groups)
+    /// <summary>Codes sharing a name (by <see cref="ItemCatalogStore.ItemNameKey"/>) and primary unit.</summary>
+    public static IReadOnlyList<IReadOnlyList<ItemCatalogEntry>> DuplicateGroups(IReadOnlyList<ItemCatalogEntry> items)
+        => items.GroupBy(item => (Name: ItemCatalogStore.ItemNameKey(item.Name), Unit: ItemCatalogStore.NameKey(item.Unit)))
+            .Where(group => group.Key.Name.Length > 0 && group.Count() > 1)
+            .Select(group => (IReadOnlyList<ItemCatalogEntry>)group.ToArray()).ToArray();
+
+    /// <param name="preferred">Codes chosen with <see cref="ItemCatalogStore.SetPreferred"/>; a group with exactly one is settled.</param>
+    public static IReadOnlyList<string> Items(IReadOnlyList<ItemCatalogEntry> items, ItemGroupStore groups,
+        IReadOnlySet<string>? preferred = null)
     {
         var findings = new List<string>();
         static string List(IEnumerable<string> values, int take = 12)
@@ -22,11 +30,12 @@ public static class CatalogAudit
                 findings.Add($"{outside.Length} mã không bắt đầu bằng mã nhóm VTHH ({prefixes}): {List(outside)}. "
                     + "Tool vẫn dùng được các mã này; mã mới do tool tạo luôn theo nhóm.");
         }
-        const string hold = "Hóa đơn có mặt hàng này (không ghi mã) được tạm hoãn, không tick nhập được: ngừng theo dõi mã thừa trong MISA "
-            + "rồi nạp lại danh mục, hoặc ghi mã vào cột 'Mã hàng' của file Excel hóa đơn.";
-        foreach (var group in items.GroupBy(item => (Name: ItemCatalogStore.ItemNameKey(item.Name), Unit: ItemCatalogStore.NameKey(item.Unit)))
-                     .Where(group => group.Key.Name.Length > 0 && group.Count() > 1))
+        const string hold = "Hóa đơn có mặt hàng này (không ghi mã) được tạm hoãn, không tick nhập được: chọn mã dùng "
+            + "(••• → Chọn mã dùng khi trùng tên), ngừng theo dõi mã thừa trong MISA rồi nạp lại danh mục, hoặc ghi mã vào cột "
+            + "'Mã hàng' của file Excel hóa đơn.";
+        foreach (var group in DuplicateGroups(items))
         {
+            if (preferred is not null && group.Count(item => preferred.Contains(item.Code)) == 1) continue;
             var sameSpelling = group.Select(item => ItemCatalogStore.NameKey(item.Name)).Distinct(StringComparer.Ordinal).Count() == 1;
             findings.Add(sameSpelling
                 ? $"Trùng tên cùng ĐVT '{group.First().Unit}': '{group.First().Name}' = {List(group.Select(item => item.Code))}. " + hold

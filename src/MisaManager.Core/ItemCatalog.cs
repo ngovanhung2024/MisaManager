@@ -12,7 +12,8 @@ public sealed record PendingItemCreation(string Code, string Name, string Unit, 
 
 public sealed record ItemCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? SourceFile,
     IReadOnlyList<ItemCatalogEntry> Items, IReadOnlyList<PendingItemCreation>? Pending = null,
-    IReadOnlyList<string>? ImportedCodes = null, IReadOnlyList<string>? VerifiedCodes = null);
+    IReadOnlyList<string>? ImportedCodes = null, IReadOnlyList<string>? VerifiedCodes = null,
+    IReadOnlyList<string>? PreferredCodes = null);
 
 /// <summary>
 /// Local item-code database: MISA catalog export plus codes created by the tool.
@@ -27,6 +28,8 @@ public sealed partial class ItemCatalogStore
     private List<PendingItemCreation> pending = [];
     private HashSet<string>? importedCodes;
     private HashSet<string> verifiedCodes = new(StringComparer.OrdinalIgnoreCase);
+    // User's pick among codes sharing a name and unit; kept across catalog reloads and Clear.
+    private HashSet<string> preferredCodes = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, ItemCatalogEntry[]> byName = new(StringComparer.Ordinal);
 
     public ItemCatalogStore(string path)
@@ -40,6 +43,7 @@ public sealed partial class ItemCatalogStore
         pending = (file.Pending ?? []).Where(item => !string.IsNullOrWhiteSpace(item.Code)).ToList();
         importedCodes = file.ImportedCodes?.ToHashSet(StringComparer.OrdinalIgnoreCase);
         verifiedCodes = (file.VerifiedCodes ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        preferredCodes = (file.PreferredCodes ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Replace(file.Items);
     }
 
@@ -159,10 +163,12 @@ public sealed partial class ItemCatalogStore
         if (candidates.Length == 0) return LooseFind(name, unit, allowKgToTon);
         var sameUnit = SameUnit(candidates, unit, allowKgToTon);
         if (sameUnit.Length == 1) return sameUnit[0];
+        if (sameUnit.Length > 1 && Preferred(sameUnit) is { } chosen) return chosen;
         if (sameUnit.Length > 1)
             throw new AutomationException("ITEM_AMBIGUOUS",
                 $"Danh mục có {sameUnit.Length} mã cùng tên '{name}' và ĐVT '{unit}' ({string.Join(", ", sameUnit.Select(item => item.Code))}). "
-                + "Hãy ghi đúng mã vào cột 'Mã hàng' của file Excel hóa đơn hoặc giữ lại một mã trong danh mục rồi nạp lại.");
+                + "Hãy chọn mã dùng khi trùng tên (••• → Chọn mã dùng khi trùng tên), ghi đúng mã vào cột 'Mã hàng' của file Excel "
+                + "hóa đơn, hoặc giữ lại một mã trong danh mục rồi nạp lại.");
         // Old exports may omit the unit column; a single unit-less match is still the same item.
         if (candidates.Length == 1 && candidates[0].Unit.Length == 0 && candidates[0].ConversionUnit.Length == 0)
             return candidates[0];
@@ -174,12 +180,43 @@ public sealed partial class ItemCatalogStore
 
     /// <summary>
     /// Codes that share the name (by <see cref="ItemNameKey"/>, so near-duplicates such as "FUJI ONE 40EC 100CC PET" and
-    /// "FUJI ONE 40EC-100CC PET" count too) and the unit; empty unless there are at least two.
+    /// "FUJI ONE 40EC-100CC PET" count too) and the unit; empty unless there are at least two and the user has not
+    /// chosen exactly one of them (<see cref="SetPreferred"/>).
     /// </summary>
     public IReadOnlyList<ItemCatalogEntry> Duplicates(string name, string unit, bool allowKgToTon = false)
     {
         var sameUnit = SameUnit(Candidates(name), unit, allowKgToTon);
-        return sameUnit.Length > 1 ? sameUnit : [];
+        return sameUnit.Length > 1 && Preferred(sameUnit) is null ? sameUnit : [];
+    }
+
+    public IReadOnlySet<string> PreferredCodes()
+    {
+        lock (gate) return preferredCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Replaces the codes used when a name and unit match several catalog codes. A choice only applies when exactly one
+    /// code of the matching set is preferred, so two preferred codes for the same name stay ambiguous.
+    /// </summary>
+    public void SetPreferred(IEnumerable<string> codes)
+    {
+        var chosen = codes.Select(code => code.Trim()).Where(code => code.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        lock (gate)
+        {
+            if (chosen.SetEquals(preferredCodes)) return;
+            Transact(() => preferredCodes = chosen);
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private ItemCatalogEntry? Preferred(ItemCatalogEntry[] sameUnit)
+    {
+        lock (gate)
+        {
+            var chosen = sameUnit.Where(item => preferredCodes.Contains(item.Code)).DistinctBy(item => item.Code, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return chosen.Length == 1 ? chosen[0] : null;
+        }
     }
 
     /// <summary>
@@ -458,8 +495,8 @@ public sealed partial class ItemCatalogStore
     // leave a pending code recorded in memory but not on disk.
     private void Transact(Action change)
     {
-        var (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported, oldVerified) =
-            (items, byName, pending.ToList(), SourceFile, UpdatedAt, importedCodes, verifiedCodes);
+        var (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported, oldVerified, oldPreferred) =
+            (items, byName, pending.ToList(), SourceFile, UpdatedAt, importedCodes, verifiedCodes, preferredCodes);
         try
         {
             change();
@@ -467,8 +504,8 @@ public sealed partial class ItemCatalogStore
         }
         catch
         {
-            (items, byName, pending, SourceFile, UpdatedAt, importedCodes, verifiedCodes) =
-                (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported, oldVerified);
+            (items, byName, pending, SourceFile, UpdatedAt, importedCodes, verifiedCodes, preferredCodes) =
+                (oldItems, oldByName, oldPending, oldSource, oldUpdated, oldImported, oldVerified, oldPreferred);
             throw;
         }
     }
@@ -483,7 +520,8 @@ public sealed partial class ItemCatalogStore
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 JsonSerializer.Serialize(stream, new ItemCatalogFile(1, UpdatedAt.Value, SourceFile, items, pending,
-                    importedCodes?.Order(StringComparer.Ordinal).ToArray(), verifiedCodes.Order(StringComparer.Ordinal).ToArray()), Json);
+                    importedCodes?.Order(StringComparer.Ordinal).ToArray(), verifiedCodes.Order(StringComparer.Ordinal).ToArray(),
+                    preferredCodes.Order(StringComparer.Ordinal).ToArray()), Json);
                 stream.Flush(flushToDisk: true);
             }
             StateFiles.Commit(temporary, FilePath);
