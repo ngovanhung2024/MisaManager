@@ -220,3 +220,38 @@ public sealed class TaxPromptWindow : Window
 
     public bool Adjust { get; private set; }
 }
+
+/// <summary>R20's Cất warning that the buyer's MST may have stopped operating (HĐ 81, C26MLV); "Có" keeps saving.</summary>
+public sealed class TaxpayerStatusWindow : Window
+{
+    public TaxpayerStatusWindow(string taxCode)
+    {
+        Title = "MISA SME 2023";
+        Width = 600;
+        Height = 220;
+        ResizeMode = ResizeMode.NoResize;
+        ShowInTaskbar = false;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        this.IgnoreBareAlt();
+        // Real MISA splits the message into runs (red/bold), so the text arrives in pieces.
+        var parts = new StackPanel { Margin = new Thickness(8) };
+        foreach (var part in new[] { $"Doanh nghiệp mã số thuế <{taxCode}> có khả năng <NNT ngừng hoạt động nhưng chưa hoàn thành thủ tục chấm dứt hiệu lực MST>.",
+                     "Bạn nên kiểm tra lại tình", "trạng hoạt động mới nhất", "của doanh nghiệp trên web của Tổng cục thuế để đảm bảo tính đúng đắn.",
+                     "Bạn có muốn tiếp tục Cất không?" })
+            parts.Children.Add(new Label { Content = part, Padding = new Thickness(0) });
+        var yes = Ui.Button("Có", width: 80);
+        yes.Click += (_, _) => { FakeLog.Write("Hộp tình trạng MST: bấm Có"); Continue = true; Close(); };
+        var no = Ui.Button("Không", width: 80);
+        no.Click += (_, _) => { FakeLog.Write("Hộp tình trạng MST: bấm Không"); Close(); };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(8) };
+        buttons.Children.Add(yes);
+        buttons.Children.Add(no);
+        var root = new DockPanel();
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        root.Children.Add(buttons);
+        root.Children.Add(parts);
+        Content = root;
+    }
+
+    public bool Continue { get; private set; }
+}

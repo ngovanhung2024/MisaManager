@@ -324,6 +324,22 @@ public sealed class NativeComparisonTests
     public void OtherPromptsAreNotTaxPrompts(string message) => Assert.False(NativeComparison.IsTaxPrompt(message));
 
     [Theory]
+    [InlineData("Doanh nghiệp mã số thuế <3301493428> có khả năng <NNT ngừng hoạt động nhưng chưa hoàn thành thủ tục chấm dứt hiệu lực MST>. "
+        + "Bạn nên kiểm tra lại tình trạng hoạt động mới nhất của doanh nghiệp trên web của Tổng cục thuế để đảm bảo tính đúng đắn. Bạn có muốn tiếp tục Cất không?")]
+    [InlineData("Doanh nghiệp mã số thuế &lt;3301493428&gt; có khả năng ... Bạn nên kiểm tra lại tình trạng hoạt  động mới nhất ... Bạn có muốn tiếp tục Cất không?")]
+    public void TaxpayerStatusWarningIsRecognised(string message)
+    {
+        Assert.True(NativeComparison.IsTaxpayerStatusPrompt(message));
+        Assert.False(NativeComparison.IsTaxPrompt(message));
+    }
+
+    [Theory]
+    [InlineData(PerRatePrompt)]
+    [InlineData("Số hóa đơn đã tồn tại. Bạn có muốn tự động tăng số hóa đơn không?")]
+    [InlineData("Mã số thuế không hợp lệ. Bạn có muốn tiếp tục không?")]
+    public void OtherPromptsAreNotTaxpayerStatusWarnings(string message) => Assert.False(NativeComparison.IsTaxpayerStatusPrompt(message));
+
+    [Theory]
     [InlineData("156096", "156.096", true)]
     [InlineData("156096", "156.095", true)]
     [InlineData("156096", "156.097", true)]

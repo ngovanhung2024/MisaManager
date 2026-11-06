@@ -625,6 +625,36 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Empty(misa.State().Vouchers);
     }, new FakeScenario(LineErrorRow: 1));
 
+    // HĐ 81 (C26MLV): R20 warns the buyer's MST may have stopped operating and asks "tiếp tục Cất không?"; user: bấm Có.
+    [Fact]
+    public Task TaxpayerStatusWarningOnSaveIsAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1081", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Single(misa.State().Vouchers);
+        Assert.Contains("Hộp tình trạng MST: bấm Có", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(TaxpayerStatusPrompt: true));
+
+    [Fact]
+    public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1082", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(invoice.TaxTotal + 1, Assert.Single(misa.State().Vouchers).TaxTotal);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("Hộp tình trạng MST: bấm Có", log, StringComparison.Ordinal);
+        Assert.Contains("Hộp chênh lệch thuế: bấm Có", log, StringComparison.Ordinal);
+    }, new FakeScenario(TaxpayerStatusPrompt: true, TaxRoundingPrompt: true, TaxPromptAsLabel: true, TaxPromptPerRate: true));
+
     [Fact]
     public Task PerRateTaxPromptWithYesNoButtonsIsAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {

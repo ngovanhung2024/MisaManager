@@ -60,6 +60,19 @@ public static class NativeComparison
         return key.Contains(TaxPromptAmountKey, StringComparison.Ordinal) && key.Contains(TaxPromptDifferenceKey, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// MISA's Cất warning "Doanh nghiệp mã số thuế &lt;..&gt; có khả năng &lt;NNT ngừng hoạt động ...&gt;. Bạn nên kiểm tra lại tình
+    /// trạng hoạt động mới nhất ... Bạn có muốn tiếp tục Cất không?".
+    /// </summary>
+    public static bool IsTaxpayerStatusPrompt(string? message)
+    {
+        var key = TextKey.Compact(System.Net.WebUtility.HtmlDecode(message ?? ""));
+        return TaxpayerStatusKeys.All(part => key.Contains(part, StringComparison.Ordinal));
+    }
+
+    private static readonly string[] TaxpayerStatusKeys = [TextKey.Compact("mã số thuế"), TextKey.Compact("hoạt động"),
+        TextKey.Compact("tiếp tục Cất")];
+
     private static readonly string TaxPromptAmountKey = TextKey.Compact("tiền thuế");
     private static readonly string TaxPromptDifferenceKey = TextKey.Compact("chênh lệch");
 

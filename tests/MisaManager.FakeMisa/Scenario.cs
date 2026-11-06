@@ -20,6 +20,8 @@ public sealed record Scenario
     public int TaxPromptBusyMilliseconds { get; init; }
     /// <summary>The per-rate wording "Tiền thuế GTGT của từng loại thuế suất ... Chênh lệch &lt;d&gt;" with Yes/No buttons.</summary>
     public bool TaxPromptPerRate { get; init; }
+    /// <summary>On Cất, warns that the buyer's MST may have stopped operating and asks whether to keep saving.</summary>
+    public bool TaxpayerStatusPrompt { get; init; }
     /// <summary>Added to every computed line VAT, to simulate MISA rounding differently from the source.</summary>
     public decimal TaxOffset { get; init; }
     /// <summary>Item codes the new-item dialog refuses with "đã tồn tại" (created by another user meanwhile).</summary>

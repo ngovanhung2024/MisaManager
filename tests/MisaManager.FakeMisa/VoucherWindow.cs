@@ -570,6 +570,12 @@ public sealed class VoucherWindow : Window, IGridSource
             MessageBox.Show(this, purchase ? "Chưa có nhà cung cấp hoặc dòng hàng." : "Chưa có khách hàng hoặc dòng hàng.", Prompt, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+        if (scenario.TaxpayerStatusPrompt)
+        {
+            var warning = new TaxpayerStatusWindow(header["customer_tax"]) { Owner = this };
+            warning.ShowDialog();
+            if (!warning.Continue) return;
+        }
         if (scenario.TaxRoundingPrompt)
         {
             var source = lines.Sum(line => line.TaxAmount);

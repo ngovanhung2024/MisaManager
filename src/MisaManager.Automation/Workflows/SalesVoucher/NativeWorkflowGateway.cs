@@ -447,7 +447,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                                 taxPromptAnswered |= late.TaxAnswered;
                                 duplicate = late.Duplicate;
                                 if (duplicate is not null) break;
-                                if (!late.TaxAnswered || attempt > 0) throw;
+                                if (!late.AnyAnswered || attempt > 0) throw;
                             }
                         }
                         if (duplicate is not null)
@@ -1267,16 +1267,24 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
 
     /// <summary>
-    /// Cất can raise MISA's tax-difference prompt ("Có" for up to 2 đồng, else "Không") and then its duplicate-number
-    /// prompt (answered "No"). Polls for both until <paramref name="waitMilliseconds"/> passes without a prompt.
+    /// Cất can raise MISA's MST-status warning ("Có", keep saving), its tax-difference prompt ("Có" for up to 2 đồng, else
+    /// "Không") and then its duplicate-number prompt (answered "No"). Polls until <paramref name="waitMilliseconds"/> passes
+    /// without a prompt.
     /// </summary>
-    private async Task<(bool TaxAnswered, string? Duplicate)> AnswerSavePromptsAsync(nint editorHandle, int waitMilliseconds,
-        CancellationToken token)
+    private async Task<(bool TaxAnswered, string? Duplicate, bool AnyAnswered)> AnswerSavePromptsAsync(nint editorHandle,
+        int waitMilliseconds, CancellationToken token)
     {
         var taxAnswered = false;
+        var statusAnswered = false;
         var deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * waitMilliseconds / 1000;
         while (true)
         {
+            if (await input.AnswerTaxpayerStatusPromptAsync(editorHandle, token) is { } status)
+            {
+                statusAnswered = true;
+                Trace.TraceInformation("Taxpayer status prompt answered Có: " + status.Text);
+                deadline = Math.Max(deadline, Stopwatch.GetTimestamp() + Stopwatch.Frequency * 800 / 1000);
+            }
             if (await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is { } tax)
             {
                 taxAnswered = true;
@@ -1285,8 +1293,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 deadline = Math.Max(deadline, Stopwatch.GetTimestamp() + Stopwatch.Frequency * 800 / 1000);
             }
             if (await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 0, token) is { } duplicate)
-                return (taxAnswered, duplicate);
-            if (Stopwatch.GetTimestamp() >= deadline) return (taxAnswered, null);
+                return (taxAnswered, duplicate, true);
+            if (Stopwatch.GetTimestamp() >= deadline) return (taxAnswered, null, taxAnswered || statusAnswered);
             await Task.Delay(50, token);
         }
     }
@@ -1295,6 +1303,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         bool taxPromptAnswered = false, nint editorHandle = 0)
     {
         var window = BindTarget(context, activate: false);
+        if (afterSave) await input.AnswerTaxpayerStatusPromptAsync(editorHandle, token);
         if (afterSave && await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is not null) taxPromptAnswered = true;
         // R20 closes the editor itself only after a successful Save; an unsaved editor never closes silently.
         if (!await EditorExistsAsync(window, token))
@@ -1307,7 +1316,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // Saved proof without reading the sales list: "Bỏ ghi" appears, or the voucher turns read-only (Cất disabled).
         await NativeWait.UntilAsync(async () =>
             {
-                // A late tax-difference prompt keeps Cất enabled until it is answered.
+                // A late tax-difference or MST-status prompt keeps Cất enabled until it is answered.
+                if (afterSave && await input.AnswerTaxpayerStatusPromptAsync(editorHandle, token) is not null) return false;
                 if (afterSave && await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is not null)
                 {
                     taxPromptAnswered = true;
