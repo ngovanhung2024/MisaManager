@@ -1442,6 +1442,30 @@ public partial class MainWindow : Window
             parties.SupplierCount == 0 ? null : $"{parties.SupplierCount:N0} mã{FileSuffix(parties.SupplierSource)}");
         AllowItemCreationItem.IsChecked = services.AllowItemCreation;
         AllowPartyCreationItem.IsChecked = services.AllowPartyCreation;
+        AutoConsoleItem.IsChecked = services.AutoConsole;
+    }
+
+    private void AutoConsole_Click(object sender, RoutedEventArgs e)
+    {
+        var services = ((App)Application.Current).Services;
+        services.AutoConsole = AutoConsoleItem.IsChecked;
+        StatusLabel.Text = services.AutoConsole
+            ? "Đã bật: thu nhỏ/đóng Remote Desktop khi đang chạy thì tool tự chuyển phiên sang console của VPS và chạy tiếp (Remote Desktop bị ngắt, kết nối lại bình thường)."
+            : "Đã tắt tự chuyển sang console: thu nhỏ/đóng Remote Desktop thì tool chờ đến khi bạn mở lại.";
+    }
+
+    private void CopyClientRegistry_Click(object sender, RoutedEventArgs e)
+    {
+        try { Clipboard.SetText(DesktopSession.ClientRegistryCommand); }
+        catch (System.Runtime.InteropServices.ExternalException) { }
+        MessageBox.Show(this,
+            "Đã copy lệnh. Trên MÁY TÍNH CỦA BẠN (máy dùng để kết nối, không phải VPS):\n\n"
+            + "1. Mở cmd (Start → gõ cmd → Enter), dán lệnh (chuột phải) rồi Enter.\n"
+            + "2. Đóng Remote Desktop và kết nối lại VPS.\n\n"
+            + "Sau đó thu nhỏ cửa sổ Remote Desktop thì MISA vẫn nhận phím/chuột, tool chạy tiếp mà không bị ngắt kết nối. "
+            + "Áp dụng cho Remote Desktop Connection (mstsc) và các app dùng nó (RDCMan, mRemoteNG…).\n\n"
+            + DesktopSession.ClientRegistryCommand,
+            "Thu nhỏ Remote Desktop vẫn chạy", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void AllowItemCreation_Click(object sender, RoutedEventArgs e)

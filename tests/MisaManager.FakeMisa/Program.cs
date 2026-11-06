@@ -25,7 +25,8 @@ public static class Program
         var main = new MainWindow(profile, scenario, store);
         UserMouse.Install(scenario);
         if (scenario.SessionDisconnectedMilliseconds > 0)
-            main.ContentRendered += (_, _) => SessionDesktop.DisconnectFor(scenario.SessionDisconnectedMilliseconds);
+            main.ContentRendered += (_, _) => SessionDesktop.DisconnectFor(scenario.SessionDisconnectedMilliseconds,
+                Option("--state") is { } state ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(state))!, "console.flag") : null);
         if (scenario.ShowLoginWindow)
             new Window { Title = "MISA SME 2023", Width = 420, Height = 260, Left = 40, Top = 40, Content = "Mở dữ liệu kế toán" }.Show();
         return app.Run(main);

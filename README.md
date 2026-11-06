@@ -298,11 +298,17 @@ SendInput. Khi đó tool báo `SESSION_NOT_INTERACTIVE`, **không gửi input n�
 tiếp đúng bước đang dở (bấm Dừng ngay để thôi chờ). Chỉ chờ khi bước đó chưa gửi giá trị nào vào MISA; input có thể đã gửi
 thì vẫn dừng ở InputUncertain/SaveUncertain như cũ.
 
-Để treo tool mà vẫn tắt kết nối:
-- Dùng **••• → Ngắt Remote Desktop, giữ MISA chạy** thay cho nút X. Tool chạy `tscon <session> /dest:console` (cần quyền
-  Administrator): kết nối RDP đóng, phiên chuyển sang console của VPS, không bị khóa. Kết nối lại bình thường khi cần xem.
-- Muốn thu nhỏ cửa sổ Remote Desktop: trên **máy của bạn** (không phải VPS) đặt DWORD
-  `HKCU\Software\Microsoft\Terminal Server Client\RemoteDesktop_SuppressWhenMinimized = 2` rồi kết nối lại.
+Thu nhỏ cửa sổ Remote Desktop làm client gửi "suppress output": Windows trên VPS vẫn báo phiên Active nhưng bỏ qua
+SendInput và không cho đổi foreground. Không có API phát hiện trực tiếp; trong phiên Remote Desktop, kích hoạt MISA thất bại
+liên tục (10 lần) được coi là trường hợp này. Cách ẩn VPS mà tool vẫn chạy (menu **••• → VPS / Remote Desktop**):
+- **Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop** (bật mặc định, lưu trong `auto-create.txt` là `console=on|off`):
+  đang chạy mà Remote Desktop bị thu nhỏ/ẩn/đóng thì tool tự chạy `tscon <session> /dest:console` (app chạy quyền
+  Administrator nên không hỏi UAC; tối đa 1 lần/20 giây) rồi chạy tiếp. Remote Desktop trên máy người dùng bị ngắt; kết nối
+  lại bình thường. Console của VPS không khóa; độ phân giải có thể đổi theo console.
+- **Ngắt Remote Desktop ngay, giữ MISA chạy**: như trên nhưng làm ngay, thay cho nút X.
+- **Copy lệnh cho máy tính của bạn**: `reg add` DWORD `RemoteDesktop_SuppressWhenMinimized = 2` vào
+  `HKCU\Software\Microsoft\Terminal Server Client` (và nhánh `Wow6432Node`) trên **máy dùng để kết nối**, rồi kết nối lại:
+  thu nhỏ Remote Desktop không còn làm mất input và không bị ngắt kết nối (mstsc và app dùng ActiveX của nó).
 - Trong lúc chạy, tool giữ màn hình VPS không tắt/ngủ (`SetThreadExecutionState`); nếu VPS có chính sách tự khóa màn hình
   (Group Policy "Machine inactivity limit"), hãy tắt nó.
 

@@ -80,14 +80,23 @@ public sealed partial class AppServices : IAsyncDisposable
         set { workflowGateway.AllowPartyCreation = value; SaveCreationSettings(); }
     }
 
+    /// <summary>Menu toggle "Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop"; on unless switched off (remembered).</summary>
+    public bool AutoConsole
+    {
+        get => DesktopSession.AutoConsole;
+        set { DesktopSession.AutoConsole = value; SaveCreationSettings(); }
+    }
+
     private void LoadCreationSettings()
     {
+        DesktopSession.AutoConsole = true;
         try
         {
             if (!File.Exists(CreationSettingsPath)) return;
             var off = File.ReadAllLines(CreationSettingsPath).Select(line => line.Trim()).ToHashSet(StringComparer.Ordinal);
             workflowGateway.AllowItemCreation = !off.Contains("items=off");
             workflowGateway.AllowPartyCreation = !off.Contains("parties=off");
+            DesktopSession.AutoConsole = !off.Contains("console=off");
         }
         catch (IOException) { }
     }
@@ -98,7 +107,8 @@ public sealed partial class AppServices : IAsyncDisposable
         {
             Directory.CreateDirectory(Path.GetDirectoryName(CreationSettingsPath)!);
             File.WriteAllLines(CreationSettingsPath, [workflowGateway.AllowItemCreation ? "items=on" : "items=off",
-                workflowGateway.AllowPartyCreation ? "parties=on" : "parties=off"]);
+                workflowGateway.AllowPartyCreation ? "parties=on" : "parties=off",
+                DesktopSession.AutoConsole ? "console=on" : "console=off"]);
         }
         catch (IOException) { }
     }

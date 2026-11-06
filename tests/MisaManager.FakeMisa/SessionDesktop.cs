@@ -9,7 +9,11 @@ namespace MisaManager.FakeMisa;
 /// </summary>
 internal static class SessionDesktop
 {
-    public static void DisconnectFor(int milliseconds) => new Thread(() =>
+    /// <summary>
+    /// The disconnect ends early when <paramref name="consoleFlag"/> appears: the tool's tscon (/dest:console), replaced in
+    /// tests by writing that file, attaches the session to the console and its desktop takes input again.
+    /// </summary>
+    public static void DisconnectFor(int milliseconds, string? consoleFlag = null) => new Thread(() =>
     {
         var home = OpenDesktop("Default", 0, false, DesktopSwitch);
         var away = CreateDesktop("FakeMisaDisconnected", null, 0, 0, GenericAll, 0);
@@ -20,9 +24,12 @@ internal static class SessionDesktop
         }
         FakeLog.Write($"SESSION disconnected for {milliseconds} ms");
         AppDomain.CurrentDomain.ProcessExit += (_, _) => SwitchDesktop(home);
-        Thread.Sleep(milliseconds);
+        var until = Environment.TickCount64 + milliseconds;
+        var console = false;
+        while (Environment.TickCount64 < until && !(console = consoleFlag is not null && File.Exists(consoleFlag)))
+            Thread.Sleep(100);
         SwitchDesktop(home);
-        FakeLog.Write("SESSION reconnected");
+        FakeLog.Write(console ? "SESSION moved to console" : "SESSION reconnected");
         CloseDesktop(away);
     }) { IsBackground = true }.Start();
 

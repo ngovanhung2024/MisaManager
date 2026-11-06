@@ -194,8 +194,14 @@
           <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, nhóm VTHH, mã khách hàng, nhà cung cấp và danh sách hóa đơn đã ghi sổ. Lịch sử chống nhập trùng được giữ lại."/>
           <Separator/>
-          <MenuItem Header="Ngắt Remote Desktop, giữ MISA chạy" Click="DetachRemoteDesktop_Click"
-                    ToolTip="Dùng trên VPS thay cho nút X của Remote Desktop: đóng kết nối nhưng chuyển phiên sang màn hình console của VPS, để MISA vẫn nhận phím/chuột và tool chạy tiếp. Cần quyền Administrator."/>
+          <MenuItem Header="VPS / Remote Desktop">
+            <MenuItem x:Name="AutoConsoleItem" Header="Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop" IsCheckable="True" Click="AutoConsole_Click"
+                      ToolTip="Bật: khi cửa sổ Remote Desktop bị thu nhỏ/ẩn hoặc đóng giữa lúc chạy, tool tự chuyển phiên Windows sang màn hình console của VPS (tscon) rồi chạy tiếp; Remote Desktop trên máy bạn bị ngắt, kết nối lại bình thường khi cần xem. Tắt: tool chỉ chờ đến khi bạn mở lại Remote Desktop."/>
+            <MenuItem Header="Ngắt Remote Desktop ngay, giữ MISA chạy" Click="DetachRemoteDesktop_Click"
+                      ToolTip="Dùng thay cho nút X của Remote Desktop: đóng kết nối nhưng chuyển phiên sang màn hình console của VPS, để MISA vẫn nhận phím/chuột và tool chạy tiếp."/>
+            <MenuItem Header="Copy lệnh cho máy tính của bạn (thu nhỏ Remote Desktop vẫn chạy)" Click="CopyClientRegistry_Click"
+                      ToolTip="Copy lệnh reg add RemoteDesktop_SuppressWhenMinimized=2. Dán vào cmd trên máy tính bạn dùng để kết nối (không phải VPS), rồi kết nối lại: thu nhỏ Remote Desktop không làm dừng tool, không bị ngắt kết nối."/>
+          </MenuItem>
           <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
           <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>
         </ContextMenu></Button.ContextMenu>

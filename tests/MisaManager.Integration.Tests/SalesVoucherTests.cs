@@ -808,6 +808,7 @@ public sealed class SalesVoucherTests : UiTest
     [Fact]
     public Task RemoteDesktopClosedOnTheVpsWaitsForTheDesktopInsteadOfFailingFocus() => WithFakeAsync(async (misa, harness, token) =>
     {
+        Assert.False(Automation.DesktopSession.AutoConsole);
         // VPS report 0.2.169, HĐ 81: with the RDP window hidden/closed the session has no input desktop, so "validate"
         // failed 4× with FOCUS_FAILED ("Foreground MISA activation failed.") within ~9 s. Disconnected longer than that.
         var invoice = Invoices.Build(TempDirectory(misa), "1081", Invoices.AV,
@@ -827,6 +828,48 @@ public sealed class SalesVoucherTests : UiTest
         var firstInput = Array.FindIndex(events, line => line.Contains(" <- ", StringComparison.Ordinal));
         Assert.True(firstInput > reconnected, string.Join(Environment.NewLine, events));
     }, new FakeScenario(SessionDisconnectedMilliseconds: 15000));
+
+    [Fact]
+    public Task HiddenRemoteDesktopIsMovedToTheConsoleAndTheRunContinues()
+    {
+        // "Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop": instead of waiting for the user, the tool runs tscon once.
+        // The fake's session would stay disconnected for 10 minutes; only the console move brings its desktop back.
+        var moves = 0;
+        var (auto, mover) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover);
+        return WithFakeAsync(async (misa, harness, token) =>
+        {
+            Automation.DesktopSession.AutoConsole = true;
+            Automation.DesktopSession.ConsoleMover = () =>
+            {
+                Interlocked.Increment(ref moves);
+                File.WriteAllText(Path.Combine(misa.Root, "console.flag"), "tscon");
+                return true;
+            };
+            try
+            {
+                var invoice = Invoices.Build(TempDirectory(misa), "1083", Invoices.AV,
+                    Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+                var started = DateTime.UtcNow;
+
+                var result = await harness.RunAsync(invoice, misa, token);
+
+                Assert.True(result.Outcome == "saved", Describe(result));
+                Assert.Equal("1083", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+                Assert.Equal(1, moves);
+                Assert.True(DateTime.UtcNow - started < TimeSpan.FromMinutes(3), "Tool đã chờ thay vì chuyển sang console.");
+                var events = File.ReadAllLines(Path.Combine(misa.Root, "fake-events.log"));
+                var moved = Array.FindIndex(events, line => line.Contains("SESSION moved to console", StringComparison.Ordinal));
+                Assert.True(moved >= 0, string.Join(Environment.NewLine, events));
+                Assert.True(Array.FindIndex(events, line => line.Contains(" <- ", StringComparison.Ordinal)) > moved,
+                    string.Join(Environment.NewLine, events));
+            }
+            finally
+            {
+                Automation.DesktopSession.AutoConsole = auto;
+                Automation.DesktopSession.ConsoleMover = mover;
+            }
+        }, new FakeScenario(SessionDisconnectedMilliseconds: 600_000));
+    }
 
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>

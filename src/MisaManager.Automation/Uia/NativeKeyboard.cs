@@ -10,6 +10,7 @@ internal static class NativeKeyboard
 {
     internal static void Activate(nint targetHandle, nint windowHandle, int processId, CancellationToken token = default)
     {
+        var movedToConsole = false;
         for (var attempt = 0; ; attempt++)
         {
             token.ThrowIfCancellationRequested();
@@ -21,7 +22,13 @@ internal static class NativeKeyboard
             {
                 if (attempt >= 9)
                 {
-                    DesktopSession.ThrowIfUnavailable(activationFailed: true);
+                    // One more round after the session was moved to the console (minimised RDP client).
+                    if (!movedToConsole && DesktopSession.ThrowIfUnavailable(activationFailed: true))
+                    {
+                        movedToConsole = true;
+                        attempt = -1;
+                        continue;
+                    }
                     throw;
                 }
                 if (token.WaitHandle.WaitOne(100)) token.ThrowIfCancellationRequested();
@@ -115,6 +122,8 @@ internal static class NativeKeyboard
             throw new AutomationException("FOCUS_LOST", "Win32 focus không nằm trong ô được chọn.");
         var inputs = new[] { Key((ushort)code), Key((ushort)code, true) };
         token.ThrowIfCancellationRequested();
+        // A session closed/locked since activation would drop the key: report it before anything is sent.
+        DesktopSession.ThrowIfUnavailable();
         if (SendInput(2, inputs, Marshal.SizeOf<NativeInput>()) != 2)
         {
             SendInput(1, [Key((ushort)code, true)], Marshal.SizeOf<NativeInput>());
@@ -131,6 +140,7 @@ internal static class NativeKeyboard
         if (!IsWindowInScope(foreground, windowHandle) || pid != processId || !PInvoke.IsWindowEnabled((HWND)foreground))
             throw new AutomationException("FOCUS_LOST", "Foreground không phải editor MISA đã chọn.");
         token.ThrowIfCancellationRequested();
+        DesktopSession.ThrowIfUnavailable();
         var inputs = new[] { Key((ushort)code), Key((ushort)code, true) };
         if (SendInput(2, inputs, Marshal.SizeOf<NativeInput>()) != 2)
         {

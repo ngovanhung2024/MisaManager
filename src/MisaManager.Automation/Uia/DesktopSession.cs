@@ -14,7 +14,28 @@ public static class DesktopSession
     public const string UnavailableCode = InterferenceRetry.DesktopUnavailableCode;
 
     private const string Guidance = " Tool đang chờ, chưa gửi phím/chuột nào và sẽ tự chạy tiếp khi màn hình VPS hoạt động lại. "
-        + "Muốn tắt Remote Desktop mà tool vẫn chạy: dùng ••• → \"Ngắt Remote Desktop, giữ MISA chạy\" thay cho nút X.";
+        + "Để ẩn VPS mà tool vẫn chạy: bật ••• → VPS → \"Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop\", "
+        + "hoặc chạy lệnh ••• → VPS → \"Copy lệnh cho máy tính của bạn\" trên máy bạn dùng để kết nối.";
+
+    /// <summary>
+    /// Registry fix for the PC the user connects from (not the VPS): mstsc and other clients built on its ActiveX
+    /// control keep rendering and passing input to a minimised session (UiPath/SmartBear/Power Automate guidance).
+    /// </summary>
+    public const string ClientRegistryCommand =
+        "reg add \"HKCU\\Software\\Microsoft\\Terminal Server Client\" /v RemoteDesktop_SuppressWhenMinimized /t REG_DWORD /d 2 /f\r\n"
+        + "reg add \"HKCU\\Software\\Wow6432Node\\Microsoft\\Terminal Server Client\" /v RemoteDesktop_SuppressWhenMinimized /t REG_DWORD /d 2 /f\r\n";
+
+    /// <summary>
+    /// When input cannot reach MISA in a Remote Desktop session (window minimised or closed), move the session to the
+    /// VPS console instead of waiting for the user to come back. The RDP client is disconnected; reconnecting is normal.
+    /// </summary>
+    public static bool AutoConsole { get; set; }
+
+    /// <summary>Moves this session to the console; true when it was attempted successfully. Replaced by integration tests.</summary>
+    public static Func<bool> ConsoleMover { get; set; } = TryMoveToConsole;
+
+    private static readonly TimeSpan ConsoleRetryInterval = TimeSpan.FromSeconds(20);
+    private static long lastConsoleMove;
 
     /// <summary>Why input cannot reach MISA now, or null when the session's desktop takes input.</summary>
     public static string? Blocker()
@@ -36,17 +57,55 @@ public static class DesktopSession
     }
 
     /// <param name="activationFailed">
-    /// Activation just failed repeatedly. In a Remote Desktop session with no foreground window at all, the RDP window
-    /// is minimised/hidden on the user's PC: the session still reports Active, but Windows takes no foreground change.
+    /// Activation just failed on every attempt. In a Remote Desktop session this is the minimised client: it suppresses
+    /// the session's output and Windows ignores SendInput and refuses foreground changes while the session still reports
+    /// Active, so no direct probe exists. Waiting is safe: no input has been sent.
     /// </param>
-    internal static void ThrowIfUnavailable(bool activationFailed = false)
+    /// <returns>True when the session was moved to the console and now takes input: activation may be tried again.</returns>
+    internal static bool ThrowIfUnavailable(bool activationFailed = false)
     {
-        if (Blocker() is { } reason) throw new AutomationException(UnavailableCode, reason);
-        if (activationFailed && IsRemote && GetForegroundWindow() == 0)
-            throw new AutomationException(UnavailableCode,
-                "Windows trên VPS không có cửa sổ nào ở foreground (cửa sổ Remote Desktop đang thu nhỏ/ẩn) nên không đưa được MISA lên trước. "
-                + "Mở lại cửa sổ Remote Desktop, hoặc trên máy tính của bạn đặt registry HKCU\\Software\\Microsoft\\Terminal Server Client "
-                + "→ DWORD RemoteDesktop_SuppressWhenMinimized = 2 rồi kết nối lại." + Guidance);
+        var reason = Blocker();
+        if (reason is null && activationFailed && IsRemote)
+            reason = "Không đưa được MISA lên trước trong phiên Remote Desktop: cửa sổ Remote Desktop trên máy bạn đang thu nhỏ/ẩn, "
+                + "Windows trên VPS bỏ qua phím/chuột khi đó." + Guidance;
+        if (reason is null) return false;
+        if (AutoConsole && TryAutoConsole(activationFailed)) return true;
+        throw new AutomationException(UnavailableCode, reason);
+    }
+
+    private static bool TryAutoConsole(bool activationFailed)
+    {
+        var now = Stopwatch.GetTimestamp();
+        var last = Interlocked.Read(ref lastConsoleMove);
+        if (last != 0 && Stopwatch.GetElapsedTime(last, now) < ConsoleRetryInterval) return false;
+        Interlocked.Exchange(ref lastConsoleMove, now);
+        bool moved;
+        try { moved = ConsoleMover(); }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+        {
+            Trace.TraceWarning("Không chuyển được phiên sang console: " + error.Message);
+            return false;
+        }
+        if (!moved) return false;
+        Trace.TraceInformation("Đã chuyển phiên Remote Desktop sang console của VPS để MISA tiếp tục nhận phím/chuột.");
+        // tscon returns before the session's desktop is attached to the console.
+        for (var poll = 0; poll < 50; poll++)
+        {
+            if (Blocker() is null) return true;
+            Thread.Sleep(100);
+        }
+        return activationFailed && Blocker() is null;
+    }
+
+    /// <summary>
+    /// Silent tscon for <see cref="AutoConsole"/>: only from an elevated process (the app requires administrator) and only
+    /// when this session is not already the console session.
+    /// </summary>
+    public static bool TryMoveToConsole()
+    {
+        if (!OperatingSystem.IsWindows() || !Environment.IsPrivilegedProcess) return false;
+        if (WTSGetActiveConsoleSessionId() == (uint)SessionId) return false;
+        return RunTscon(elevate: false);
     }
 
     private static int SessionId { get { using var self = Process.GetCurrentProcess(); return self.SessionId; } }
@@ -70,18 +129,24 @@ public static class DesktopSession
     /// </summary>
     public static void MoveToConsole()
     {
+        if (!RunTscon(elevate: !Environment.IsPrivilegedProcess))
+            throw new InvalidOperationException("tscon.exe báo lỗi: không chuyển được phiên sang console của VPS.");
+    }
+
+    private static bool RunTscon(bool elevate)
+    {
         var system = Environment.Is64BitProcess || !Environment.Is64BitOperatingSystem
             ? Environment.SystemDirectory
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Sysnative");
         var start = new ProcessStartInfo(Path.Combine(system, "tscon.exe"), $"{SessionId} /dest:console")
         {
-            UseShellExecute = true,
-            Verb = "runas",
+            UseShellExecute = elevate,
+            Verb = elevate ? "runas" : "",
+            CreateNoWindow = !elevate,
             WindowStyle = ProcessWindowStyle.Hidden
         };
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Không chạy được tscon.exe.");
-        if (process.WaitForExit(15000) && process.ExitCode != 0)
-            throw new InvalidOperationException($"tscon.exe báo lỗi {process.ExitCode}: không chuyển được phiên sang console của VPS.");
+        return process.WaitForExit(15000) && process.ExitCode == 0;
     }
 
     private sealed class Awake(bool active) : IDisposable
@@ -129,5 +194,5 @@ public static class DesktopSession
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll")] private static extern uint SetThreadExecutionState(uint flags);
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
-    [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
+    [DllImport("kernel32.dll")] private static extern uint WTSGetActiveConsoleSessionId();
 }
