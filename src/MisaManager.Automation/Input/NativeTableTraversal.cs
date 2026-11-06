@@ -413,18 +413,27 @@ public sealed partial class NativeInputService
     private static readonly Regex FooterRowCountPattern = new(@"^\s*Số\s+dòng\s*=\s*(\d[\d.,\u00A0\s]*)$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    // Footer label "Số dòng = N" counts data rows only (not the add-new row).
+    // Footer label "Số dòng = N" counts data rows only (not the add-new row). It is extra evidence: when it cannot be
+    // read, null means "no footer proof", never a failed read. The grid's own properties are never read live here: on
+    // the VPS (0.2.162) R20's grdDetail answered its live BoundingRectangle with "element not available" on every pass
+    // while searches through it worked, which failed reconciliation of a correct voucher.
     private int? TryReadCustomFooterCount(AutomationElement grid)
     {
         var condition = Live(automation.ConditionFactory.ByName("Số dòng", PropertyConditionFlags.MatchSubstring),
             identity!.ProcessId, enabled: false, onscreen: false);
-        var found = Snapshots(grid, condition).Where(item => item.HasArea).ToArray();
-        if (found.Length == 0 && grid.Parent is { } parent)
+        ElementSnapshot[] found;
+        try
         {
-            var bounds = grid.BoundingRectangle;
-            found = Snapshots(parent, condition).Where(item => item.HasArea
-                && bounds.Contains(item.Bounds.X + item.Bounds.Width / 2, item.Bounds.Y + item.Bounds.Height / 2)).ToArray();
+            found = Snapshots(grid, condition).Where(item => item.HasArea).ToArray();
+            if (found.Length == 0)
+            {
+                if (TrySnapshot(grid) is not { HasArea: true } snapshot || grid.Parent is not { } parent) return null;
+                var bounds = snapshot.Bounds;
+                found = Snapshots(parent, condition).Where(item => item.HasArea
+                    && bounds.Contains(item.Bounds.X + item.Bounds.Width / 2, item.Bounds.Y + item.Bounds.Height / 2)).ToArray();
+            }
         }
+        catch (Exception error) when (Vanished(error)) { return null; }
         var counts = found.Select(item => FooterRowCountPattern.Match(item.Name.Normalize(NormalizationForm.FormC)))
             .Where(match => match.Success)
             .Select(match => int.TryParse(new string(match.Groups[1].Value.Where(char.IsDigit).ToArray()),

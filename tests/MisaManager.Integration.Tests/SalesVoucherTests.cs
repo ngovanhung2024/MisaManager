@@ -696,6 +696,36 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("NativeTableTraversal.cs:line", result.Context.Snapshot.ErrorChain ?? "", StringComparison.Ordinal);
     }, new FakeScenario(GridUnavailableAfterTaxTabMilliseconds: 600_000));
 
+    // HĐ 81 on the VPS (0.2.162): "Số dòng = 2" is not under grdDetail, so the footer fallback ran and read the grid's
+    // BoundingRectangle live, which R20 answered with "element not available" on every pass. The fallback now uses the
+    // grid's search snapshot and treats an unreadable footer as missing evidence.
+    [Fact]
+    public Task GridFooterOutsideTheGridIsReadFromSnapshotBounds() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1086", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(["HH_06", "HH_07"], Assert.Single(misa.State().Vouchers).Lines.Select(line => line.Code));
+    }, new FakeScenario(GridFooterOutside: true));
+
+    // The fallback still finds that footer and still refuses a register whose rows do not match it.
+    [Fact]
+    public Task GridFooterOutsideTheGridStillBlocksAMismatchedRowCount() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1087", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == WorkflowRunner.ErrorDiscardedOutcome, Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Contains("Số dòng = 2", result.Context.Snapshot.ErrorChain ?? "", StringComparison.Ordinal);
+    }, new FakeScenario(GridFooterOutside: true, GridFooterCountOffset: 1));
+
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {

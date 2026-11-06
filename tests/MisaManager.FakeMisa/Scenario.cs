@@ -81,6 +81,10 @@ public sealed record Scenario
     /// Line entry's own tax-tab read (Mã hàng, % thuế GTGT) is unaffected, as on the VPS.
     /// </summary>
     public bool GridCellsRecreatedOnReadAfterTaxTab { get; init; }
+    /// <summary>"Số dòng = N" of the voucher grid is not a UIA descendant of grdDetail (VPS report 0.2.162, HĐ 81).</summary>
+    public bool GridFooterOutside { get; init; }
+    /// <summary>Added to the voucher grid's "Số dòng" footer, to prove the footer is still compared.</summary>
+    public int GridFooterCountOffset { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

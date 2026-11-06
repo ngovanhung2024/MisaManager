@@ -44,8 +44,11 @@ public sealed class FakeGrid : Border
     private IGridSource? source;
     private double horizontalShift;
 
-    public FakeGrid(string automationId, double height)
+    /// <param name="footerOutside">R20 (VPS): "Số dòng = N" is drawn over the grid's bottom edge but is not a UIA descendant
+    /// of the grid; the host places <see cref="FooterBar"/> itself.</param>
+    public FakeGrid(string automationId, double height, bool footerOutside = false)
     {
+        FooterOutside = footerOutside;
         AutomationProperties.SetAutomationId(this, automationId);
         Height = height;
         BorderBrush = Brushes.SteelBlue;
@@ -53,15 +56,17 @@ public sealed class FakeGrid : Border
         Background = Brushes.White;
         var dock = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(headerPanel, Dock.Top);
-        var footerBar = new Border { Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xEC, 0xF5)), Child = footer };
-        DockPanel.SetDock(footerBar, Dock.Bottom);
+        FooterBar = new Border { Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xEC, 0xF5)), Child = footer };
+        DockPanel.SetDock(FooterBar, Dock.Bottom);
         dock.Children.Add(headerPanel);
-        dock.Children.Add(footerBar);
+        if (!footerOutside) dock.Children.Add(FooterBar);
         dock.Children.Add(rowPanel);
         Child = dock;
     }
 
     public bool ShowInsertionRow { get; set; }
+    public bool FooterOutside { get; }
+    public Border FooterBar { get; }
     /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
     public DateTime CellsUnavailableUntil { get; set; }
     internal bool CellsUnavailable => DateTime.UtcNow < CellsUnavailableUntil;
@@ -76,7 +81,7 @@ public sealed class FakeGrid : Border
         UpdateLayout();
         UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
     }
-    public int FooterCountOffset { get; init; }
+    public int FooterCountOffset { get; set; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
     public event EventHandler<int?>? QuickAddRequested;
@@ -179,7 +184,7 @@ public sealed class FakeGrid : Border
                 if (UIElementAutomationPeer.CreatePeerForElement(header) is { } peer) children.Add(peer);
             foreach (var row in owner.Rows)
                 if (UIElementAutomationPeer.CreatePeerForElement(row) is { } peer) children.Add(peer);
-            if (UIElementAutomationPeer.CreatePeerForElement(owner.Footer) is { } footerPeer) children.Add(footerPeer);
+            if (!owner.FooterOutside && UIElementAutomationPeer.CreatePeerForElement(owner.Footer) is { } footerPeer) children.Add(footerPeer);
             return children;
         }
         public override object? GetPattern(PatternInterface patternInterface) => null;

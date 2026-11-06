@@ -154,11 +154,24 @@ public sealed class VoucherWindow : Window, IGridSource
         DockPanel.SetDock(detailTabs, Dock.Top);
         root.Children.Add(detailTabs);
 
-        grid = new FakeGrid(profile.GridId(screen, "items"), 230) { ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0) };
+        grid = new FakeGrid(profile.GridId(screen, "items"), 230, scenario.GridFooterOutside)
+        {
+            ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset
+        };
         grid.CellCommitted += OnCellCommitted;
         grid.QuickAddRequested += (_, row) => QuickAddItem(row);
         grid.QuickSearchRequested += (_, _) => new ItemLookupWindow(profile, store) { Owner = main }.ShowDialog();
-        root.Children.Add(grid);
+        if (scenario.GridFooterOutside)
+        {
+            // Footer drawn over the grid's bottom edge, a UIA sibling of the grid (not its descendant).
+            var host = new Grid();
+            host.Children.Add(grid);
+            grid.FooterBar.VerticalAlignment = VerticalAlignment.Bottom;
+            grid.FooterBar.Margin = new Thickness(5, 0, 5, 1);
+            host.Children.Add(grid.FooterBar);
+            root.Children.Add(host);
+        }
+        else root.Children.Add(grid);
         Content = root;
         BuildLayouts();
         BindLayout();
