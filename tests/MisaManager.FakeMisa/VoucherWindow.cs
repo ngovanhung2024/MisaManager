@@ -418,6 +418,9 @@ public sealed class VoucherWindow : Window, IGridSource
                 case "credit_account": line.CreditAccount = text; break;
                 case "revenue_account": line.RevenueAccount = text; break;
                 case "unit": line.Unit = text; break;
+                case "quantity" when row == scenario.QuantityIgnoredRow:
+                    FakeLog.Write($"Bỏ qua số lượng dòng {row + 1}");
+                    break;
                 case "quantity" when Ui.TryNumber(text, out var quantity):
                     line.Quantity = quantity;
                     line.Amount = Math.Round(quantity * line.UnitPrice, 0, MidpointRounding.AwayFromZero);
@@ -572,7 +575,7 @@ public sealed class VoucherWindow : Window, IGridSource
             var source = lines.Sum(line => line.TaxAmount);
             var difference = scenario.TaxRoundingDifference;
             var prompt = new TaxPromptWindow(profile, source, source + difference, scenario.TaxPromptAsLabel,
-                scenario.TaxPromptBusyMilliseconds) { Owner = this };
+                scenario.TaxPromptBusyMilliseconds, scenario.TaxPromptPerRate) { Owner = this };
             prompt.ShowDialog();
             if (prompt.Adjust) lines[0].TaxAmount += difference;
         }

@@ -298,6 +298,31 @@ public sealed class NativeComparisonTests
     [InlineData("")]
     public void TaxPromptWithoutAmountHasNoDifference(string message) => Assert.Null(NativeComparison.TaxPromptDifference(message));
 
+    private const string PerRatePrompt = "Tiền thuế GTGT của từng loại thuế suất đang khác với công thức: (Tiền hàng - Tiền chiết khấu) * Thuế suất. "
+        + "- Thuế suất <5%>: Chênh lệch <1> Bạn có muốn chương trình tự điều chỉnh số tiền chênh lệch này vào mặt hàng đầu tiên có tiền thuế không?";
+
+    [Theory]
+    [InlineData("Tổng tiền thuế GTGT <156.096> khác (Tiền hàng - Tiền chiết khấu) * Thuế suất <156.095>, chênh lệch <1>. Bạn có muốn")]
+    [InlineData(PerRatePrompt)]
+    [InlineData("Tiền thuế GTGT của từng loại thuế suất đang khác với công thức: - Thuế suất &lt;10%&gt;: Chênh lệch &lt;-2&gt;")]
+    public void TaxPromptIsRecognisedAndAccepted(string message)
+    {
+        Assert.True(NativeComparison.IsTaxPrompt(message));
+        Assert.True(NativeComparison.TaxPromptAcceptable(message));
+    }
+
+    [Theory]
+    [InlineData("Tiền thuế GTGT của từng loại thuế suất đang khác với công thức: - Thuế suất <5%>: Chênh lệch <1> - Thuế suất <10%>: Chênh lệch <3>")]
+    [InlineData("Tổng tiền thuế GTGT <1.000.025> khác ... chênh lệch <25>.")]
+    [InlineData("Tổng tiền thuế GTGT khác thuế suất, có chênh lệch.")]
+    [InlineData("Tiền thuế GTGT của từng loại thuế suất đang khác với công thức: - Thuế suất <5%>: Chênh lệch <abc>")]
+    public void TaxPromptOverToleranceOrUnreadableIsNotAccepted(string message) => Assert.False(NativeComparison.TaxPromptAcceptable(message));
+
+    [Theory]
+    [InlineData("Số hóa đơn đã tồn tại. Bạn có muốn tự động tăng số hóa đơn không?")]
+    [InlineData("Tiền thuế GTGT không hợp lệ.")]
+    public void OtherPromptsAreNotTaxPrompts(string message) => Assert.False(NativeComparison.IsTaxPrompt(message));
+
     [Theory]
     [InlineData("156096", "156.096", true)]
     [InlineData("156096", "156.095", true)]

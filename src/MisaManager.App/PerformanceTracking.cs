@@ -8,7 +8,9 @@ public sealed record PerformanceTraceEntry(
     DateTimeOffset StartedAt,
     DateTimeOffset? CompletedAt,
     string Status,
-    string? Error = null)
+    string? Error = null,
+    // Full "Copy lỗi" text of an invoice that failed during a batch (no popup is shown; the batch goes on).
+    string? ErrorReport = null)
 {
     public long DurationMilliseconds
     {

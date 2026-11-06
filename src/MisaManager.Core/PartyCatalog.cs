@@ -70,6 +70,36 @@ public sealed partial class PartyCatalogStore
         return TextKey.LettersAndDigits(string.Join(' ', words));
     }
 
+    // Household-business forms put before the owner's name on invoices but not in the MISA list (ASCII-folded words).
+    // Company forms (Công ty TNHH/CP, Cửa hàng, Đại lý…) stay: "CÔNG TY TNHH ABC" and "CÔNG TY CP ABC" are different parties.
+    private static readonly string[][] FormPrefixes = new[]
+    {
+        "HO KINH DOANH CA THE", "HO KINH DOANH", "HO KD", "H K D", "HKD", "HO CA THE"
+    }.Select(phrase => phrase.Split(' ')).OrderByDescending(words => words.Length).ToArray();
+
+    private const int MinCoreLength = 5;
+
+    private static int SkipForms(string[] words)
+    {
+        var folded = words.Select(word => BuyerCodes.Ascii(word).Replace(" ", "", StringComparison.Ordinal)).ToArray();
+        var start = 0;
+        while (FormPrefixes.FirstOrDefault(phrase => start + phrase.Length <= words.Length
+                   && phrase.Select((word, index) => folded[start + index] == word).All(same => same)) is { } matched)
+            start += matched.Length;
+        return start;
+    }
+
+    /// <summary>
+    /// Key of the name without leading business forms ("HỘ KINH DOANH LÊ THỊ HƯƠNG" = "LÊ THỊ HƯƠNG"), bracketed text and
+    /// punctuation. Empty when too little is left to identify anyone: it is only a fallback after the exact and relaxed keys.
+    /// </summary>
+    public static string CoreKey(string? name)
+    {
+        var words = Separators().Split(Brackets().Replace(TextKey.Canonical(name), " ")).Where(word => word.Length > 0).ToArray();
+        var key = TextKey.LettersAndDigits(string.Join(' ', words[SkipForms(words)..]));
+        return key.Length < MinCoreLength ? "" : key;
+    }
+
     public static string TaxKey(string? taxCode)
         => new((taxCode ?? "").Normalize(NormalizationForm.FormKC).Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
@@ -178,7 +208,7 @@ public sealed partial class PartyCatalogStore
     /// </summary>
     public string NewCustomerCode(Party buyer)
     {
-        var stem = BuyerCodes.IsIndividual(buyer) ? Initials(buyer.Name) : OrganisationCode(buyer.Name);
+        var stem = BuyerCodes.IsIndividual(buyer) ? Initials(WithoutForms(buyer.Name)) : OrganisationCode(buyer.Name);
         if (stem.Length == 0) stem = "KH";
         // Multi-word codes take " 2" like the lists (TH PHÚ XUÂN 2); initials take "2" (LTH2).
         var separator = stem.Contains(' ') ? " " : "";
@@ -215,6 +245,14 @@ public sealed partial class PartyCatalogStore
         return rest.Length <= 3 && code.Length <= 20 ? code : Initials(code);
     }
 
+    // "HỘ KINH DOANH LÊ THỊ HƯƠNG" is coded by the person (LTH), not by the business form (HKDLTH).
+    private static string WithoutForms(string? name)
+    {
+        var words = Brackets().Replace(name ?? "", " ").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var start = SkipForms(words);
+        return start < words.Length ? string.Join(' ', words[start..]) : name ?? "";
+    }
+
     private static string Initials(string? name)
     {
         var words = BuyerCodes.Ascii(Brackets().Replace(name ?? "", " ")).Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -232,7 +270,7 @@ public sealed partial class PartyCatalogStore
 
     /// <summary>
     /// Finds the code for a party name, preferring the most exact evidence: exact name, then tax code, then the relaxed
-    /// name; customers before suppliers at each level. Returns null when nothing matches; throws when the best match
+    /// name, then the name without its business form; customers before suppliers at each level. Returns null when nothing matches; throws when the best match
     /// is several different codes, so the tool never guesses.
     /// </summary>
     public PartyMatch? FindCode(string name, string? taxCode = null)
@@ -244,7 +282,10 @@ public sealed partial class PartyCatalogStore
         {
             ("trùng tên", index => index.ByName.GetValueOrDefault(NameKey(name)) ?? []),
             ("trùng mã số thuế", index => tax.Length == 0 ? [] : index.ByTax.GetValueOrDefault(tax) ?? []),
-            ("tên gần đúng", index => index.ByRelaxedName.GetValueOrDefault(RelaxedKey(name)) ?? [])
+            ("tên gần đúng", index => index.ByRelaxedName.GetValueOrDefault(RelaxedKey(name)) ?? []),
+            // A different MST means a different party, so a name without its business form never overrides it.
+            ("tên bỏ hình thức kinh doanh", index => (index.ByCoreName.GetValueOrDefault(CoreKey(name)) ?? [])
+                .Where(entry => tax.Length == 0 || TaxKey(entry.TaxCode) is var other && (other.Length == 0 || other == tax)).ToArray())
         };
         foreach (var (method, find) in tiers)
             for (var role = 0; role < lists.Length; role++)
@@ -308,12 +349,14 @@ public sealed partial class PartyCatalogStore
             Entries = entries;
             ByName = Group(entries, entry => NameKey(entry.Name));
             ByRelaxedName = Group(entries, entry => RelaxedKey(entry.Name));
+            ByCoreName = Group(entries, entry => CoreKey(entry.Name));
             ByTax = Group(entries, entry => TaxKey(entry.TaxCode));
         }
 
         public IReadOnlyList<PartyCatalogEntry> Entries { get; }
         public Dictionary<string, PartyCatalogEntry[]> ByName { get; }
         public Dictionary<string, PartyCatalogEntry[]> ByRelaxedName { get; }
+        public Dictionary<string, PartyCatalogEntry[]> ByCoreName { get; }
         public Dictionary<string, PartyCatalogEntry[]> ByTax { get; }
 
         private static Dictionary<string, PartyCatalogEntry[]> Group(IEnumerable<PartyCatalogEntry> entries, Func<PartyCatalogEntry, string> key)

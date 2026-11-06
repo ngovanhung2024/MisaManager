@@ -175,7 +175,8 @@ public sealed class NewCustomerWindow : Window
 /// <summary>MISA's warning when the voucher VAT total differs from the per-rate calculation.</summary>
 public sealed class TaxPromptWindow : Window
 {
-    public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated, bool asLabel = false, int busyMilliseconds = 0)
+    public TaxPromptWindow(FakeProfile profile, decimal source, decimal calculated, bool asLabel = false, int busyMilliseconds = 0,
+        bool perRate = false)
     {
         Ui.Id(this, profile.ScopeId("tax_rounding_prompt"));
         Title = "MISA SME 2023";
@@ -185,16 +186,21 @@ public sealed class TaxPromptWindow : Window
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         this.IgnoreBareAlt();
-        var message = $"Tổng tiền thuế GTGT <{Ui.Money(source)}> khác (Tiền hàng - Tiền chiết khấu) * Thuế suất <{Ui.Money(calculated)}>, "
+        // R20 also words it per tax rate, with English Yes/No buttons (HĐ 27, 27/02/2026).
+        var message = perRate
+            ? "Tiền thuế GTGT của từng loại thuế suất đang khác với công thức: (Tiền hàng - Tiền chiết khấu) * Thuế suất.\n"
+                + $"- Thuế suất <5%>: Chênh lệch <{Ui.Money(source - calculated)}>\n"
+                + "Bạn có muốn chương trình tự điều chỉnh số tiền chênh lệch này vào mặt hàng đầu tiên có tiền thuế không?"
+            : $"Tổng tiền thuế GTGT <{Ui.Money(source)}> khác (Tiền hàng - Tiền chiết khấu) * Thuế suất <{Ui.Money(calculated)}>, "
             + $"chênh lệch <{Ui.Money(source - calculated)}>. Bạn có muốn chương trình tự điều chỉnh số tiền chênh lệch này vào dòng hàng đầu tiên "
             + "có tiền thuế không? Xem hướng dẫn <a href=\"https://helpsme.misa.vn/2023/kb/canh_bao_tong_tien_thue_chenh_lech_khi_cat_chung_tu_ban_hang/\">TẠI ĐÂY</a>";
         FrameworkElement text = asLabel
             ? new Label { Content = message, Height = 120, Margin = new Thickness(8) }
             : new TextBox { Text = message, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, Height = 120, Margin = new Thickness(8) };
         text.Id(profile.Id("tax_rounding_prompt", "message"));
-        var yes = Ui.Button("Có", automationId: profile.Id("tax_rounding_prompt", "yes"), width: 80);
+        var yes = Ui.Button(perRate ? "Yes" : "Có", automationId: profile.Id("tax_rounding_prompt", "yes"), width: 80);
         yes.Click += (_, _) => { FakeLog.Write("Hộp chênh lệch thuế: bấm Có"); Adjust = true; Close(); };
-        var no = Ui.Button("Không", automationId: profile.Id("tax_rounding_prompt", "no"), width: 80);
+        var no = Ui.Button(perRate ? "No" : "Không", automationId: profile.Id("tax_rounding_prompt", "no"), width: 80);
         no.Click += (_, _) => { FakeLog.Write("Hộp chênh lệch thuế: bấm Không"); Close(); };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(8) };
         buttons.Children.Add(yes);

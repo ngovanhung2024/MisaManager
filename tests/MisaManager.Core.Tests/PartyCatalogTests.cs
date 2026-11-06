@@ -372,6 +372,122 @@ public sealed class PartyCatalogTests : IDisposable
     [InlineData("", false)]
     public void TwelveDigitBuyerTaxCodeIsAPersonalId(string taxCode, bool personal)
         => Assert.Equal(personal, BuyerCodes.IsPersonalId(taxCode));
+
+    private static readonly PartyCatalogEntry Huong = new("LÊ THỊ HƯƠNG", "LÊ THỊ HƯƠNG", "", "Thôn Phú Thuận, Xã Nam Đông");
+
+    [Theory]
+    [InlineData("HỘ KINH DOANH LÊ THỊ HƯƠNG")]
+    [InlineData("Hộ kinh doanh Lê Thị Hương")]
+    [InlineData("HKD Lê Thị Hương")]
+    [InlineData("H.K.D. Lê Thị Hương")]
+    [InlineData("Hộ KD  Lê Thị Hương")]
+    [InlineData("HỘ KINH DOANH CÁ THỂ LÊ THỊ HƯƠNG")]
+    [InlineData("Hộ kinh doanh Lê Thị Hương (046172000663)")]
+    [InlineData("HKD Le\u0302 Thi\u0323 Hu\u031Bo\u031Bng")]
+    public void BusinessFormPrefixIsIgnoredWhenTheNameOtherwiseMatches(string invoiceName)
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [.. Customers, Huong], "Khach_hang.xlsx");
+
+        var match = store.FindCode(invoiceName, "046172000663");
+
+        Assert.NotNull(match);
+        Assert.Equal("LÊ THỊ HƯƠNG", match.Code);
+    }
+
+    [Fact]
+    public void HouseholdBusinessMatchesThePersonByCoreName()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [.. Customers, Huong], "Khach_hang.xlsx");
+
+        var match = store.FindCode("HỘ KINH DOANH LÊ THỊ HƯƠNG", "046172000663");
+
+        Assert.Equal(("LÊ THỊ HƯƠNG", PartyRole.Customer, "tên bỏ hình thức kinh doanh"), (match?.Code, match?.Role, match?.Method));
+        Assert.Equal("LÊ THỊ HƯƠNG", match?.Name);
+    }
+
+    [Fact]
+    public void BusinessFormInTheCatalogNameIsIgnoredToo()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [new("HKD NHA", "HỘ KINH DOANH NGUYỄN VĂN NHÀ")], "Khach_hang.xlsx");
+
+        Assert.Equal("HKD NHA", store.FindCode("Nguyễn Văn Nhà")?.Code);
+    }
+
+    [Fact]
+    public void ExactAndRelaxedNamesBeatTheBusinessFormFallback()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [Huong, new("HKD LTH", "HỘ KINH DOANH LÊ THỊ HƯƠNG")], "Khach_hang.xlsx");
+
+        Assert.Equal(("HKD LTH", "trùng tên"), (store.FindCode("Hộ kinh doanh Lê Thị Hương")?.Code, store.FindCode("Hộ kinh doanh Lê Thị Hương")?.Method));
+        Assert.Equal("LÊ THỊ HƯƠNG", store.FindCode("Lê Thị Hương")?.Code);
+    }
+
+    [Fact]
+    public void BusinessFormFallbackNeverOverridesADifferentTaxCode()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [Huong with { TaxCode = "046172000999" }], "Khach_hang.xlsx");
+
+        Assert.Null(store.FindCode("HỘ KINH DOANH LÊ THỊ HƯƠNG", "046172000663"));
+        Assert.Equal("LÊ THỊ HƯƠNG", store.FindCode("HỘ KINH DOANH LÊ THỊ HƯƠNG", "046172000999")?.Code);
+        Assert.Equal("LÊ THỊ HƯƠNG", store.FindCode("HỘ KINH DOANH LÊ THỊ HƯƠNG")?.Code);
+    }
+
+    [Fact]
+    public void AmbiguousBusinessFormFallbackIsNotGuessedUnlessTheTaxCodeDecides()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer,
+            [new("LTH1", "LÊ THỊ HƯƠNG", "046172000663"), new("LTH2", "HKD LÊ THỊ HƯƠNG", "046172000111")], "Khach_hang.xlsx");
+
+        Assert.Equal("LTH1", store.FindCode("HỘ KINH DOANH LÊ THỊ HƯƠNG", "046172000663")?.Code);
+        var error = Assert.Throws<AutomationException>(() => store.FindCode("HỘ KINH DOANH LÊ THỊ HƯƠNG"));
+        Assert.Equal("CUSTOMER_AMBIGUOUS", error.Code);
+    }
+
+    [Fact]
+    public void ShortRemainderAfterTheBusinessFormIsTooLittleToMatch()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [new("AN", "AN")], "Khach_hang.xlsx");
+
+        Assert.Null(store.FindCode("HKD AN"));
+        Assert.Equal("AN", store.FindCode("AN")?.Code);
+    }
+
+    [Fact]
+    public void CompanyFormsAreNotStrippedBecauseTheyNameDifferentParties()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [new("ABC", "CÔNG TY CỔ PHẦN NÔNG SẢN ABC")], "Khach_hang.xlsx");
+
+        Assert.Null(store.FindCode("CÔNG TY TNHH NÔNG SẢN ABC"));
+        Assert.Null(store.FindCode("CỬA HÀNG NÔNG SẢN ABC"));
+    }
+
+    [Fact]
+    public void ResolveReportsTheBusinessFormFallback()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, [Huong], "Khach_hang.xlsx");
+
+        var code = BuyerCodes.Resolve(new Party("HỘ KINH DOANH LÊ THỊ HƯƠNG", "046172000663", "", "", ValuePresence.Provided), store);
+
+        Assert.Equal(("LÊ THỊ HƯƠNG", "danh mục khách hàng · tên bỏ hình thức kinh doanh"), (code?.Code, code?.Source));
+    }
+
+    [Fact]
+    public void NewCodeOfAHouseholdBusinessUsesThePersonsInitials()
+    {
+        var store = Store();
+        store.Replace(PartyRole.Customer, Customers, "Khach_hang.xlsx");
+
+        Assert.Equal("LTH", store.NewCustomerCode(new Party("HỘ KINH DOANH LÊ THỊ HƯƠNG", "046172000663", "", "", ValuePresence.Provided)));
+    }
 }
 
 public sealed class CompanyRedactionTests

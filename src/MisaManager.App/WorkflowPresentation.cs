@@ -40,6 +40,13 @@ public static class RunOutcome
     public static bool IsStoppedDiscard(WorkflowSnapshot snapshot)
         => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode == WorkflowRunner.StoppedByUserCode;
     public const string StoppedDiscardLabel = "Tạm dừng · đã bỏ chứng từ dở";
+
+    /// <summary>Failed during a batch; its voucher was Bỏ (not Cất) so the batch went on. Keeps the original error code.</summary>
+    public static bool IsErrorDiscard(WorkflowSnapshot snapshot)
+        => snapshot.Status == WorkflowStatus.Discarded && snapshot.LastErrorCode is { Length: > 0 } code
+            && code != ExistingCode && code != WorkflowRunner.StoppedByUserCode;
+    public const string ErrorDiscardLabel = "Lỗi · đã bỏ chứng từ";
+    public const string ErrorDiscardOutcome = "Lỗi khi nhập; đã Bỏ chứng từ (không Cất). Copy lỗi ở tab Hiệu năng.";
     /// <summary>Listed in the MISA sales export loaded by "Bỏ hóa đơn đã ghi sổ".</summary>
     public const string PostedLabel = "Đã ghi sổ";
 
@@ -94,7 +101,8 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
         ? "Lệch · Đã bỏ" : StatusLabel(Context.Snapshot);
     public string StatusColor => RunOutcome.IsExisting(Context.Snapshot) ? RunOutcome.ExistingColor
         : RunOutcome.IsUnfinished(Context.Snapshot) ? RunOutcome.UnfinishedColor
-        : RunOutcome.IsStoppedDiscard(Context.Snapshot) ? "#617B70" : Context.Snapshot.Status switch
+        : RunOutcome.IsStoppedDiscard(Context.Snapshot) ? "#617B70"
+        : RunOutcome.IsErrorDiscard(Context.Snapshot) ? "#B91C1C" : Context.Snapshot.Status switch
     {
         WorkflowStatus.Saved => "#15803D",
         WorkflowStatus.Discarded => "#BE123C",
@@ -107,7 +115,8 @@ public sealed record ProfileRecord(WorkflowContext Context, IReadOnlyList<Workfl
         => RunOutcome.IsExisting(snapshot) ? RunOutcome.ExistingLabel
             : RunOutcome.IsManualSaved(snapshot) ? RunOutcome.ManualSavedLabel
             : RunOutcome.IsUnfinished(snapshot) ? RunOutcome.UnfinishedLabel
-            : RunOutcome.IsStoppedDiscard(snapshot) ? RunOutcome.StoppedDiscardLabel : StatusLabel(snapshot.Status);
+            : RunOutcome.IsStoppedDiscard(snapshot) ? RunOutcome.StoppedDiscardLabel
+            : RunOutcome.IsErrorDiscard(snapshot) ? RunOutcome.ErrorDiscardLabel : StatusLabel(snapshot.Status);
     public static string StatusLabel(WorkflowStatus status) => status switch
     {
         WorkflowStatus.Saved => "Đã lưu",
@@ -290,6 +299,7 @@ public partial class MainWindow
             {
                 WorkflowStatus.Saved when RunOutcome.IsManualSaved(record.Context.Snapshot) => RunOutcome.ManualSavedOutcome,
                 WorkflowStatus.Saved => "Đã Cất thành công",
+                WorkflowStatus.Discarded when RunOutcome.IsErrorDiscard(record.Context.Snapshot) => RunOutcome.ErrorDiscardOutcome,
                 WorkflowStatus.Discarded when RunOutcome.IsExisting(record.Context.Snapshot) => "Số hóa đơn đã tồn tại trong MISA, không nhập lại",
                 WorkflowStatus.Discarded => "Hóa đơn đã được bỏ",
                 _ => ProfileRecord.StatusLabel(record.Context.Snapshot)
@@ -314,6 +324,7 @@ public partial class MainWindow
         {
             WorkflowStatus.Saved when RunOutcome.IsManualSaved(context.Snapshot) => RunOutcome.ManualSavedOutcome,
             WorkflowStatus.Saved => "Đã Cất thành công",
+            WorkflowStatus.Discarded when RunOutcome.IsErrorDiscard(context.Snapshot) => RunOutcome.ErrorDiscardOutcome,
             WorkflowStatus.Discarded when RunOutcome.IsExisting(context.Snapshot) => "Số hóa đơn đã tồn tại trong MISA, không nhập lại",
             WorkflowStatus.Discarded when comparison is { Matched: false } => "Đã bỏ vì thông tin không khớp",
             WorkflowStatus.Discarded => "Hóa đơn đã được bỏ",

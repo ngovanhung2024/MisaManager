@@ -33,9 +33,9 @@ public sealed class AutomationHarness : IAsyncDisposable
     public NativeWorkflowGateway Gateway { get; }
     public WorkflowRunner Runner { get; }
 
-    public Task<LiveRunResult> RunAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token)
+    public Task<LiveRunResult> RunAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token, bool discardOnFailure = false)
         => Runner.RunLiveAsync(invoice, "", misa.WindowIdentityText, token, liveValidation: true, Profile.Revision,
-            allowKgToTon: true, executionMode: WorkflowExecutionMode.LiveProduction);
+            allowKgToTon: true, executionMode: WorkflowExecutionMode.LiveProduction, discardOnFailure: discardOnFailure);
 
     public async Task<LiveRunResult> RunNewSessionAsync(InvoiceDocument invoice, FakeMisa misa, CancellationToken token)
     {

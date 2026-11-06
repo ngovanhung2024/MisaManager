@@ -3,8 +3,9 @@
 Tool Windows (WPF, .NET 10) nhập hóa đơn bán hàng từ Excel vào **MISA SME 2023 R20** bằng UI Automation:
 đọc file Excel → kiểm tra dữ liệu → tự mở chứng từ bán hàng trong MISA, điền khách hàng/ngày/hóa đơn/dòng hàng/thuế →
 đọc lại toàn bộ từ MISA để đối chiếu → **Cất** khi khớp, **Bỏ** khi lệch. Mọi bước đều có checkpoint, nên nếu bị gián đoạn
-thì không nhập trùng. Gặp **lỗi** thì tool dừng cả lượt ngay tại chỗ: chứng từ dở vẫn mở trong MISA để kiểm tra, tool không
-Bỏ, không tự nhập lại và không chuyển sang hóa đơn kế tiếp.
+thì không nhập trùng. Gặp **lỗi** ở một hóa đơn thì tool không hiện popup: lỗi được lưu ở tab **Hiệu năng** (nút **Copy lỗi**), chứng từ dở
+được **Bỏ** (không Cất, đã chứng minh chưa lưu) rồi chạy hóa đơn kế tiếp; hóa đơn lỗi không tự nhập lại trong lượt đó. Nếu
+không Bỏ được (ví dụ MISA đang mở hộp thoại lạ, hoặc Cất chưa rõ) thì tool dừng cả lượt, chứng từ để nguyên để kiểm tra.
 
 ## Kiến trúc
 

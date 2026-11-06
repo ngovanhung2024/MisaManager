@@ -398,6 +398,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         var skipped = 0;
         var held = 0;
         var unfinishedNumbers = new List<string>();
+        var failedNumbers = new List<string>();
         var blockedNumbers = new List<string>();
         string? identity = null;
         services.BeginUiBatch(first.Identity.Number);
@@ -486,8 +487,23 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PerformanceCurrent = "Nhập hóa đơn · đang chạy";
                 // One attempt per invoice: an error stops the run with the voucher left open, it is never Bỏ and entered again.
                 var liveRun = BeginTrace("Nhập hóa đơn", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
+                var liveRunIndex = PerformanceEntries.Count - 1;
                 var response = await services.RunInvoiceAsync(invoice, identity ?? "");
-                FinishTrace(liveRun, response.Status == "completed" ? "Hoàn tất" : response.Status, response.Status == "completed" ? null : response.Message);
+                var lastLive = services.Workflow.LastLiveRun is { } live && live.Context.Invoice.Fingerprint == fingerprint ? live : null;
+                var errorDiscarded = response.Status == "completed" && lastLive?.Outcome == WorkflowRunner.ErrorDiscardedOutcome;
+                // Missing customer/item codes are "chưa hoàn thành", not errors.
+                var waitingForCode = lastLive is { MisaClean: true } && RunOutcome.IsUnfinished(lastLive.Context.Snapshot);
+                var failed = errorDiscarded
+                    || response.Status != "completed" && !stopRequested && lastLive?.Outcome != "paused" && !waitingForCode;
+                string? errorReport = null;
+                if (failed)
+                {
+                    var details = Serialize(response.Data);
+                    errorReport = ErrorPrompt.Build(response.Message, details, DateTimeOffset.Now, invoice.Identity.Number,
+                        PerformanceEntries.Skip(liveRunIndex + 1).ToArray());
+                }
+                FinishTrace(liveRun, response.Status != "completed" ? response.Status : errorDiscarded ? "Lỗi · đã Bỏ chứng từ" : "Hoàn tất",
+                    failed ? response.Message : null, errorReport);
                 RestoreMisaWindow(identity);
                 if (stopRequested && services.Workflow.LastLiveRun is { Outcome: "paused" } paused
                     && paused.Context.Invoice.Fingerprint == fingerprint)
@@ -503,16 +519,24 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 var unfinished = response.Status != "completed" && !stopRequested
                     && services.Workflow.LastLiveRun is { MisaClean: true } skippedRun
                     && skippedRun.Context.Invoice.Fingerprint == fingerprint && RunOutcome.IsUnfinished(skippedRun.Context.Snapshot);
-                if (response.Status != "completed" && !unfinished)
-                {
-                    performanceOutcome = response.Status;
-                    if (!stopRequested) RaiseError(response.Message, Serialize(response.Data));
-                }
+                // Invoice errors are kept in Hiệu năng (Copy lỗi) instead of a popup; the batch moves on whenever MISA is clean.
+                var cleanFailure = response.Status != "completed" && !unfinished && failed && lastLive is { MisaClean: true };
+                if (failed && !unfinished) RaiseError(response.Message, Serialize(response.Data), popup: false);
+                if (response.Status != "completed" && !unfinished && !cleanFailure) performanceOutcome = response.Status;
                 // Update history in memory instead of re-reading every run file from disk.
                 if (services.Workflow.Current is { } finished)
                 {
                     History = [finished, .. History.Where(run => run.Snapshot.RunId != finished.Snapshot.RunId)];
                     NotifyWorkflowChanged();
+                }
+                if (errorDiscarded || cleanFailure)
+                {
+                    handledInBatch.Add(fingerprint);
+                    failedNumbers.Add(invoice.Identity.Number);
+                    Status = $"{position} · bị lỗi, {(errorDiscarded ? "đã Bỏ chứng từ (không Cất)" : "chưa nhập gì vào MISA")}; "
+                        + "lỗi lưu ở tab Hiệu năng, chuyển sang hóa đơn kế tiếp.";
+                    NotifyWorkflowChanged();
+                    continue;
                 }
                 if (unfinished)
                 {
@@ -523,8 +547,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     continue;
                 }
                 // A completed run (saved, verified discard, or number already in MISA) advances the queue.
-                // Any error stops here so the open voucher can be checked in MISA.
-                if (response.Status != "completed") break;
+                // An error whose voucher could not be Bỏ stops here: MISA must be handled before the next invoice.
+                if (response.Status != "completed")
+                {
+                    if (failed)
+                        Status = $"{position} · bị lỗi và không đóng được chứng từ, đã dừng. Đóng (Bỏ) chứng từ trong MISA rồi bấm Thêm vào MISA để chạy tiếp; "
+                            + "lỗi lưu ở tab Hiệu năng (Copy lỗi).";
+                    break;
+                }
                 var current = services.Workflow.Current;
                 var final = current?.Invoice.Fingerprint == fingerprint ? current.Snapshot : null;
                 if (final?.Status is WorkflowStatus.Saved or WorkflowStatus.Discarded)
@@ -554,6 +584,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     if (unfinishedNumbers.Count > 0)
                         parts.Add($"{unfinishedNumbers.Count} chưa hoàn thành, chưa có mã khách hàng/mã hàng ({string.Join(", ", unfinishedNumbers.Take(5))})");
                     if (blockedNumbers.Count > 0) parts.Add($"{blockedNumbers.Count} thiếu dữ liệu ({string.Join(", ", blockedNumbers.Take(5))})");
+                    if (failedNumbers.Count > 0)
+                        parts.Add($"{failedNumbers.Count} lỗi, không Cất ({string.Join(", ", failedNumbers.Take(5))}), xem tab Hiệu năng để Copy lỗi");
                     Status = parts.Count == 0 ? "Không còn hóa đơn nào cần chạy trong danh sách đã tick."
                         : $"Xong các hóa đơn đã tick: {string.Join(" · ", parts)}.";
                 }
@@ -692,12 +724,12 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         return id;
     }
 
-    private void FinishTrace(string id, string status, string? error = null)
+    private void FinishTrace(string id, string status, string? error = null, string? errorReport = null)
     {
         if (!performanceTraceIndexes.TryGetValue(id, out var index) || index >= PerformanceEntries.Count) return;
         var entry = PerformanceEntries[index];
         if (entry.CompletedAt is not null) return;
-        PerformanceEntries[index] = entry with { CompletedAt = DateTimeOffset.UtcNow, Status = status, Error = error };
+        PerformanceEntries[index] = entry with { CompletedAt = DateTimeOffset.UtcNow, Status = status, Error = error, ErrorReport = errorReport };
         performanceTraceIndexes.Remove(id);
     }
 
@@ -714,12 +746,19 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         foreach (var id in performanceTraceIndexes.Keys.ToArray()) FinishTrace(id, status, error);
     }
 
-    private void RaiseError(string message, string details)
+    private void RaiseError(string message, string details, bool popup = true)
     {
         services.RecordUiError(message, details);
         var code = ErrorHints.FindCode(services.Workflow.Current?.Snapshot.ErrorChain, message, details, services.Workflow.Current?.Snapshot.LastErrorCode);
         lastError = (code, message);
-        ErrorRaised?.Invoke(this, new(message, details, DateTimeOffset.Now));
+        if (popup) ErrorRaised?.Invoke(this, new(message, details, DateTimeOffset.Now));
+    }
+
+    /// <summary>"Copy lỗi" text of every invoice that failed in this session, oldest first.</summary>
+    public string? ExportInvoiceErrors()
+    {
+        var reports = PerformanceEntries.Select(entry => entry.ErrorReport).OfType<string>().ToArray();
+        return reports.Length == 0 ? null : string.Join(Environment.NewLine + new string('=', 100) + Environment.NewLine, reports);
     }
 
     private static string Serialize(object? value)
@@ -943,6 +982,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                     case WorkflowStatus.Discarded when RunOutcome.IsExisting(snapshot):
                         return new(ToolStateKind.Existing, ToolState.LabelOf(ToolStateKind.Existing),
                             invoiceText + " · số hóa đơn đã có trong MISA, đã chọn Không và đóng tab");
+                    case WorkflowStatus.Discarded when RunOutcome.IsErrorDiscard(snapshot):
+                        return new(ToolStateKind.Discarded, RunOutcome.ErrorDiscardLabel, invoiceText + " · lỗi khi nhập, đã Bỏ chứng từ (không Cất)");
                     case WorkflowStatus.Discarded:
                         return new(ToolStateKind.Discarded, ToolState.LabelOf(ToolStateKind.Discarded), invoiceText + " · dữ liệu lệch, chứng từ đã được bỏ an toàn");
                     case WorkflowStatus.InputUncertain or WorkflowStatus.SaveUncertain:

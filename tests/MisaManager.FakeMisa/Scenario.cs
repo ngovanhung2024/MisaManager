@@ -18,6 +18,8 @@ public sealed record Scenario
     public bool TaxPromptAsLabel { get; init; }
     /// <summary>MISA's UI thread stops answering (UIA times out) for this long right after the tax prompt shows.</summary>
     public int TaxPromptBusyMilliseconds { get; init; }
+    /// <summary>The per-rate wording "Tiền thuế GTGT của từng loại thuế suất ... Chênh lệch &lt;d&gt;" with Yes/No buttons.</summary>
+    public bool TaxPromptPerRate { get; init; }
     /// <summary>Added to every computed line VAT, to simulate MISA rounding differently from the source.</summary>
     public decimal TaxOffset { get; init; }
     /// <summary>Item codes the new-item dialog refuses with "đã tồn tại" (created by another user meanwhile).</summary>
@@ -56,6 +58,8 @@ public sealed record Scenario
     public int PurchaseDefaultsDelayMilliseconds { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
+    /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>
+    public int QuantityIgnoredRow { get; init; } = -1;
     /// <summary>After "Thành tiền" is committed the line's code cell reads empty this long (R20 redrawing the row).</summary>
     public int RowRedrawAfterAmountMilliseconds { get; init; }
     /// <summary>After "Thành tiền" the grid scrolls sideways: Tên hàng slides under the frozen Mã hàng column (report 0.2.143).</summary>

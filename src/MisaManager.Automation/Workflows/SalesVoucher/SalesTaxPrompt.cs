@@ -7,18 +7,17 @@ using Windows.Win32.Foundation;
 
 namespace MisaManager.Automation;
 
-// Sales-voucher specific: MISA's "Tổng tiền thuế GTGT <..> khác ... chênh lệch <..>" prompt shown on Cất.
+// Sales-voucher specific: MISA's tax-difference prompt ("... tiền thuế GTGT ... chênh lệch <..>") shown on Cất.
 /// <summary>Text of MISA's tax-difference prompt and whether it was answered "Có" (difference of at most 2 đồng).</summary>
 public sealed record TaxPromptAnswer(string Text, bool Accepted);
 
 public sealed partial class NativeInputService
 {
-    private static readonly string[] TaxPromptKeys = [TextKey.Compact("Tổng tiền thuế"), TextKey.Compact("chênh lệch")];
     private static readonly string[] NoCaptions = ["&No", "No", "&Không", "Không"];
     private static readonly string[] YesCaptions = ["&Yes", "Yes", "&Có", "Có"];
 
     /// <summary>
-    /// Answers MISA's tax-difference prompt: "Có" when its "chênh lệch &lt;d&gt;" is at most 2 đồng (MISA moves it into
+    /// Answers MISA's tax-difference prompt: "Có" when every "chênh lệch &lt;d&gt;" is at most 2 đồng (MISA moves it into
     /// line 1; the user accepts that rounding), otherwise "Không" so the source tax is kept. The saved totals are read
     /// back afterwards either way. Returns the prompt text and answer, or null when no such prompt is open.
     /// </summary>
@@ -35,8 +34,7 @@ public sealed partial class NativeInputService
                 throw new AutomationException("SAVE_PROMPT_AMBIGUOUS", "Có nhiều hộp thông báo chênh lệch tiền thuế cùng lúc; xử lý trong MISA rồi chạy lại.");
             var (dialog, text, no, yes) = prompts[0];
             // Without a readable difference or a single "Có" button, keep the safe answer "Không".
-            var accept = NativeComparison.TaxPromptDifference(text) is { } difference && Math.Abs(difference) <= NativeComparison.TaxRoundingTolerance
-                && (yes.Handle != nint.Zero || yes.Element is not null);
+            var accept = NativeComparison.TaxPromptAcceptable(text) && (yes.Handle != nint.Zero || yes.Element is not null);
             var (handle, element) = accept ? yes : no;
             var caption = accept ? "Có" : "Không";
             if (handle != nint.Zero) return new TaxPromptTarget(dialog, text, accept, handle, 0, 0, nint.Zero);
@@ -111,7 +109,7 @@ public sealed partial class NativeInputService
                 return true;
             }, nint.Zero);
             var message = string.Join(" ", texts);
-            if (IsTaxPrompt(message) && noButtons.Count == 1)
+            if (NativeComparison.IsTaxPrompt(message) && noButtons.Count == 1)
             {
                 result.Add((handle, message, (noButtons[0], null), (yesButtons.Count == 1 ? yesButtons[0] : nint.Zero, null)));
                 continue;
@@ -126,7 +124,7 @@ public sealed partial class NativeInputService
                     .Append(window.Properties.Name.ValueOrDefault ?? "")
                     .Where(value => !string.IsNullOrWhiteSpace(value));
                 var uiaMessage = System.Net.WebUtility.HtmlDecode(string.Join(" ", parts));
-                if (!IsTaxPrompt(uiaMessage)) continue;
+                if (!NativeComparison.IsTaxPrompt(uiaMessage)) continue;
                 var enabled = window.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.Button))
                     .Where(button => button.Properties.IsEnabled.ValueOrDefault && !button.Properties.IsOffscreen.ValueOrDefault).ToArray();
                 AutomationElement[] Find(NativeSelector selector, string[] captions) => enabled
@@ -142,12 +140,6 @@ public sealed partial class NativeInputService
             catch (System.Runtime.InteropServices.COMException) { }
         }
         return result;
-    }
-
-    private static bool IsTaxPrompt(string message)
-    {
-        var key = TextKey.Compact(message);
-        return TaxPromptKeys.All(part => key.Contains(part, StringComparison.Ordinal));
     }
 
     // Only identifies the prompt (no input is verified here): MISA's message box shows its text in labels that

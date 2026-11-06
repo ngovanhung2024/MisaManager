@@ -559,7 +559,11 @@
                 <TextBlock Text="{Binding PerformanceElapsed}" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Primary}"/>
                 <TextBlock Text="{Binding PerformanceInvoice}" FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
               </StackPanel>
-              <Button Grid.Column="1" Content="Copy báo cáo" Click="CopyPerformance_Click" Style="{StaticResource RailButton}" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <Button Content="Copy báo cáo" Click="CopyPerformance_Click" Style="{StaticResource RailButton}"/>
+                <Button Content="Copy lỗi" Click="CopyInvoiceErrors_Click" Style="{StaticResource RailButton}" Margin="0,3,0,0"
+                        ToolTip="Copy chi tiết lỗi của mọi hóa đơn bị lỗi trong phiên (để gửi cho AI sửa)"/>
+              </StackPanel>
             </Grid>
           </Border>
           <TextBlock Grid.Row="1" Text="Mỗi dòng là một bước đã chạy; các bước Native/UI Automation được lấy theo hoạt động hiện tại." FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="2,0,2,4"/>
@@ -573,6 +577,13 @@
                       <DockPanel><TextBlock Text="{Binding Status}" DockPanel.Dock="Right" FontSize="11.5" Foreground="{StaticResource Muted}" Margin="4,0,0,0"/><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap"/></DockPanel>
                       <TextBlock Text="{Binding Details}" FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
                       <TextBlock Text="{Binding Error}" FontSize="11.5" Foreground="{StaticResource Danger}" TextWrapping="Wrap"/>
+                      <Button Content="Copy lỗi" Tag="{Binding ErrorReport}" Click="CopyStepError_Click" HorizontalAlignment="Left" Margin="0,3,0,0">
+                        <Button.Style>
+                          <Style TargetType="Button" BasedOn="{StaticResource RailButton}">
+                            <Style.Triggers><DataTrigger Binding="{Binding ErrorReport}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                          </Style>
+                        </Button.Style>
+                      </Button>
                     </StackPanel>
                     <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" HorizontalAlignment="Right" VerticalAlignment="Top" FontWeight="SemiBold" Foreground="{StaticResource Primary}"/>
                   </Grid>

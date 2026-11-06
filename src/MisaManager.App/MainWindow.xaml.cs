@@ -1152,6 +1152,17 @@ public partial class MainWindow : Window
     private void CopyPerformance_Click(object sender, RoutedEventArgs e)
         => StatusLabel.Text = TryCopy(workflow.ExportPerformance(), "hieu-nang") ?? "Đã copy báo cáo hiệu năng vào clipboard.";
 
+    private void CopyInvoiceErrors_Click(object sender, RoutedEventArgs e)
+        => StatusLabel.Text = workflow.ExportInvoiceErrors() is { } errors
+            ? TryCopy(errors, "loi") ?? "Đã copy lỗi của các hóa đơn bị lỗi; dán vào AI để được hỗ trợ sửa."
+            : "Phiên này chưa có hóa đơn nào bị lỗi.";
+
+    private void CopyStepError_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string report })
+            StatusLabel.Text = TryCopy(report, "loi") ?? "Đã copy lỗi của hóa đơn; dán vào AI để được hỗ trợ sửa.";
+    }
+
     // The clipboard is often held by RDP or clipboard managers (CLIPBRD_E_CANT_OPEN); retry, then fall back to a file.
     private static string? TryCopy(string text, string name)
     {

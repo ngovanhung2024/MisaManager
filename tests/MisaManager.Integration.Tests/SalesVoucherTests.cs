@@ -586,6 +586,59 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("bấm Có", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(TaxRoundingPrompt: true));
 
+    // User request: an invoice error no longer stops the batch; its voucher is Bỏ (not Cất) and the next invoice runs.
+    [Fact]
+    public Task FailedInvoiceIsDiscardedAndTheNextInvoiceIsSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var failing = Invoices.Build(TempDirectory(misa), "1031", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(failing, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == WorkflowRunner.ErrorDiscardedOutcome, Describe(result));
+        Assert.True(result.MisaClean, Describe(result));
+        Assert.Equal(WorkflowStatus.Discarded, result.Context.Snapshot.Status);
+        Assert.False(string.IsNullOrEmpty(result.Context.Snapshot.LastErrorCode));
+        Assert.Empty(misa.State().Vouchers);
+
+        var next = Invoices.Build(TempDirectory(misa), "1032", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+        var saved = await harness.RunAsync(next, misa, token, discardOnFailure: true);
+
+        Assert.True(saved.Outcome == "saved", Describe(saved));
+        Assert.Single(misa.State().Vouchers);
+    }, new FakeScenario(QuantityIgnoredRow: 1));
+
+    // A MISA message box keeps the editor disabled, so Bỏ is impossible: the batch must stop with the voucher as it is.
+    [Fact]
+    public Task FailedInvoiceUnderAMisaDialogIsNotDiscarded() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1033", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "failed", Describe(result));
+        Assert.False(result.MisaClean, Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+    }, new FakeScenario(LineErrorRow: 1));
+
+    [Fact]
+    public Task PerRateTaxPromptWithYesNoButtonsIsAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1026", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(invoice.TaxTotal + 1, Assert.Single(misa.State().Vouchers).TaxTotal);
+        Assert.Contains("bấm Có", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+    }, new FakeScenario(TaxRoundingPrompt: true, TaxPromptAsLabel: true, TaxPromptPerRate: true));
+
     [Fact]
     public Task TaxPromptWithALargeDifferenceIsStillAnsweredNo() => WithFakeAsync(async (misa, harness, token) =>
     {

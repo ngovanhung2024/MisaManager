@@ -228,20 +228,22 @@ public sealed partial class AppServices : IAsyncDisposable
             await ItemCatalogWorkbook.EnsureImportedProvenanceAsync(WorkbookReader, ItemCatalog, token);
             await EnsureInitializedAsync(token);
             var result = await Workflow.RunLiveAsync(invoice, "", windowIdentity, token, liveValidation: true,
-                WorkflowProfile.Revision, allowKgToTon: true, requestId, requestId, WorkflowExecutionMode.LiveProduction);
-            var status = result.Outcome is "saved" or "discarded" or "existing" ? OperationStatuses.Completed : OperationStatuses.Blocked;
+                WorkflowProfile.Revision, allowKgToTon: true, requestId, requestId, WorkflowExecutionMode.LiveProduction, discardOnFailure: true);
+            var status = result.Outcome is "saved" or "discarded" or "existing" or WorkflowRunner.ErrorDiscardedOutcome
+                ? OperationStatuses.Completed : OperationStatuses.Blocked;
             var message = result.Outcome switch
             {
                 "paused" => "Đã tạm dừng theo yêu cầu sau thao tác vừa hoàn tất; chứng từ chưa Cất.",
                 "saved" => "Đối chiếu khớp và đã Cất hóa đơn.",
                 "discarded" => "Đối chiếu không khớp, đã Bỏ chứng từ và lưu hồ sơ kiểm chứng.",
                 "existing" => "Hóa đơn đã tồn tại trong MISA: đã chọn Không, đóng chứng từ và chuyển sang hóa đơn tiếp theo.",
+                WorkflowRunner.ErrorDiscardedOutcome => "Nhập hóa đơn bị lỗi: " + result.Error + " Đã Bỏ chứng từ (không Cất); lỗi lưu ở tab Hiệu năng.",
                 _ => result.MisaClean
                     ? "Nhập hóa đơn bị lỗi; đã dừng (chưa mở chứng từ nào). Bấm \"Copy lỗi\" để gửi cho AI."
                     : "Nhập hóa đơn bị lỗi; đã dừng, chứng từ vẫn mở trong MISA (không Bỏ, không nhập lại). Kiểm tra rồi đóng chứng từ; bấm \"Copy lỗi\" để gửi cho AI."
             };
             var data = FailureData(result.Context, result.Verification, result.Error);
-            if (status != OperationStatuses.Completed && result.Outcome != "paused")
+            if ((status != OperationStatuses.Completed || result.Outcome == WorkflowRunner.ErrorDiscardedOutcome) && result.Outcome != "paused")
                 await SaveFailureDataAsync(result.Context.Snapshot.RunId, data);
             return new(requestId, status, message, result.Context.Snapshot.InputMayHaveBeenSent, data);
         }

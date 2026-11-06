@@ -636,7 +636,7 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         string windowIdentity, CancellationToken token = default, bool liveValidation = true,
         string profileRevision = "", bool allowKgToTon = false, string? requestId = null,
         string? operationId = null,
-        WorkflowExecutionMode executionMode = WorkflowExecutionMode.LiveProduction)
+        WorkflowExecutionMode executionMode = WorkflowExecutionMode.LiveProduction, bool discardOnFailure = false)
     {
         if (executionMode == WorkflowExecutionMode.LiveTest)
             throw new ArgumentException("Live test mode was retired; use the fake MISA integration tests instead.", nameof(executionMode));
@@ -667,8 +667,16 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 var clean = batch.StopReason is not "interrupted" && !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current);
                 var chain = string.Join(Environment.NewLine, new[] { failureChain, current.Snapshot.ErrorChain }
                     .Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal));
-                current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED", token,
-                    chain.Length > 0 ? chain : null);
+                var code = current.Snapshot.LastErrorCode ?? failureCode ?? "LIVE_RUN_FAILED";
+                if (discardOnFailure && !clean)
+                {
+                    var (closed, discardError) = await DiscardAfterFailureAsync(current, message, code, chain.Length > 0 ? chain : null, token);
+                    if (closed is not null)
+                        return await CompleteLiveRecordAsync(closed, startedAt, ErrorDiscardedOutcome, false, false, null, message, token, misaClean: true);
+                    current = Refreshed(current);
+                    message += " Không Bỏ được chứng từ: " + discardError;
+                }
+                current = await MarkLiveFailureAsync(current, message, code, token, chain.Length > 0 ? chain : null);
                 return await CompleteLiveRecordAsync(current, startedAt, "failed", false, false, null, message, token, misaClean: clean);
             }
 
@@ -699,7 +707,16 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 }
 
                 var message = current.Snapshot.LastMessage ?? "Cất hóa đơn chưa được xác nhận.";
-                current = await MarkLiveFailureAsync(current, message, current.Snapshot.LastErrorCode ?? "SAVE_UNCERTAIN", token);
+                var saveCode = current.Snapshot.LastErrorCode ?? "SAVE_UNCERTAIN";
+                if (discardOnFailure)
+                {
+                    var (closed, discardError) = await DiscardAfterFailureAsync(current, message, saveCode, current.Snapshot.ErrorChain, token);
+                    if (closed is not null)
+                        return await CompleteLiveRecordAsync(closed, startedAt, ErrorDiscardedOutcome, true, true, comparison, message, token, misaClean: true);
+                    current = Refreshed(current);
+                    message += " Không Bỏ được chứng từ: " + discardError;
+                }
+                current = await MarkLiveFailureAsync(current, message, saveCode, token);
                 return await CompleteLiveRecordAsync(current, startedAt, "failed", true, true, comparison, message, token);
             }
 
@@ -729,10 +746,20 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             // Same as above: stop with the voucher left open, never Bỏ and enter again.
             var clean = !current.Snapshot.InputMayHaveBeenSent && !VoucherWasOpened(current)
                 && current.Snapshot.Status is not (WorkflowStatus.SaveUncertain or WorkflowStatus.Saved);
-            current = await MarkLiveFailureAsync(current, error.Message,
-                current.Snapshot.LastErrorCode ?? (error as AutomationException)?.Code ?? "LIVE_RUN_ERROR", CancellationToken.None, error.ToString());
+            var code = current.Snapshot.LastErrorCode ?? (error as AutomationException)?.Code ?? "LIVE_RUN_ERROR";
+            var message = error.Message;
+            if (discardOnFailure && !clean && !token.IsCancellationRequested)
+            {
+                var (closed, discardError) = await DiscardAfterFailureAsync(current, message, code, error.ToString(), token);
+                if (closed is not null)
+                    return await CompleteLiveRecordAsync(closed, startedAt, ErrorDiscardedOutcome, comparison is not null,
+                        comparison?.Matched == true, comparison, message, CancellationToken.None, misaClean: true);
+                current = Refreshed(current);
+                message += " Không Bỏ được chứng từ: " + discardError;
+            }
+            current = await MarkLiveFailureAsync(current, message, code, CancellationToken.None, error.ToString());
             return await CompleteLiveRecordAsync(current, startedAt, "failed", comparison is not null,
-                comparison?.Matched == true, comparison, error.Message, CancellationToken.None, misaClean: clean);
+                comparison?.Matched == true, comparison, message, CancellationToken.None, misaClean: clean);
         }
     }
 
@@ -758,6 +785,50 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         ReconciliationResult? comparison, CancellationToken token)
         => CompleteLiveRecordAsync(current, startedAt, "paused", comparison is not null, comparison?.Matched == true, comparison,
             null, token, misaClean: !VoucherWasOpened(current));
+
+    /// <summary>Live outcome of a failed attempt whose voucher was then Bỏ (nothing saved), so the batch goes on.</summary>
+    public const string ErrorDiscardedOutcome = "error_discarded";
+
+    /// <summary>
+    /// Bỏ the voucher of a failed attempt so the batch can go on with the next invoice. The gateway proves the voucher
+    /// is unsaved before Bỏ (a save in doubt needs fresh register absence). The Discarded run keeps the original error;
+    /// on failure a save in doubt stays SaveUncertain so the invoice can never be entered twice.
+    /// </summary>
+    private async Task<(WorkflowContext? Closed, string? Error)> DiscardAfterFailureAsync(WorkflowContext failed, string message,
+        string code, string? chain, CancellationToken token)
+    {
+        var snapshot = failed.Snapshot;
+        var saveInDoubt = snapshot.Status == WorkflowStatus.SaveUncertain;
+        if (IsTerminal(snapshot.Status) || saveInDoubt && snapshot.PausedFromStatus != WorkflowStatus.AwaitingSave)
+            return (null, "trạng thái " + snapshot.Status + " không cho phép Bỏ tự động.");
+        WorkflowContext? result = null;
+        string? error = null;
+        try { result = await FinishAsync(save: false, resolveSaveUncertain: saveInDoubt, token: token); }
+        catch (Exception fault) when (fault is not OperationCanceledException) { error = fault.Message; }
+        await transitionGate.WaitAsync(CancellationToken.None);
+        try
+        {
+            var latest = Refreshed(failed);
+            if (result?.Snapshot.Status == WorkflowStatus.Discarded)
+            {
+                var closed = latest with { Snapshot = latest.Snapshot with { LastErrorCode = code, ErrorChain = chain ?? latest.Snapshot.ErrorChain,
+                    LastMessage = message + " Đã Bỏ chứng từ (không Cất) và chuyển sang hóa đơn tiếp theo." } };
+                lock (gate) context = closed;
+                await PersistAsync(closed, CancellationToken.None);
+                return (closed, null);
+            }
+            error ??= latest.Snapshot.LastMessage ?? "Không xác nhận được thao tác Bỏ.";
+            if (saveInDoubt && latest.Snapshot.Status != WorkflowStatus.SaveUncertain)
+            {
+                var kept = Replace(latest, WorkflowStatus.SaveUncertain, latest.Snapshot.NativeFrame, WorkflowStatus.AwaitingSave, message);
+                kept = kept with { Snapshot = kept.Snapshot with { InputMayHaveBeenSent = true, InputPending = false, PendingAction = null } };
+                lock (gate) context = kept;
+                await PersistAsync(kept, CancellationToken.None);
+            }
+            return (null, error);
+        }
+        finally { transitionGate.Release(); }
+    }
 
     /// <summary>True when a run paused by Dừng ngay may have left its voucher open in MISA.</summary>
     public static bool StoppedWithOpenVoucher(WorkflowContext value)

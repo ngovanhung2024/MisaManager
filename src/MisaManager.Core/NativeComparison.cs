@@ -50,6 +50,34 @@ public static class NativeComparison
         return match.Success && TryNumber(match.Groups[1].Value, CultureInfo.GetCultureInfo("vi-VN"), out var value) ? value : null;
     }
 
+    /// <summary>
+    /// MISA R20 words the Cất prompt either as one total ("Tổng tiền thuế GTGT &lt;a&gt; khác ... chênh lệch &lt;d&gt;") or per
+    /// tax rate ("Tiền thuế GTGT của từng loại thuế suất đang khác với công thức ... - Thuế suất &lt;5%&gt;: Chênh lệch &lt;1&gt;").
+    /// </summary>
+    public static bool IsTaxPrompt(string? message)
+    {
+        var key = TextKey.Compact(System.Net.WebUtility.HtmlDecode(message ?? ""));
+        return key.Contains(TaxPromptAmountKey, StringComparison.Ordinal) && key.Contains(TaxPromptDifferenceKey, StringComparison.Ordinal);
+    }
+
+    private static readonly string TaxPromptAmountKey = TextKey.Compact("tiền thuế");
+    private static readonly string TaxPromptDifferenceKey = TextKey.Compact("chênh lệch");
+
+    /// <summary>
+    /// True when the prompt states at least one difference and every one (one per tax rate) is within
+    /// <see cref="TaxRoundingTolerance"/>; an unreadable amount keeps the safe answer "Không".
+    /// </summary>
+    public static bool TaxPromptAcceptable(string? message)
+    {
+        var matches = TaxPromptDifferencePattern.Matches(System.Net.WebUtility.HtmlDecode(message ?? "").Normalize(NormalizationForm.FormC));
+        if (matches.Count == 0) return false;
+        var vi = CultureInfo.GetCultureInfo("vi-VN");
+        return matches.All(match => TryNumber(match.Groups[1].Value, vi, out var value) && Math.Abs(value) <= TaxRoundingTolerance);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex TaxPromptDifferencePattern = new(@"chênh\s*lệch\s*<\s*([^<>]+?)\s*>",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>Tax amount or total equal to the source within <see cref="TaxRoundingTolerance"/> (2 đồng).</summary>
     public static bool MatchesTaxRounding(string expected, string? actual, CultureInfo culture)
         => actual is not null && TryNumber(expected, CultureInfo.InvariantCulture, out var left) && TryNumber(actual, culture, out var right)
