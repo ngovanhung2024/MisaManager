@@ -324,6 +324,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             {
                 // Entry steps skip readbacks the final reconciliation repeats (voucher number,
                 // dates, invoice fields, line values). Recovery still verifies via ObserveAsync.
+                // A failed entry can leave a MISA notice (e.g. "Dữ liệu không có trong danh mục.") over the editor, which
+                // disables it; OK on a single-button notice saves nothing, so Bỏ can follow and the batch goes on.
+                if (transition.To == WorkflowStatus.Discarded)
+                    foreach (var notice in await input.AcknowledgeMessageBoxesAsync(window, token))
+                        Trace.TraceInformation("Bấm OK hộp thông báo MISA trước khi Bỏ: " + notice);
                 // A confirmed discard may be retried after the editor has already closed;
                 // let its fresh register readback decide whether an editor is needed.
                 if (transition.To != WorkflowStatus.Discarded

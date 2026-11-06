@@ -73,6 +73,11 @@ public sealed class FakeGrid : Border
     /// area, so nothing lies under the headers. Rebuilt with the rows while set.
     /// </summary>
     public bool ShadowBand { get; set; }
+    /// <summary>
+    /// R20 on the VPS (0.2.164): the DataRowCount region's rows lie exactly over the visible rows but expose no cells,
+    /// and the visible rows carry ids that are not the ordinal ("r0", "r1", …).
+    /// </summary>
+    public bool ShadowOverlay { get; set; }
     public bool FooterOutside { get; }
     public Border FooterBar { get; }
     /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
@@ -151,12 +156,15 @@ public sealed class FakeGrid : Border
         if (ShowInsertionRow) AddRow(null);
         foreach (var row in rows) row.Load(source, force: true);
         footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
-        shadow.Build(ShadowBand ? source.RowCount : 0, columns);
+        shadow.Build(ShadowBand || ShadowOverlay ? source.RowCount : 0, columns,
+            ShadowOverlay ? index => rows.FirstOrDefault(row => row.Index == index) : null);
     }
 
     private void AddRow(int? index)
     {
         var row = new GridRow(this, index, columns, RowHeight);
+        if (ShadowOverlay && index is { } ordinal)
+            AutomationProperties.SetAutomationId(row, "r" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture));
         rows.Add(row);
         rowPanel.Children.Add(row);
         ApplyHorizontalScroll([.. row.Cells], header: false);
@@ -206,17 +214,20 @@ internal sealed class ShadowRegion : StackPanel
 {
     public int Count { get; private set; }
 
-    public void Build(int count, IReadOnlyList<GridColumn> columns)
+    /// <param name="overlay">When set, row i reports the bounds of that visible row and has no cells.</param>
+    public void Build(int count, IReadOnlyList<GridColumn> columns, Func<int, UIElement?>? overlay = null)
     {
         Children.Clear();
         Count = count;
         AutomationProperties.SetItemStatus(this, $"DataRowCount^IG_TOKEN_SEPERATOR^{count}^IG_TOKEN_DELIMETER^");
         for (var index = 0; index < count; index++)
         {
+            var ordinal = index;
             var row = new ShadowRow { Orientation = Orientation.Horizontal, Height = 2, Width = 300, IsEnabled = false,
-                HorizontalAlignment = HorizontalAlignment.Left };
+                HorizontalAlignment = HorizontalAlignment.Left, Over = overlay is null ? null : () => overlay(ordinal) };
             AutomationProperties.SetAutomationId(row, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            foreach (var column in columns) row.Children.Add(new TextBox { Width = 0, Height = 2, Text = "" });
+            if (overlay is null)
+                foreach (var column in columns) row.Children.Add(new TextBox { Width = 0, Height = 2, Text = "" });
             Children.Add(row);
         }
     }
@@ -232,12 +243,16 @@ internal sealed class ShadowRegion : StackPanel
 
     private sealed class ShadowRow : StackPanel
     {
+        public Func<UIElement?>? Over { get; init; }
         protected override AutomationPeer OnCreateAutomationPeer() => new ShadowRowPeer(this);
     }
 
-    private sealed class ShadowRowPeer(StackPanel owner) : FrameworkElementAutomationPeer(owner)
+    private sealed class ShadowRowPeer(ShadowRow owner) : FrameworkElementAutomationPeer(owner)
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.DataItem;
+        protected override System.Windows.Rect GetBoundingRectangleCore()
+            => owner.Over?.Invoke() is { } visible && UIElementAutomationPeer.CreatePeerForElement(visible) is { } peer
+                ? peer.GetBoundingRectangle() : base.GetBoundingRectangleCore();
         protected override List<AutomationPeer> GetChildrenCore()
             => [.. owner.Children.Cast<UIElement>().Select(UIElementAutomationPeer.CreatePeerForElement).OfType<AutomationPeer>()];
     }

@@ -90,6 +90,11 @@ public sealed record Scenario
     /// (VPS report 0.2.163, HĐ 81: "Không ánh xạ được ô native cho cột Mã hàng").
     /// </summary>
     public bool GridShadowBandOnTaxTab { get; init; }
+    /// <summary>
+    /// On "Thuế", the DataRowCount region's rows lie over the visible rows with no cells, and the visible rows' ids are
+    /// not ordinals (VPS report 0.2.164, HĐ 81: "#0 bật [458,538 1003x23] … 0 ô").
+    /// </summary>
+    public bool GridShadowOverlayOnTaxTab { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

@@ -198,6 +198,57 @@ public sealed partial class NativeInputService : IAsyncDisposable
         }
     }
 
+    private static readonly HashSet<string> AcknowledgeLabels = new(StringComparer.OrdinalIgnoreCase) { "OK", "&OK", "Đóng", "&Đóng", "Đồng ý" };
+
+    /// <summary>
+    /// Presses the only button of MISA message boxes ("MISA SME 2023", owned by the MISA window) whose single enabled
+    /// button is OK/Đóng: a pure notice that changes no voucher data. Used only before Bỏ of a failed voucher so the
+    /// batch can go on. A box with several buttons (Có/Không, Yes/No) is left alone. Returns the acknowledged texts.
+    /// </summary>
+    public Task<IReadOnlyList<string>> AcknowledgeMessageBoxesAsync(WindowIdentity window, CancellationToken token)
+        => dispatcher.RunAsync<IReadOnlyList<string>>(() =>
+        {
+            var dialogs = new List<nint>();
+            EnumWindows((handle, _) =>
+            {
+                GetWindowThreadProcessId(handle, out var processId);
+                if (processId == window.ProcessId && handle != window.WindowHandle && WindowText(handle) == "MISA SME 2023"
+                    && PInvoke.IsWindowVisible((HWND)handle) && OwnedBy(handle, window.WindowHandle)) dialogs.Add(handle);
+                return true;
+            }, nint.Zero);
+            var acknowledged = new List<string>();
+            foreach (var dialog in dialogs)
+            {
+                token.ThrowIfCancellationRequested();
+                var texts = new List<string>();
+                var buttons = new List<(nint Handle, string Label)>();
+                EnumChildWindows(dialog, (handle, _) =>
+                {
+                    var label = WindowText(handle);
+                    if (ClassName(handle) == "Button")
+                    {
+                        if (PInvoke.IsWindowVisible((HWND)handle) && PInvoke.IsWindowEnabled((HWND)handle)) buttons.Add((handle, label));
+                    }
+                    else if (!string.IsNullOrWhiteSpace(label)) texts.Add(label.Trim());
+                    return true;
+                }, nint.Zero);
+                if (buttons.Count != 1 || !AcknowledgeLabels.Contains(buttons[0].Label.Trim())) continue;
+                MarkWorkflowInput();
+                epoch++;
+                if (SendMessageTimeout(buttons[0].Handle, 0x00F5, 0, nint.Zero, 2, 1000, out _) == nint.Zero)
+                    throw new AutomationException("INPUT_UNCERTAIN", "Bấm OK hộp thông báo MISA không được xác nhận; không bấm lại.", true);
+                acknowledged.Add(string.Join(" ", texts));
+            }
+            return acknowledged;
+        }, token, maySendInput: true);
+
+    private static string ClassName(nint handle)
+    {
+        var buffer = new StringBuilder(256);
+        GetClassName(handle, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
+
     private static bool OwnedBy(nint dialog, nint editorHandle)
     {
         var seen = new HashSet<nint>();
@@ -219,6 +270,7 @@ public sealed partial class NativeInputService : IAsyncDisposable
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(nint parent, WindowEnumerator callback, nint parameter);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint handle, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint handle, StringBuilder text, int maxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint handle, StringBuilder text, int maxCount);
 
     public Task<Readback> ReadAsync(NativeFrame frame, string automationId, string name, CancellationToken token = default)
         => dispatcher.RunAsync(() =>

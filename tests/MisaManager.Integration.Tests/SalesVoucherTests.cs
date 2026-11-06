@@ -610,9 +610,10 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Single(misa.State().Vouchers);
     }, new FakeScenario(QuantityIgnoredRow: 1));
 
-    // A MISA message box keeps the editor disabled, so Bỏ is impossible: the batch must stop with the voucher as it is.
+    // A MISA notice ("Dữ liệu không có trong danh mục.", only OK) over the failed voucher is acknowledged, the voucher is
+    // Bỏ (không Cất) and the batch goes on with the next invoice (user request, 0.2.164).
     [Fact]
-    public Task FailedInvoiceUnderAMisaDialogIsNotDiscarded() => WithFakeAsync(async (misa, harness, token) =>
+    public Task FailedInvoiceUnderAMisaNoticeIsDiscardedAndTheBatchGoesOn() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1033", Invoices.AV,
             Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"),
@@ -620,9 +621,18 @@ public sealed class SalesVoucherTests : UiTest
 
         var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
 
-        Assert.True(result.Outcome == "failed", Describe(result));
-        Assert.False(result.MisaClean, Describe(result));
+        Assert.True(result.Outcome == WorkflowRunner.ErrorDiscardedOutcome, Describe(result));
+        Assert.True(result.MisaClean, Describe(result));
+        Assert.Equal(WorkflowStatus.Discarded, result.Context.Snapshot.Status);
+        Assert.False(string.IsNullOrEmpty(result.Context.Snapshot.LastErrorCode));
         Assert.Empty(misa.State().Vouchers);
+
+        var next = Invoices.Build(TempDirectory(misa), "1034", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+        var saved = await harness.RunAsync(next, misa, token, discardOnFailure: true);
+
+        Assert.True(saved.Outcome == "saved", Describe(saved));
+        Assert.Equal("1034", Assert.Single(misa.State().Vouchers).InvoiceNumber);
     }, new FakeScenario(LineErrorRow: 1));
 
     // HĐ 81 (C26MLV): R20 warns the buyer's MST may have stopped operating and asks "tiếp tục Cất không?"; user: bấm Có.
@@ -742,6 +752,23 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
         Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
     }, new FakeScenario(GridShadowBandOnTaxTab: true, GridFooterOutside: true));
+
+    // HĐ 81 on the VPS (0.2.164): the ordinal row "#0" lay over the visible row with no cells, and no other row had id "0".
+    // Reconcile reads the visible row in the same band (the one line entry used), so the voucher is saved.
+    [Fact]
+    public Task CelllessOrdinalRowIsReadThroughTheVisibleRowInItsBand() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1089", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
+    }, new FakeScenario(GridShadowOverlayOnTaxTab: true, GridFooterOutside: true));
 
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>

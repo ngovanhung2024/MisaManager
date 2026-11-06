@@ -358,14 +358,27 @@ public sealed partial class NativeInputService
         // do not lie under the visible headers: on the VPS (0.2.163) no cell of the region's row mapped to "Mã hàng" while
         // line entry, which reads the grid's enabled rows, read the same tab. Read from the shown copy whose cells map
         // every requested column; the ordinal proof above is unchanged.
+        // VPS 0.2.164 showed the region's row "#0" with area and no cells at all, while line entry read the same tab from
+        // the grid's own rows, whose ids are not the ordinal. Those are matched by geometry: a row whose vertical centre
+        // lies inside the ordinal row's band is the same visual row.
         AutomationElement[] MappedRow(int ordinal, ElementSnapshot preferred)
         {
             var id = ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var candidates = new[] { preferred }
-                .Concat(Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
-                        identity!.ProcessId, enabled: false, onscreen: false))
-                    .Where(item => item.AutomationId == id).OrderByDescending(item => item.Enabled))
+            var gridRows = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
+                    identity!.ProcessId, enabled: false, onscreen: false))
                 .Where(item => item.HasArea).ToArray();
+            var band = preferred.Bounds;
+            bool SameBand(ElementSnapshot item)
+            {
+                var middle = item.Bounds.Y + item.Bounds.Height / 2.0;
+                return middle >= band.Top && middle <= band.Bottom
+                    && HorizontalOverlap(item.Bounds.X, item.Bounds.Right, band.X, band.Right) > 0;
+            }
+            var candidates = new[] { preferred }
+                .Concat(gridRows.Where(item => item.AutomationId == id).OrderByDescending(item => item.Enabled))
+                .Concat(gridRows.Where(item => item.AutomationId != id && SameBand(item)).OrderByDescending(item => item.Enabled))
+                .Where(item => item.HasArea)
+                .DistinctBy(item => (item.AutomationId, item.Bounds, item.Enabled)).ToArray();
             var tried = new List<string>();
             string? firstMissing = null;
             Exception? vanished = null;
@@ -384,7 +397,9 @@ public sealed partial class NativeInputService
             throw new AutomationException("GRID_COLUMNS_INVALID",
                 $"Không ánh xạ được ô native cho cột {firstMissing ?? headers[0].Name} (dòng {ordinal + 1}). Tiêu đề: "
                 + string.Join(", ", headers.Select(column => $"{column.Name}[{column.Left:0}-{column.Right:0}]"))
-                + $". {candidates.Length} dòng ứng viên: " + Clip(string.Join(" | ", tried), 1500));
+                + $". {candidates.Length} dòng ứng viên: " + Clip(string.Join(" | ", tried), 1200)
+                + $". DataItem trong lưới ({gridRows.Length}): " + Clip(string.Join(", ", gridRows.Take(8).Select(item =>
+                    $"#{item.AutomationId} {(item.Enabled ? "bật" : "tắt")} [{item.Bounds.X},{item.Bounds.Y} {item.Bounds.Width}x{item.Bounds.Height}]")), 600));
         }
         var values = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
         var sources = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
