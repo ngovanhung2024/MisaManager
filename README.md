@@ -290,6 +290,22 @@ Dòng Excel ĐVT kg mà mã hàng trong MISA chỉ có ĐVT Tấn: nếu danh m�
 đó không có kg, tool đổi thẳng sang Tấn (số lượng / 1000) mà không mở danh sách ĐVT để dò (tiết kiệm 2–3 giây/dòng); bằng
 chứng `ItemCatalog:<mã>:[các ĐVT]` được lưu vào checkpoint. Danh mục không đủ thông tin thì vẫn mở danh sách ĐVT như cũ.
 
+## Chạy trên VPS (Remote Desktop)
+
+Tool gửi phím/chuột thật vào MISA, nên phiên Windows phải có màn hình nhập liệu. Đóng Remote Desktop bằng nút X (phiên
+"Disconnected"), khóa màn hình, hoặc thu nhỏ cửa sổ Remote Desktop đều làm Windows từ chối đưa MISA lên trước và từ chối
+SendInput. Khi đó tool báo `SESSION_NOT_INTERACTIVE`, **không gửi input nào** và tự chờ; màn hình hoạt động lại thì chạy
+tiếp đúng bước đang dở (bấm Dừng ngay để thôi chờ). Chỉ chờ khi bước đó chưa gửi giá trị nào vào MISA; input có thể đã gửi
+thì vẫn dừng ở InputUncertain/SaveUncertain như cũ.
+
+Để treo tool mà vẫn tắt kết nối:
+- Dùng **••• → Ngắt Remote Desktop, giữ MISA chạy** thay cho nút X. Tool chạy `tscon <session> /dest:console` (cần quyền
+  Administrator): kết nối RDP đóng, phiên chuyển sang console của VPS, không bị khóa. Kết nối lại bình thường khi cần xem.
+- Muốn thu nhỏ cửa sổ Remote Desktop: trên **máy của bạn** (không phải VPS) đặt DWORD
+  `HKCU\Software\Microsoft\Terminal Server Client\RemoteDesktop_SuppressWhenMinimized = 2` rồi kết nối lại.
+- Trong lúc chạy, tool giữ màn hình VPS không tắt/ngủ (`SetThreadExecutionState`); nếu VPS có chính sách tự khóa màn hình
+  (Group Policy "Machine inactivity limit"), hãy tắt nó.
+
 ## Báo cáo lỗi
 
 Popup lỗi hiển thị báo cáo chẩn đoán theo từng mục: mã lỗi, checkpoint sau và lúc lỗi, bước/dòng hàng, chuỗi exception,

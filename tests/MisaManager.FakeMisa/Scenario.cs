@@ -103,6 +103,11 @@ public sealed record Scenario
     public bool GridCelllessWhileEditorInactive { get; init; }
     /// <summary>The user clicks MISA's main window once, right after the first "Tiền thuế GTGT" read (only reconcile reads it).</summary>
     public bool MainActivatedOnFirstTaxAmountRead { get; init; }
+    /// <summary>
+    /// Remote Desktop closed on the VPS as soon as MISA shows (report 0.2.169, HĐ 81: FOCUS_FAILED at validate): the
+    /// session's input desktop is elsewhere this long, then the user reconnects.
+    /// </summary>
+    public int SessionDisconnectedMilliseconds { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

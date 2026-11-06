@@ -13,9 +13,17 @@ internal static class NativeKeyboard
         for (var attempt = 0; ; attempt++)
         {
             token.ThrowIfCancellationRequested();
+            // Without an input desktop (RDP closed/minimised, screen locked) no activation can succeed: report that
+            // instead of FOCUS_FAILED, and send no Alt key into the session.
+            DesktopSession.ThrowIfUnavailable();
             try { ActivateOnce(targetHandle, windowHandle, processId); return; }
-            catch (AutomationException error) when (error.Code == "FOCUS_FAILED" && attempt < 9)
+            catch (AutomationException error) when (error.Code == "FOCUS_FAILED")
             {
+                if (attempt >= 9)
+                {
+                    DesktopSession.ThrowIfUnavailable(activationFailed: true);
+                    throw;
+                }
                 if (token.WaitHandle.WaitOne(100)) token.ThrowIfCancellationRequested();
             }
         }

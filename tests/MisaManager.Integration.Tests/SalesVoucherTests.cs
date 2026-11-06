@@ -806,6 +806,29 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(GridCelllessWhileEditorInactive: true, MainActivatedOnFirstTaxAmountRead: true));
 
     [Fact]
+    public Task RemoteDesktopClosedOnTheVpsWaitsForTheDesktopInsteadOfFailingFocus() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // VPS report 0.2.169, HĐ 81: with the RDP window hidden/closed the session has no input desktop, so "validate"
+        // failed 4× with FOCUS_FAILED ("Foreground MISA activation failed.") within ~9 s. Disconnected longer than that.
+        var invoice = Invoices.Build(TempDirectory(misa), "1081", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(("1081", "A&V", 231_000m), (voucher.InvoiceNumber, voucher.CustomerCode, voucher.GrandTotal));
+        var events = File.ReadAllLines(Path.Combine(misa.Root, "fake-events.log"));
+        var reconnected = Array.FindIndex(events, line => line.Contains("SESSION reconnected", StringComparison.Ordinal));
+        Assert.True(Array.FindIndex(events, line => line.Contains("SESSION disconnected", StringComparison.Ordinal)) >= 0,
+            "Fake không mô phỏng được ngắt kết nối: " + string.Join(Environment.NewLine, events));
+        Assert.True(reconnected >= 0, string.Join(Environment.NewLine, events));
+        // Nothing was typed into MISA while the desktop was gone.
+        var firstInput = Array.FindIndex(events, line => line.Contains(" <- ", StringComparison.Ordinal));
+        Assert.True(firstInput > reconnected, string.Join(Environment.NewLine, events));
+    }, new FakeScenario(SessionDisconnectedMilliseconds: 15000));
+
+    [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1082", Invoices.AV,

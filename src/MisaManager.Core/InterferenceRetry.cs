@@ -22,6 +22,13 @@ public static class InterferenceRetry
         "GRID_NOT_STABLE", "SCOPE_IDENTITY_CHANGED", "NATIVE_BUSY", "NATIVE_OWNER_UNAVAILABLE"
     };
 
+    /// <summary>
+    /// The Windows session has no input desktop (Remote Desktop closed or minimised, screen locked): Windows refuses
+    /// foreground changes and keyboard/mouse input. Not interference: the runner waits for the desktop instead of
+    /// spending the retry budget, and only while no voucher value may have been sent.
+    /// </summary>
+    public const string DesktopUnavailableCode = "SESSION_NOT_INTERACTIVE";
+
     public static bool IsTransient(string? code) => code is not null && TransientCodes.Contains(code);
 
     /// <summary>Back-off that gives the user's click or tab drag time to settle.</summary>

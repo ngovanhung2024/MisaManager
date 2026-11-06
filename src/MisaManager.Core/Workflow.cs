@@ -118,6 +118,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     public const string StoppedByUserCode = "STOPPED_BY_USER";
     private const string StopMessage = "Đã tạm dừng theo yêu cầu (Dừng ngay) sau thao tác vừa hoàn tất; chứng từ chưa Cất.";
     public WorkflowStopSignal StopSignal { get; } = new();
+    /// <summary>Poll interval while the Windows session is locked or disconnected (<see cref="InterferenceRetry.DesktopUnavailableCode"/>).</summary>
+    public TimeSpan DesktopWaitInterval { get; init; } = TimeSpan.FromSeconds(2);
 
     // Run files only change through their own writes; unchanged ones (same size and write time) are not parsed again.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime Written, long Length, WorkflowContext Record)> historyCache
@@ -881,12 +883,31 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
         for (var attempt = 1; ; attempt++)
         {
             try { return await ReconcileAsync(token); }
+            catch (AutomationException error) when (error.Code == InterferenceRetry.DesktopUnavailableCode && !token.IsCancellationRequested)
+            {
+                await Task.Delay(DesktopWaitInterval, token);
+                attempt--;
+            }
             catch (AutomationException error) when (attempt <= InterferenceRetry.ReconcileRetries
                 && InterferenceRetry.IsTransient(error.Code) && !token.IsCancellationRequested)
             {
                 await Task.Delay(InterferenceRetry.Delay(attempt), token);
             }
         }
+    }
+
+    // Remote Desktop closed/minimised or Windows locked before anything reached MISA: the same step is run again once
+    // the desktop is back. strict (Cất/Bỏ) also refuses a wait after view-only input such as a tab switch.
+    private static bool AwaitsDesktop(WorkflowObservation observation, bool strict, CancellationToken token)
+        => !observation.Confirmed && observation.ErrorCode == InterferenceRetry.DesktopUnavailableCode
+            && !(strict ? observation.InputMayHaveBeenSent : observation.ValueInputMayHaveBeenSent ?? observation.InputMayHaveBeenSent)
+            && !token.IsCancellationRequested;
+
+    private async Task<bool> DesktopDelayAsync(CancellationToken token)
+    {
+        try { await Task.Delay(DesktopWaitInterval, token); }
+        catch (OperationCanceledException) { return false; }
+        lock (gate) return !pauseRequested && !cancelRequested;
     }
 
     private static bool VoucherWasOpened(WorkflowContext value)
@@ -1014,6 +1035,23 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                         observation = new(false, mayInput ? WorkflowStatus.InputUncertain : WorkflowStatus.Blocked,
                             current.Snapshot.NativeFrame ?? "", error.Message, mayInput ? InputDisposition.Uncertain : InputDisposition.NotSent, mayInput,
                             error is OperationCanceledException ? "CANCELLED" : "WORKFLOW_ERROR", error.ToString());
+                    }
+                    if (AwaitsDesktop(observation, strict: false, token))
+                    {
+                        if (StopSignal.IsRequested && !observation.InputMayHaveBeenSent)
+                        {
+                            observation = observation with { ErrorCode = StopRequestedCode, Message = StopMessage };
+                            break;
+                        }
+                        lock (gate)
+                        {
+                            if (pauseRequested || cancelRequested) break;
+                            current = current with { Snapshot = current.Snapshot with { LastMessage = observation.Message } };
+                            context = current;
+                        }
+                        if (!await DesktopDelayAsync(token)) break;
+                        attempt--;
+                        continue;
                     }
                     // Replaying a step is only safe when it changed no voucher value (tab switches are view-only).
                     if (observation.Confirmed || attempt > InterferenceRetry.StepRetries
@@ -1285,29 +1323,34 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
             current = current with { Snapshot = current.Snapshot with { InputPending = true, PendingAction = action } };
             lock (gate) context = current;
             await PersistAsync(current, CancellationToken.None);
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-            // Save is not interruptible by Dừng ngay: cancelling mid-click leaves MISA in a "saved or not?" state.
-            // The stop takes effect right after the save is proven; the batch then halts.
-            if (!save) lock (gate) activeOperation = deadline;
-            deadline.CancelAfter(transition.Timeout);
             WorkflowObservation observation;
-            try
+            while (true)
             {
-                observation = await native.ExecuteAsync(current, transition, (progress, _) =>
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                // Save is not interruptible by Dừng ngay: cancelling mid-click leaves MISA in a "saved or not?" state.
+                // The stop takes effect right after the save is proven; the batch then halts.
+                if (!save) lock (gate) activeOperation = deadline;
+                deadline.CancelAfter(transition.Timeout);
+                try
                 {
-                    current = ApplyProgress(current, progress);
-                    lock (gate) context = current;
-                    return Task.CompletedTask;
-                }, deadline.Token);
+                    observation = await native.ExecuteAsync(current, transition, (progress, _) =>
+                    {
+                        current = ApplyProgress(current, progress);
+                        lock (gate) context = current;
+                        return Task.CompletedTask;
+                    }, deadline.Token);
+                }
+                catch (Exception error)
+                {
+                    var sent = error is not AutomationException fault || fault.InputMayHaveBeenSent;
+                    observation = new(false, sent ? (save ? WorkflowStatus.SaveUncertain : WorkflowStatus.InputUncertain) : WorkflowStatus.Blocked,
+                        current.Snapshot.NativeFrame ?? "", error.Message, sent ? InputDisposition.Uncertain : InputDisposition.NotSent, sent,
+                        error is AutomationException automationError ? automationError.Code : "WORKFLOW_ERROR", error.ToString());
+                }
+                finally { lock (gate) activeOperation = null; }
+                // Nothing was sent (no tab switch, no Cất/Bỏ click): wait for the desktop, then run the whole action again.
+                if (!AwaitsDesktop(observation, strict: true, token) || !await DesktopDelayAsync(token)) break;
             }
-            catch (Exception error)
-            {
-                var sent = error is not AutomationException fault || fault.InputMayHaveBeenSent;
-                observation = new(false, sent ? (save ? WorkflowStatus.SaveUncertain : WorkflowStatus.InputUncertain) : WorkflowStatus.Blocked,
-                    current.Snapshot.NativeFrame ?? "", error.Message, sent ? InputDisposition.Uncertain : InputDisposition.NotSent, sent,
-                    error is AutomationException automationError ? automationError.Code : "WORKFLOW_ERROR", error.ToString());
-            }
-            finally { lock (gate) activeOperation = null; }
             if (save)
                 current = WithComparison(current, "before_save", observation.Comparison,
                     observation.Comparison is null ? observation.Message : null);

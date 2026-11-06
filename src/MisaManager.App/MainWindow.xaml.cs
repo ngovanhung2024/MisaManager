@@ -1338,6 +1338,31 @@ public partial class MainWindow : Window
         catch (Exception error) { StatusLabel.Text = "Không xóa được lịch sử hồ sơ: " + error.Message; }
     }
 
+    private void DetachRemoteDesktop_Click(object sender, RoutedEventArgs e)
+    {
+        if (!DesktopSession.IsRemote)
+        {
+            MessageBox.Show(this, "Tool không chạy trong phiên Remote Desktop nên không cần ngắt. Chỉ cần không khóa màn hình khi tool đang chạy.",
+                "Ngắt Remote Desktop", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (MessageBox.Show(this,
+                "Đóng kết nối Remote Desktop nhưng giữ phiên Windows này chạy trên màn hình console của VPS?\n\n"
+                + "• MISA và tool tiếp tục chạy, nhận phím/chuột như khi đang kết nối.\n"
+                + "• Cửa sổ Remote Desktop sẽ đóng ngay; kết nối lại bình thường khi cần xem.\n"
+                + "• Màn hình console của VPS không bị khóa trong lúc đó; độ phân giải có thể đổi theo console.\n"
+                + "• Cần quyền Administrator (Windows có thể hỏi xác nhận UAC).",
+                "Ngắt Remote Desktop, giữ MISA chạy", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        try { DesktopSession.MoveToConsole(); }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, "Không chuyển được phiên sang console của VPS: " + error.Message
+                + "\n\nCó thể chạy tay trong cmd (Run as administrator): tscon %SESSIONNAME% /dest:console",
+                "Ngắt Remote Desktop", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void ClearImportedData_Click(object sender, RoutedEventArgs e)
     {
         if (!workflow.CanEditSource) return;

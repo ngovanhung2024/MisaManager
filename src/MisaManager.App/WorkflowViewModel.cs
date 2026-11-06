@@ -386,6 +386,8 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
         if (queue.Length == 0) { Status = "Không còn hóa đơn nào cần chạy."; NotifyWorkflowChanged(); return; }
         var batchTotal = batchIndex + queue.Length;
         var first = queue[0];
+        // An idle VPS console would otherwise sleep or lock mid-batch; released when RunAsync ends on this (UI) thread.
+        using var awake = DesktopSession.KeepAwake();
         running = true;
         stopRequested = false;
         services.Workflow.StopSignal.Reset();

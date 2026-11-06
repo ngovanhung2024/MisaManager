@@ -24,6 +24,8 @@ public static class Program
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         var main = new MainWindow(profile, scenario, store);
         UserMouse.Install(scenario);
+        if (scenario.SessionDisconnectedMilliseconds > 0)
+            main.ContentRendered += (_, _) => SessionDesktop.DisconnectFor(scenario.SessionDisconnectedMilliseconds);
         if (scenario.ShowLoginWindow)
             new Window { Title = "MISA SME 2023", Width = 420, Height = 260, Left = 40, Top = 40, Content = "Mở dữ liệu kế toán" }.Show();
         return app.Run(main);

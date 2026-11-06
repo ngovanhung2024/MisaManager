@@ -194,6 +194,8 @@
           <MenuItem Header="Xóa tất cả dữ liệu Excel đã nạp…" Click="ClearImportedData_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Xóa sạch danh sách hóa đơn, toàn bộ mã hàng, nhóm VTHH, mã khách hàng, nhà cung cấp và danh sách hóa đơn đã ghi sổ. Lịch sử chống nhập trùng được giữ lại."/>
           <Separator/>
+          <MenuItem Header="Ngắt Remote Desktop, giữ MISA chạy" Click="DetachRemoteDesktop_Click"
+                    ToolTip="Dùng trên VPS thay cho nút X của Remote Desktop: đóng kết nối nhưng chuyển phiên sang màn hình console của VPS, để MISA vẫn nhận phím/chuột và tool chạy tiếp. Cần quyền Administrator."/>
           <MenuItem Header="Kiểm tra cập nhật…" Click="CheckUpdate_Click"/>
           <MenuItem Header="Cài đặt cập nhật…" Click="UpdateSettings_Click"/>
         </ContextMenu></Button.ContextMenu>

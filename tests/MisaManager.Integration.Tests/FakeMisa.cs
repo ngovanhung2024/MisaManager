@@ -37,17 +37,20 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     int QuantityIgnoredRow = -1, bool TaxpayerStatusPrompt = false, int GridUnavailableAfterTaxTabMilliseconds = 0,
     bool GridCellsRecreatedOnReadAfterTaxTab = false, bool GridFooterOutside = false, int GridFooterCountOffset = 0,
     bool GridShadowBandOnTaxTab = false, bool GridShadowOverlayOnTaxTab = false,
-    bool GridCelllessWhileEditorInactive = false, bool MainActivatedOnFirstTaxAmountRead = false);
+    bool GridCelllessWhileEditorInactive = false, bool MainActivatedOnFirstTaxAmountRead = false,
+    int SessionDisconnectedMilliseconds = 0);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly Process process;
+    private readonly bool disconnectsSession;
 
-    private FakeMisa(Process process, string root, WindowIdentity window)
+    private FakeMisa(Process process, string root, WindowIdentity window, bool disconnectsSession)
     {
         this.process = process;
+        this.disconnectsSession = disconnectsSession;
         Root = root;
         Window = window;
     }
@@ -94,7 +97,8 @@ public sealed class FakeMisa : IDisposable
                 {
                     // Let WPF finish its first layout before the automation reads bounds.
                     await Task.Delay(1000, token);
-                    return new FakeMisa(process, root, discovery.Bind(window.WindowHandle, process.Id));
+                    return new FakeMisa(process, root, discovery.Bind(window.WindowHandle, process.Id),
+                        scenario?.SessionDisconnectedMilliseconds > 0);
                 }
                 if (DateTime.UtcNow > deadline) throw new TimeoutException("Fake MISA main window did not appear.");
                 await Task.Delay(250, token);
@@ -163,5 +167,20 @@ public sealed class FakeMisa : IDisposable
         catch (InvalidOperationException) { }
         process.WaitForExit(5000);
         process.Dispose();
+        // A fake killed while "disconnected" must not leave this desktop without input.
+        if (disconnectsSession) RestoreInputDesktop();
     }
+
+    private static void RestoreInputDesktop()
+    {
+        var home = OpenDesktop("Default", 0, false, 0x0100);
+        if (home == 0) return;
+        SwitchDesktop(home);
+        CloseDesktop(home);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, EntryPoint = "OpenDesktopW")]
+    private static extern nint OpenDesktop(string name, uint flags, bool inherit, uint access);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SwitchDesktop(nint desktop);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool CloseDesktop(nint desktop);
 }
