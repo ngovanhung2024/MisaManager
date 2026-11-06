@@ -82,9 +82,7 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
         if (!PInvoke.GetClientRect((HWND)handle, out var rect)) throw new AutomationException("WINDOW_BOUNDS_UNREADABLE", "Không đọc được client bounds MISA.");
         var origin = new System.Drawing.Point();
         if (!PInvoke.ClientToScreen((HWND)handle, ref origin)) throw new AutomationException("WINDOW_BOUNDS_UNREADABLE", "Không đọc được client origin MISA.");
-        var architecture = IsWow64Process2(process.Handle, out var machine, out var nativeMachine)
-            ? (machine == 0 ? nativeMachine : machine) switch { 0x014c => "x86", 0x8664 => "x64", 0xaa64 => "arm64", _ => "unknown" }
-            : "unknown";
+        var architecture = ReadProcessArchitecture(process.Handle);
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 14393))
             throw new AutomationException("DPI_UNAVAILABLE", "Windows không hỗ trợ đọc DPI theo cửa sổ MISA.");
         var dpi = PInvoke.GetDpiForWindow((HWND)handle);
@@ -216,7 +214,27 @@ public sealed class MisaWindowDiscovery : IMisaWindowDiscovery
         return new string(buffer, 0, length);
     }
 
+    private static string ReadProcessArchitecture(nint process)
+    {
+        try
+        {
+            return IsWow64Process2(process, out var machine, out var nativeMachine)
+                ? (machine == 0 ? nativeMachine : machine) switch { 0x014c => "x86", 0x8664 => "x64", 0xaa64 => "arm64", _ => "unknown" }
+                : "unknown";
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // IsWow64Process2 is missing on Windows Server 2016 and Windows 10 before 1709.
+            if (!IsWow64Process(process, out var wow64)) return "unknown";
+            return wow64 ? "x86" : RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.X64 => "x64", Architecture.X86 => "x86", Architecture.Arm64 => "arm64", _ => "unknown"
+            };
+        }
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsWow64Process2(nint process, out ushort processMachine, out ushort nativeMachine);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsWow64Process(nint process, out bool wow64Process);
 
 }
 
