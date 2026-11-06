@@ -726,6 +726,23 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("Số dòng = 2", result.Context.Snapshot.ErrorChain ?? "", StringComparison.Ordinal);
     }, new FakeScenario(GridFooterOutside: true, GridFooterCountOffset: 1));
 
+    // HĐ 81 on the VPS (0.2.163): the DataRowCount region's rows had no cell under "Mã hàng" while line entry read the
+    // same tab from the grid's enabled rows. Reconcile reads the shown row copy whose cells map every column.
+    [Fact]
+    public Task RowCopiesWithoutCellsUnderTheHeadersAreSkipped() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1088", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
+    }, new FakeScenario(GridShadowBandOnTaxTab: true, GridFooterOutside: true));
+
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {

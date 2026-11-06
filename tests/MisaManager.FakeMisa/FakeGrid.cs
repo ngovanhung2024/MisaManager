@@ -38,6 +38,7 @@ public sealed class FakeGrid : Border
     private const double RowHeight = 21;
     private readonly StackPanel headerPanel = new() { Orientation = Orientation.Horizontal };
     private readonly StackPanel rowPanel = new() { Orientation = Orientation.Vertical };
+    private readonly ShadowRegion shadow = new();
     private readonly TextBlock footer = new() { Margin = new Thickness(4, 2, 0, 2), FontSize = 11 };
     private readonly List<GridRow> rows = [];
     private IReadOnlyList<GridColumn> columns = [];
@@ -59,12 +60,19 @@ public sealed class FakeGrid : Border
         FooterBar = new Border { Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xEC, 0xF5)), Child = footer };
         DockPanel.SetDock(FooterBar, Dock.Bottom);
         dock.Children.Add(headerPanel);
+        DockPanel.SetDock(shadow, Dock.Top);
+        dock.Children.Add(shadow);
         if (!footerOutside) dock.Children.Add(FooterBar);
         dock.Children.Add(rowPanel);
         Child = dock;
     }
 
     public bool ShowInsertionRow { get; set; }
+    /// <summary>
+    /// R20 (VPS 0.2.163): a "DataRowCount" Tree region holding disabled copies of the data rows whose cells have no
+    /// area, so nothing lies under the headers. Rebuilt with the rows while set.
+    /// </summary>
+    public bool ShadowBand { get; set; }
     public bool FooterOutside { get; }
     public Border FooterBar { get; }
     /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
@@ -143,6 +151,7 @@ public sealed class FakeGrid : Border
         if (ShowInsertionRow) AddRow(null);
         foreach (var row in rows) row.Load(source, force: true);
         footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
+        shadow.Build(ShadowBand ? source.RowCount : 0, columns);
     }
 
     private void AddRow(int? index)
@@ -182,12 +191,55 @@ public sealed class FakeGrid : Border
             var children = new List<AutomationPeer>();
             foreach (var header in owner.HeaderCells)
                 if (UIElementAutomationPeer.CreatePeerForElement(header) is { } peer) children.Add(peer);
+            if (owner.shadow.Count > 0 && UIElementAutomationPeer.CreatePeerForElement(owner.shadow) is { } shadowPeer)
+                children.Add(shadowPeer);
             foreach (var row in owner.Rows)
                 if (UIElementAutomationPeer.CreatePeerForElement(row) is { } peer) children.Add(peer);
             if (!owner.FooterOutside && UIElementAutomationPeer.CreatePeerForElement(owner.Footer) is { } footerPeer) children.Add(footerPeer);
             return children;
         }
         public override object? GetPattern(PatternInterface patternInterface) => null;
+    }
+}
+
+internal sealed class ShadowRegion : StackPanel
+{
+    public int Count { get; private set; }
+
+    public void Build(int count, IReadOnlyList<GridColumn> columns)
+    {
+        Children.Clear();
+        Count = count;
+        AutomationProperties.SetItemStatus(this, $"DataRowCount^IG_TOKEN_SEPERATOR^{count}^IG_TOKEN_DELIMETER^");
+        for (var index = 0; index < count; index++)
+        {
+            var row = new ShadowRow { Orientation = Orientation.Horizontal, Height = 2, Width = 300, IsEnabled = false,
+                HorizontalAlignment = HorizontalAlignment.Left };
+            AutomationProperties.SetAutomationId(row, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach (var column in columns) row.Children.Add(new TextBox { Width = 0, Height = 2, Text = "" });
+            Children.Add(row);
+        }
+    }
+
+    protected override AutomationPeer OnCreateAutomationPeer() => new RegionPeer(this);
+
+    private sealed class RegionPeer(ShadowRegion owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Tree;
+        protected override List<AutomationPeer> GetChildrenCore()
+            => [.. owner.Children.Cast<UIElement>().Select(UIElementAutomationPeer.CreatePeerForElement).OfType<AutomationPeer>()];
+    }
+
+    private sealed class ShadowRow : StackPanel
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new ShadowRowPeer(this);
+    }
+
+    private sealed class ShadowRowPeer(StackPanel owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.DataItem;
+        protected override List<AutomationPeer> GetChildrenCore()
+            => [.. owner.Children.Cast<UIElement>().Select(UIElementAutomationPeer.CreatePeerForElement).OfType<AutomationPeer>()];
     }
 }
 

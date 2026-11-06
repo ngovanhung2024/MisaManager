@@ -344,19 +344,47 @@ public sealed partial class NativeInputService
         ElementSnapshot[] RowCells(AutomationElement row)
             => Snapshots(row, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
                 identity!.ProcessId, enabled: false, onscreen: false));
-        AutomationElement MapCell(ElementSnapshot[] cells, CustomCompleteColumn column)
+        AutomationElement? MapCell(ElementSnapshot[] cells, CustomCompleteColumn column)
         {
             var visible = cells.Where(item => item.HasArea)
                 .Select(item => (item.Element, Overlap: HorizontalOverlap(item.Bounds.X, item.Bounds.Right,
                     column.Left, column.Right)))
                 .Where(item => item.Overlap > 0)
                 .OrderByDescending(item => item.Overlap).FirstOrDefault().Element;
-            return visible ?? cells.Where(cell => string.Equals(cell.Name, column.Name, StringComparison.Ordinal)).ToArray() switch
+            return visible ?? (cells.Where(cell => string.Equals(cell.Name, column.Name, StringComparison.Ordinal)).ToArray() is { Length: 1 } match
+                ? match[0].Element : null);
+        }
+        // The DataRowCount region proves completeness, but R20 can also expose a copy of a row (same ordinal) whose cells
+        // do not lie under the visible headers: on the VPS (0.2.163) no cell of the region's row mapped to "Mã hàng" while
+        // line entry, which reads the grid's enabled rows, read the same tab. Read from the shown copy whose cells map
+        // every requested column; the ordinal proof above is unchanged.
+        AutomationElement[] MappedRow(int ordinal, ElementSnapshot preferred)
+        {
+            var id = ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var candidates = new[] { preferred }
+                .Concat(Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.DataItem),
+                        identity!.ProcessId, enabled: false, onscreen: false))
+                    .Where(item => item.AutomationId == id).OrderByDescending(item => item.Enabled))
+                .Where(item => item.HasArea).ToArray();
+            var tried = new List<string>();
+            string? firstMissing = null;
+            Exception? vanished = null;
+            foreach (var candidate in candidates)
             {
-                { Length: 1 } match => match[0].Element,
-                _ => throw new AutomationException("GRID_COLUMNS_INVALID",
-                    "Không ánh xạ được ô native cho cột " + column.Name)
-            };
+                ElementSnapshot[] cells;
+                try { cells = RowCells(candidate.Element); }
+                catch (Exception error) when (Vanished(error)) { vanished = error; continue; }
+                var mapped = headers.Select(column => MapCell(cells, column)).ToArray();
+                if (mapped.All(cell => cell is not null)) return mapped!;
+                var unmapped = headers.Where((_, index) => mapped[index] is null).Select(column => column.Name).ToArray();
+                firstMissing ??= unmapped[0];
+                tried.Add(DescribeRow(candidate, cells, unmapped));
+            }
+            if (vanished is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(vanished);
+            throw new AutomationException("GRID_COLUMNS_INVALID",
+                $"Không ánh xạ được ô native cho cột {firstMissing ?? headers[0].Name} (dòng {ordinal + 1}). Tiêu đề: "
+                + string.Join(", ", headers.Select(column => $"{column.Name}[{column.Left:0}-{column.Right:0}]"))
+                + $". {candidates.Length} dòng ứng viên: " + Clip(string.Join(" | ", tried), 1500));
         }
         var values = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
         var sources = new List<IReadOnlyDictionary<string, string>>(shownRows.Length);
@@ -365,25 +393,28 @@ public sealed partial class NativeInputService
             token.ThrowIfCancellationRequested();
             // Reading a cell can make R20 recreate every row, so a later row found before the reads is stale too
             // (VPS 0.2.161): the row and its cells are looked up again inside the retry, never outside it.
-            AutomationElement? rowElement = row.Row.Element;
-            ElementSnapshot[]? cells = null;
+            var preferred = row.Row;
+            AutomationElement[]? cells = null;
             var rowValues = new Dictionary<string, string>(StringComparer.Ordinal);
             var rowSources = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var column in headers)
+            for (var index = 0; index < headers.Length; index++)
             {
+                var column = headers[index];
                 for (var attempt = 0; ; attempt++)
                 {
                     try
                     {
-                        if (rowElement is null)
+                        if (cells is null)
                         {
-                            var fresh = CompleteRows().Single(item => item.Ordinal == row.Ordinal).Row;
-                            if (!fresh.HasArea)
-                                throw new AutomationException("GRID_CHANGED", "Dòng native bị ẩn trong khi đọc.");
-                            rowElement = fresh.Element;
+                            if (attempt > 0)
+                            {
+                                preferred = CompleteRows().Single(item => item.Ordinal == row.Ordinal).Row;
+                                if (!preferred.HasArea)
+                                    throw new AutomationException("GRID_CHANGED", "Dòng native bị ẩn trong khi đọc.");
+                            }
+                            cells = MappedRow(row.Ordinal, preferred);
                         }
-                        cells ??= RowCells(rowElement);
-                        var text = ReadCustomCellText(MapCell(cells, column), column.Name);
+                        var text = ReadCustomCellText(cells[index], column.Name);
                         rowValues[column.Name] = text.Value;
                         rowSources[column.Name] = text.Source + "+UIA3.CustomGrid.DataItem";
                         break;
@@ -392,7 +423,7 @@ public sealed partial class NativeInputService
                     {
                         // Only reads happen here, so reading again from the row resolved anew by ordinal is safe.
                         token.ThrowIfCancellationRequested();
-                        (rowElement, cells) = (null, null);
+                        cells = null;
                     }
                     catch (Exception error) when (Vanished(error))
                     {
@@ -406,6 +437,15 @@ public sealed partial class NativeInputService
         }
         return new NativeTable(values, Capture(), sources);
     }
+
+    // What a row exposed when no cell lay under a header, for the failure report.
+    private static string DescribeRow(ElementSnapshot row, ElementSnapshot[] cells, IEnumerable<string> unmapped)
+        => $"#{row.AutomationId} {(row.Enabled ? "bật" : "tắt")} [{row.Bounds.X},{row.Bounds.Y} {row.Bounds.Width}x{row.Bounds.Height}]"
+            + $" thiếu {string.Join("/", unmapped)}; {cells.Length} ô: "
+            + string.Join(", ", cells.Take(12).Select(cell =>
+                $"{cell.ControlType} '{Clip(cell.Name, 16)}' [{cell.Bounds.X}-{cell.Bounds.Right}{(cell.HasArea ? "" : " rỗng")}]"));
+
+    private static string Clip(string text, int length) => text.Length <= length ? text : text[..length] + "…";
 
     private sealed record CustomCompleteColumn(string Name, double Left, double Right,
         FlaUI.Core.AutomationElements.AutomationElement Header);

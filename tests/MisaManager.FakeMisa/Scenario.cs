@@ -85,6 +85,11 @@ public sealed record Scenario
     public bool GridFooterOutside { get; init; }
     /// <summary>Added to the voucher grid's "Số dòng" footer, to prove the footer is still compared.</summary>
     public int GridFooterCountOffset { get; init; }
+    /// <summary>
+    /// On "Thuế", grdDetail also exposes a DataRowCount Tree region of disabled row copies whose cells have no area
+    /// (VPS report 0.2.163, HĐ 81: "Không ánh xạ được ô native cho cột Mã hàng").
+    /// </summary>
+    public bool GridShadowBandOnTaxTab { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

@@ -211,6 +211,7 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void OnDetailTabChanged()
     {
+        grid.ShadowBand = scenario.GridShadowBandOnTaxTab && detailTabs.SelectedIndex == 1;
         BindLayout();
         if (detailTabs.SelectedIndex == 1 && scenario.GridCellsRecreatedOnReadAfterTaxTab && !grid.RecreateCellsOnRead)
         {
