@@ -26,6 +26,7 @@ internal static class NativeWait
         var started = Stopwatch.GetTimestamp();
         var delay = 20;
         string? pending = null;
+        Exception? pendingError = null;
         T? last = default;
         var hasLast = false;
         while (true)
@@ -38,22 +39,24 @@ internal static class NativeWait
                 last = value;
                 hasLast = true;
                 pending = null;
+                pendingError = null;
             }
             catch (AutomationException error) when (!error.InputMayHaveBeenSent && TransientReadCodes.Contains(error.Code))
             {
-                pending = error.Message;
+                (pending, pendingError) = (error.Message, error);
             }
             catch (Exception error) when (error is System.Runtime.InteropServices.COMException
                 or FlaUI.Core.Exceptions.ElementNotAvailableException or FlaUI.Core.Exceptions.PropertyNotSupportedException)
             {
-                pending = error.Message;
+                (pending, pendingError) = (error.Message, error);
             }
             var limit = pending is null ? timeoutMilliseconds : Math.Max(timeoutMilliseconds, readFailureTimeoutMilliseconds);
             var remaining = limit - Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (remaining <= 0)
             {
                 if (returnLastMismatch && hasLast && pending is null) return last!;
-                throw new AutomationException(code, pending is null ? message : message + " " + pending);
+                // The read failure stays attached so Copy lỗi shows the file:line where MISA's element vanished.
+                throw new AutomationException(code, pending is null ? message : message + " " + pending, false, pendingError);
             }
             await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(delay, remaining)), token);
             delay = Math.Min(delay * 2, 200);

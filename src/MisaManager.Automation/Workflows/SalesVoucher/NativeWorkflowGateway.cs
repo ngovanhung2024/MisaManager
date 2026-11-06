@@ -1116,8 +1116,16 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
                 : profile.IsPurchase ? new[] { "code", "name", "unit", "quantity", "amount", "unit_price" }
                 : new[] { "code", "name", "unit", "debit_account", "quantity", "amount", "unit_price" };
-            var table = await Steady(async () => await input.ReadCompleteTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
-                keys.Select(key => profile.Columns[key]).ToArray(), token), token);
+            NativeTable table;
+            try
+            {
+                table = await Steady(async () => await input.ReadCompleteTableAsync(await input.CaptureAsync(token), profile.ItemGridId,
+                    keys.Select(key => profile.Columns[key]).ToArray(), token), token);
+            }
+            catch (AutomationException error) when (!error.InputMayHaveBeenSent)
+            {
+                throw new AutomationException(error.Code, $"Tab '{(taxTab ? profile.TaxTab : profile.ItemTab)}': {error.Message}", false, error);
+            }
             var expectedLines = context.Invoice.Lines
                 .Select(line => (Line: line, Code: line.ItemCode.Trim().Length > 0
                     ? line.ItemCode.Trim() : Saved(context, "line:" + line.LineId)))

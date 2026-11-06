@@ -65,8 +65,17 @@ public sealed class FakeGrid : Border
     /// <summary>Until then cell readback fails with UIA_E_ELEMENTNOTAVAILABLE, as R20's grid did while redrawing.</summary>
     public DateTime CellsUnavailableUntil { get; set; }
     internal bool CellsUnavailable => DateTime.UtcNow < CellsUnavailableUntil;
-    /// <summary>Reading a data cell's value recreates that row's text cells, as R20's grid did on the VPS (0.2.160).</summary>
+    /// <summary>Reading a "Tiền thuế GTGT" cell recreates every row and cell, as R20's grid did on the VPS (0.2.160/0.2.161).</summary>
     public bool RecreateCellsOnRead { get; set; }
+
+    // Old rows and cells stay stale for UIA clients still holding them; the grid's children are the new rows.
+    internal void RecreateRows()
+    {
+        foreach (var row in rows) row.MarkStale();
+        Rebuild();
+        UpdateLayout();
+        UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
+    }
     public int FooterCountOffset { get; init; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
@@ -237,6 +246,13 @@ internal sealed class GridRow : StackPanel
     }
 
     public int? Index { get; }
+    internal bool Stale { get; private set; }
+
+    internal void MarkStale()
+    {
+        Stale = true;
+        foreach (var cell in cells.Values.OfType<GridTextBox>()) cell.Stale = true;
+    }
     public Control? Cell(string key) => cells.GetValueOrDefault(key);
     internal IEnumerable<Control> Cells => columns.Select(column => cells[column.Key]);
 
@@ -254,27 +270,6 @@ internal sealed class GridRow : StackPanel
                     break;
             }
         }
-    }
-
-    // Replaces the row's text cells with new controls; the old ones become stale for UIA clients still holding them.
-    internal void RecreateTextCells()
-    {
-        foreach (var column in columns.Where(column => column.Kind != CellKind.Combo))
-        {
-            var old = (GridTextBox)cells[column.Key];
-            var fresh = CreateText(column);
-            fresh.Width = old.Width;
-            fresh.Height = old.Height;
-            fresh.Margin = old.Margin;
-            fresh.Tag = old.Tag;
-            fresh.Text = old.Text;
-            Panel.SetZIndex(fresh, Panel.GetZIndex(old));
-            old.Stale = true;
-            Children[Children.IndexOf(old)] = fresh;
-            cells[column.Key] = fresh;
-        }
-        UpdateLayout();
-        UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
     }
 
     private TextBox CreateText(GridColumn column)
@@ -348,7 +343,7 @@ internal sealed class GridRow : StackPanel
                 ThrowIfStale();
                 if (grid.CellsUnavailable) throw new ElementNotAvailableException();
                 var value = Cell.Text;
-                if (grid.RecreateCellsOnRead && row.Index is not null) row.RecreateTextCells();
+                if (grid.RecreateCellsOnRead && row.Index is not null && Equals(Cell.Tag, "tax_amount")) grid.RecreateRows();
                 return value;
             }
         }
@@ -365,7 +360,10 @@ internal sealed class GridRow : StackPanel
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.DataItem;
         protected override string GetClassNameCore() => "UltraGridRow";
         protected override string GetNameCore() => owner.Index is null ? "Template Add Row" : "Row " + (owner.Index + 1);
+        protected override System.Windows.Rect GetBoundingRectangleCore()
+            => owner.Stale ? throw new ElementNotAvailableException() : base.GetBoundingRectangleCore();
         protected override List<AutomationPeer> GetChildrenCore()
-            => [.. owner.Cells.Select(UIElementAutomationPeer.CreatePeerForElement).Where(peer => peer is not null).Cast<AutomationPeer>()];
+            => owner.Stale ? throw new ElementNotAvailableException()
+                : [.. owner.Cells.Select(UIElementAutomationPeer.CreatePeerForElement).Where(peer => peer is not null).Cast<AutomationPeer>()];
     }
 }

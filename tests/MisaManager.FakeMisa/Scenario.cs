@@ -76,8 +76,9 @@ public sealed record Scenario
     /// </summary>
     public int GridUnavailableAfterTaxTabMilliseconds { get; init; }
     /// <summary>
-    /// After the detail tab first switches to "Thuế", reading a grid cell's value makes the grid recreate that row's text
-    /// cells; references to the old cells answer "element not available" for good (VPS report 0.2.160, HĐ 81/82).
+    /// After the detail tab first switches to "Thuế", reading a "Tiền thuế GTGT" cell makes the grid recreate all rows and
+    /// cells; references to old rows/cells answer "element not available" for good (VPS reports 0.2.160/0.2.161, HĐ 81/82).
+    /// Line entry's own tax-tab read (Mã hàng, % thuế GTGT) is unaffected, as on the VPS.
     /// </summary>
     public bool GridCellsRecreatedOnReadAfterTaxTab { get; init; }
 

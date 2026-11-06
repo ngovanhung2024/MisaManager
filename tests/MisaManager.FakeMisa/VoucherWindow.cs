@@ -202,7 +202,7 @@ public sealed class VoucherWindow : Window, IGridSource
         if (detailTabs.SelectedIndex == 1 && scenario.GridCellsRecreatedOnReadAfterTaxTab && !grid.RecreateCellsOnRead)
         {
             grid.RecreateCellsOnRead = true;
-            FakeLog.Write("grid recreates a row's cells after each cell read (after Thuế tab)");
+            FakeLog.Write("grid recreates its rows after each Tiền thuế GTGT read (after Thuế tab)");
         }
         if (detailTabs.SelectedIndex != 1 || scenario.GridUnavailableAfterTaxTabMilliseconds <= 0 || gridWentUnavailable) return;
         gridWentUnavailable = true;

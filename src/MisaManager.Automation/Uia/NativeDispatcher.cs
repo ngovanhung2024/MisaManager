@@ -112,7 +112,7 @@ public sealed class NativeDispatcher : IDisposable
             // UIA elements can disappear while a saved voucher closes. Re-read
             // the scope; do not reinterpret this as absence or replay its action.
             throw new AutomationException("NATIVE_ELEMENT_UNAVAILABLE",
-                "Native element disappeared during readback; fresh readback is required.", false, error);
+                "Native element disappeared during readback; fresh readback is required." + Where(error), false, error);
         }
         catch (Exception error) when (error is TimeoutException or OperationCanceledException
             || error is COMException { HResult: unchecked((int)0x80131505) })
@@ -133,6 +133,17 @@ public sealed class NativeDispatcher : IDisposable
             throw new AutomationException("NATIVE_CALL_INTERRUPTED", "Native call bị gián đoạn; không chạy lại input trước khi đọc và xử lý trạng thái.",
                 maySendInput && Volatile.Read(ref started) != 0, error);
         }
+    }
+
+    // First MisaManager frame of a provider failure, e.g. " [NativeTableTraversal.cs:372 TryCustomDataRowCount]".
+    internal static string Where(Exception error)
+    {
+        var frames = new System.Diagnostics.StackTrace(error, fNeedFileInfo: true).GetFrames();
+        var frame = frames.FirstOrDefault(item => item.GetMethod()?.DeclaringType?.Namespace?.StartsWith("MisaManager", StringComparison.Ordinal) == true);
+        if (frame?.GetMethod() is not { } method) return "";
+        var name = method.Name.StartsWith('<') && method.Name.IndexOf('>') is > 1 and var end ? method.Name[1..end] : method.Name;
+        var file = frame.GetFileName() is { Length: > 0 } path ? $"{Path.GetFileName(path)}:{frame.GetFileLineNumber()} " : "";
+        return $" [{file}{name}]";
     }
 
     public NativeDispatcherMetrics Metrics

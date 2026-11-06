@@ -363,7 +363,10 @@ public sealed partial class NativeInputService
         foreach (var row in shownRows)
         {
             token.ThrowIfCancellationRequested();
-            var cells = RowCells(row.Row.Element);
+            // Reading a cell can make R20 recreate every row, so a later row found before the reads is stale too
+            // (VPS 0.2.161): the row and its cells are looked up again inside the retry, never outside it.
+            AutomationElement? rowElement = row.Row.Element;
+            ElementSnapshot[]? cells = null;
             var rowValues = new Dictionary<string, string>(StringComparer.Ordinal);
             var rowSources = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var column in headers)
@@ -372,19 +375,24 @@ public sealed partial class NativeInputService
                 {
                     try
                     {
+                        if (rowElement is null)
+                        {
+                            var fresh = CompleteRows().Single(item => item.Ordinal == row.Ordinal).Row;
+                            if (!fresh.HasArea)
+                                throw new AutomationException("GRID_CHANGED", "Dòng native bị ẩn trong khi đọc.");
+                            rowElement = fresh.Element;
+                        }
+                        cells ??= RowCells(rowElement);
                         var text = ReadCustomCellText(MapCell(cells, column), column.Name);
                         rowValues[column.Name] = text.Value;
                         rowSources[column.Name] = text.Source + "+UIA3.CustomGrid.DataItem";
                         break;
                     }
-                    catch (Exception error) when (Vanished(error) && attempt < 3)
+                    catch (Exception error) when (Vanished(error) && attempt < 5)
                     {
                         // Only reads happen here, so reading again from the row resolved anew by ordinal is safe.
                         token.ThrowIfCancellationRequested();
-                        var fresh = CompleteRows().Single(item => item.Ordinal == row.Ordinal).Row;
-                        if (!fresh.HasArea)
-                            throw new AutomationException("GRID_CHANGED", "Dòng native bị ẩn trong khi đọc.");
-                        cells = RowCells(fresh.Element);
+                        (rowElement, cells) = (null, null);
                     }
                     catch (Exception error) when (Vanished(error))
                     {

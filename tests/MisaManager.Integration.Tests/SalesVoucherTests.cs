@@ -658,9 +658,9 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("grid cells unavailable for 11000 ms after Thuế tab", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(GridUnavailableAfterTaxTabMilliseconds: 11_000));
 
-    // HĐ 81/82 on the VPS (0.2.160): reading one cell made R20 recreate the row's cell accessibles, so the reconcile read,
-    // which touched every cell of the row live for each column, hit a stale cell on every pass for 30 s and Bỏ the voucher.
-    // Cells are mapped from the row snapshot and a vanished cell is read again from a freshly resolved row.
+    // HĐ 81/82 on the VPS (0.2.160/0.2.161): reading one cell made R20 recreate the grid's row accessibles, so the reconcile
+    // read hit a stale row/cell on every pass for 30 s and Bỏ the voucher (0.2.161: row 2's cells searched via a stale row).
+    // Cells are mapped from the row snapshot and a vanished row or cell is read again from a freshly resolved row.
     [Fact]
     public Task GridCellsRecreatedWhileReadingAreReadFromAFreshRow() => WithFakeAsync(async (misa, harness, token) =>
     {
@@ -674,8 +674,27 @@ public sealed class SalesVoucherTests : UiTest
         var voucher = Assert.Single(misa.State().Vouchers);
         Assert.Equal(["HH_06", "HH_07"], voucher.Lines.Select(line => line.Code));
         Assert.Equal((invoice.Subtotal, invoice.TaxTotal), (voucher.Subtotal, voucher.TaxTotal));
-        Assert.Contains("grid recreates a row's cells after each cell read", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
+        Assert.Contains("grid recreates its rows after each Tiền thuế GTGT read", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(GridCellsRecreatedOnReadAfterTaxTab: true));
+
+    // VPS reports only said "Native element disappeared during readback": the report must say where (tab, row/column,
+    // file:line) when MISA keeps failing, and the voucher is still Bỏ without Cất.
+    [Fact]
+    public Task PersistentGridReadFailureReportsTabCellAndSourceLocation() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1085", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == WorkflowRunner.ErrorDiscardedOutcome, Describe(result));
+        Assert.Equal("RECONCILIATION_PENDING", result.Context.Snapshot.LastErrorCode);
+        Assert.Empty(misa.State().Vouchers);
+        var message = result.Context.Snapshot.LastMessage ?? "";
+        Assert.Contains("Tab '2. Thuế'", message, StringComparison.Ordinal);
+        Assert.Contains("dòng 1, cột", message, StringComparison.Ordinal);
+        Assert.Contains("NativeTableTraversal.cs:line", result.Context.Snapshot.ErrorChain ?? "", StringComparison.Ordinal);
+    }, new FakeScenario(GridUnavailableAfterTaxTabMilliseconds: 600_000));
 
     [Fact]
     public Task TaxpayerStatusWarningThenTaxPromptAreBothAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
