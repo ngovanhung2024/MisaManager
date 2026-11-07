@@ -161,6 +161,30 @@ internal static class NativeKeyboard
             throw new AutomationException("FOCUS_LOST", hit != nint.Zero && hitProcess == Environment.ProcessId
                 ? "Cửa sổ của MISA Manager (đối chiếu/tool) đang che nút MISA cần bấm; không click."
                 : "Có cửa sổ khác che ô MISA cần click; không click.");
+        SendClick(x, y);
+    }
+
+    /// <summary>
+    /// Clicks an item of a MISA popup list that is open now. Unlike <see cref="Click"/> nothing is activated first: the
+    /// Alt key and foreground switch of activation close R20's value list, and the click then lands on the grid row
+    /// below it (report 0.2.173, HĐ 167). The window under the point is checked right before the click is sent.
+    /// </summary>
+    internal static void ClickOpenList(int x, int y, int processId, Func<nint, bool> isList)
+    {
+        DesktopSession.ThrowIfUnavailable();
+        var foreground = (nint)PInvoke.GetForegroundWindow();
+        if (foreground == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)foreground, out var owner) == 0 || owner != processId)
+            throw new AutomationException("GRID_DROPDOWN_MISSING", "MISA không còn ở trước nên danh sách đã đóng; không click.");
+        WaitForUserButtonsReleased();
+        if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới danh sách MISA.");
+        var hit = WindowAt(x, y);
+        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out var hitProcess) == 0 || hitProcess != processId || !isList(hit))
+            throw new AutomationException("GRID_DROPDOWN_MISSING", "Danh sách MISA đã đóng trước khi click; không click xuống bảng.");
+        SendClick(x, y);
+    }
+
+    private static void SendClick(int x, int y)
+    {
         // Every event carries the absolute target, and SendInput queues the batch without
         // interleaving: a user moving the mouse meanwhile cannot redirect the press or release.
         var (dx, dy) = AbsolutePoint(x, y);

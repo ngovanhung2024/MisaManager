@@ -119,10 +119,10 @@ public sealed partial class NativeInputService
             .ToArray();
 
     private static bool DrawnOutside(Rectangle bounds, nint gridWindow)
-    {
-        var hit = NativeKeyboard.WindowAt(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
-        return hit != nint.Zero && hit != gridWindow && !PInvoke.IsChild((HWND)gridWindow, (HWND)hit);
-    }
+        => OutsideGrid(NativeKeyboard.WindowAt(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2), gridWindow);
+
+    private static bool OutsideGrid(nint hit, nint gridWindow)
+        => hit != nint.Zero && hit != gridWindow && !PInvoke.IsChild((HWND)gridWindow, (HWND)hit);
 
     private WindowIdentity RefreshWindow(WindowIdentity expected) => windowTracker.Refresh(expected);
 

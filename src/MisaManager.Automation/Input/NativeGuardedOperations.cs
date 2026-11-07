@@ -646,10 +646,8 @@ public sealed partial class NativeInputService
                 if (optionBounds.Width <= 0 || optionBounds.Height <= 0)
                     throw new AutomationException("BOUNDS_UNREADABLE", $"ĐVT '{expected}' không có bounds native.");
                 // The list can close between the poll and the click; never click through it onto the grid.
-                if (!DrawnOutside(optionBounds, gridWindow))
-                    throw new AutomationException("GRID_DROPDOWN_MISSING", $"Danh sách ĐVT đã đóng trước khi chọn '{expected}'; không click.");
-                NativeKeyboard.Click(optionBounds.X + optionBounds.Width / 2,
-                    optionBounds.Y + optionBounds.Height / 2, identity!.WindowHandle, identity.ProcessId);
+                NativeKeyboard.ClickOpenList(optionBounds.X + optionBounds.Width / 2,
+                    optionBounds.Y + optionBounds.Height / 2, identity!.ProcessId, hit => OutsideGrid(hit, gridWindow));
                 epoch++;
             }
             catch (Exception error)

@@ -410,6 +410,17 @@ internal sealed class R20UnitCombo : ComboBox
     public R20UnitCombo(FakeGrid grid)
     {
         this.grid = grid;
+        // R20's value list closes as soon as the voucher window loses activation (Alt key, foreground switch).
+        Loaded += (_, _) =>
+        {
+            if (Window.GetWindow(this) is not { } window) return;
+            window.Deactivated += (_, _) =>
+            {
+                if (!IsDropDownOpen) return;
+                IsDropDownOpen = false;
+                FakeLog.Write("unit list closed: voucher window deactivated");
+            };
+        };
         DropDownOpened += (_, _) =>
         {
             if (openedOnce || grid.UnitListOpenDelayMilliseconds <= 0) return;

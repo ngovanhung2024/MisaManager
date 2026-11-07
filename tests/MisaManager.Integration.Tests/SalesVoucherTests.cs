@@ -1353,8 +1353,32 @@ public sealed class SalesVoucherTests : UiTest
         var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
         Assert.Contains("unit list opens late", events, StringComparison.Ordinal);
         Assert.DoesNotContain("click on the add row", events, StringComparison.Ordinal);
+        // Report 0.2.173, HĐ 167: activating MISA before the option click closed the list under the cursor.
+        Assert.DoesNotContain("unit list closed: voucher window deactivated", events, StringComparison.Ordinal);
     }, new FakeScenario(R20UnitList: true, AdditionalItems: [new("HH_95", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Tấn", "5%")]),
         catalog: [new("HH_95", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Tấn", "kg")]);
+
+    [Fact]
+    public Task KgLineAfterAnotherLineChoosesItsUnitWithoutAddingALine() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // Report 0.2.173, HĐ 167: line 2 (HH_97, Tấn with kg) — "Mã hàng 'HH_97' xuất hiện ở nhiều dòng native: #1, #2".
+        var invoice = Invoices.Build(TempDirectory(misa), "1167", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "", "Phân NPK 16-16-8+13S+TE Phú Mỹ (Bao 50kg)", "kg", 250, 13_600, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_06", "HH_97"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal(("kg", 250m, 3_400_000m), (voucher.Lines[1].Unit, voucher.Lines[1].Quantity, voucher.Lines[1].Amount));
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.DoesNotContain("click on the add row", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("unit list closed: voucher window deactivated", events, StringComparison.Ordinal);
+    }, new FakeScenario(R20UnitList: true,
+            AdditionalItems: [new("HH_97", "Phân NPK 16-16-8+13S+TE Phú Mỹ (Bao 50kg)", "Tấn", "5%")]),
+        catalog: [new("HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai"),
+            new("HH_97", "Phân NPK 16-16-8+13S+TE Phú Mỹ (Bao 50kg)", "Tấn", "kg")]);
 
     [Fact]
     public Task MisaBusyRightAfterTheQuantityClickIsAwaitedWithoutDiscardingTheVoucher() => WithFakeAsync(async (misa, harness, token) =>
