@@ -8,11 +8,13 @@ internal static class NativeWait
     // Read failures that only mean "MISA is still redrawing"; polling again is safe because observe() only reads.
     // GRID_ROW_CHANGED: R20 phiếu nhập redraws the row after Thành tiền and the code cell briefly reads blank
     // (report 0.2.142). A row whose code really changed still fails when the wait times out.
+    // GRID_ROW_AMBIGUOUS: a recreated R20 row can briefly keep a second provider (report 0.2.171); two real rows
+    // with the same code still fail when the wait times out.
     private static readonly HashSet<string> TransientReadCodes = new(StringComparer.Ordinal)
     {
         "TARGET_NOT_FOUND", "TARGET_AMBIGUOUS", "NATIVE_READ_TIMEOUT", "NATIVE_ELEMENT_UNAVAILABLE", "NATIVE_BUSY",
         "GRID_ROWS_INVALID", "GRID_COLUMNS_INVALID", "GRID_NOT_STABLE", "GRID_CHANGED", "GRID_ROW_CHANGED",
-        "SCOPE_IDENTITY_CHANGED", "STALE_NATIVE_FRAME"
+        "GRID_ROW_AMBIGUOUS", "SCOPE_IDENTITY_CHANGED", "STALE_NATIVE_FRAME"
     };
 
     // Poll readback only. Never replay the action that started an asynchronous UI update.

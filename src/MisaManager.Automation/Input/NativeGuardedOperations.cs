@@ -825,7 +825,8 @@ public sealed partial class NativeInputService
             var matches = rows.Where(candidate => string.Equals(Code(candidate), cell.ExpectedCode.Trim(), StringComparison.Ordinal)).ToArray();
             if (matches.Length == 1) row = matches[0];
             else if (matches.Length > 1)
-                throw new AutomationException("GRID_ROW_AMBIGUOUS", $"Mã hàng '{cell.ExpectedCode}' xuất hiện ở nhiều dòng native.");
+                throw new AutomationException("GRID_ROW_AMBIGUOUS", $"Mã hàng '{cell.ExpectedCode}' xuất hiện ở nhiều dòng native: "
+                    + string.Join(", ", matches.Select(DescribeRow)) + ".");
         }
         if (row is null)
         {
@@ -845,6 +846,18 @@ public sealed partial class NativeInputService
             throw new AutomationException("GRID_ROW_CHANGED", "The insertion row is no longer empty; refusing to overwrite its code.");
         return row;
     }
+    private static string DescribeRow(AutomationElement row)
+    {
+        try
+        {
+            var bounds = row.BoundingRectangle;
+            return $"#{row.Properties.AutomationId.ValueOrDefault} {(row.Properties.IsEnabled.ValueOrDefault ? "bật" : "tắt")} "
+                + $"[{bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}]";
+        }
+        catch (Exception error) when (error is COMException or TimeoutException
+            or FlaUI.Core.Exceptions.ElementNotAvailableException) { return "#?"; }
+    }
+
     private AutomationElement DisplayCell(AutomationElement target)
     {
         if (target.ControlType != ControlType.ComboBox) return target;
@@ -912,6 +925,11 @@ public sealed partial class NativeInputService
                 identity!.ProcessId, onscreen: false))
             .Where(element => element.HasArea && IsLogicalCustomRow(element)
                 && (!dataRowsOnly || element.AutomationId != "-1") && (!onscreenOnly || !element.Offscreen))
+            // R20 can keep a second enabled provider of the row it just recreated, lying exactly over it with the same
+            // values (report 0.2.171, HĐ 157: 'HH_193' on two native rows of a one-line voucher). One screen rectangle
+            // is one grid row: keep the committed id so the code lookup and row ordinals stay unique.
+            .GroupBy(element => element.Bounds)
+            .Select(group => group.OrderBy(element => element.AutomationId == "-1" ? 1 : 0).First())
             .OrderBy(element => element.Bounds.Y).Select(element => element.Element).ToArray();
         if (rows.Length == 0 && !allowEmpty)
             throw new AutomationException("GRID_ROWS_INVALID", "Không có dòng native của bảng.");
@@ -1115,7 +1133,33 @@ public sealed partial class NativeInputService
     private void ThrowIfBlockingDialog()
     {
         if (identity is null) return;
-        if (!MayHaveBlockingDialog()) return;
+        WhileMisaBusy(ThrowIfBlockingDialogOnce);
+    }
+
+    // MISA busy recalculating after a grid click (report 0.2.171, HĐ 125: ElementFromHandle timed out right after
+    // the Số lượng click) answers UIA with UIA_E_TIMEOUT. Dialog probes only read, so wait for MISA to answer
+    // instead of turning the input they follow into an uncertain row; nothing is sent again.
+    private static void WhileMisaBusy(Action probe)
+    {
+        var deadline = Environment.TickCount64 + BusyProbeMilliseconds;
+        while (true)
+        {
+            try { probe(); return; }
+            catch (Exception error) when (IsUiaTimeout(error) && Environment.TickCount64 < deadline)
+            {
+                Thread.Sleep(250);
+            }
+        }
+    }
+
+    private const int BusyProbeMilliseconds = 20000;
+
+    private static bool IsUiaTimeout(Exception error)
+        => error is TimeoutException || error is COMException { HResult: unchecked((int)0x80131505) };
+
+    private void ThrowIfBlockingDialogOnce()
+    {
+        if (identity is null || !MayHaveBlockingDialog()) return;
         var dialogs = HostWindows(identity.ProcessId)
             .Where(element => element.NativeWindowHandle != nint.Zero
                 && element.NativeWindowHandle != identity.WindowHandle
@@ -1166,6 +1210,11 @@ public sealed partial class NativeInputService
             }
         }
         // Cheap Win32 proof first; the full host scan below walks every grid cell.
+        WhileMisaBusy(ThrowIfModalDialog);
+    }
+
+    private void ThrowIfModalDialog()
+    {
         if (!MayHaveModalDialog()) return;
         var ancestors = new List<AutomationElement>();
         for (var parent = root!.Parent; parent is not null && parent.Properties.ProcessId.ValueOrDefault == identity!.ProcessId; parent = parent.Parent)

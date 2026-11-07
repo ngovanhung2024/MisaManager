@@ -53,6 +53,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private IReadOnlyList<GridColumn> taxLayout = [];
     private bool dirty;
     private bool saved;
+    private bool busyAfterQuantityClickShown;
 
     public VoucherWindow(FakeProfile profile, Scenario scenario, FakeStore store, MainWindow main, string company)
     {
@@ -160,6 +161,16 @@ public sealed class VoucherWindow : Window, IGridSource
             ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset
         };
         grid.CellCommitted += OnCellCommitted;
+        grid.CellClicked += (_, click) =>
+        {
+            if (scenario.BusyAfterQuantityClickMilliseconds <= 0 || busyAfterQuantityClickShown || click.Key != "quantity") return;
+            busyAfterQuantityClickShown = true;
+            // R20 recalculating on the Số lượng click (report 0.2.171, HĐ 125): its UI thread stops answering UIA while
+            // the tool's dialog check right after the click runs (ElementFromHandle → UIA_E_TIMEOUT).
+            FakeLog.Write("MISA busy after the quantity click");
+            Thread.Sleep(scenario.BusyAfterQuantityClickMilliseconds);
+            FakeLog.Write("MISA answers again");
+        };
         grid.QuickAddRequested += (_, row) => QuickAddItem(row);
         grid.QuickSearchRequested += (_, _) => new ItemLookupWindow(profile, store) { Owner = main }.ShowDialog();
         Activated += (_, _) => UpdateInactiveGrid();
@@ -429,6 +440,11 @@ public sealed class VoucherWindow : Window, IGridSource
     {
         FakeLog.Write($"cell row={e.Row?.ToString() ?? "-1"} {e.Key} <- '{e.Text}' by {e.Trigger}");
         if (saved) return;
+        if (grid.GhostShown && e.Key != "code")
+        {
+            grid.ClearGhostRow();
+            FakeLog.Write("ghost row removed");
+        }
         var focusRow = e.Row;
         var text = e.Text.Trim();
         if (e.Key == "code")
@@ -502,6 +518,11 @@ public sealed class VoucherWindow : Window, IGridSource
         dirty = true;
         grid.Refresh(force: true);
         RefreshTotals();
+        if (e.Key == "code" && scenario.GhostRowAfterItemCode && focusRow is { } recreated)
+        {
+            grid.ShowGhostRow(recreated);
+            FakeLog.Write($"ghost row over row {recreated}");
+        }
         if (grid.NextEditableKey(e.Key) is { } next) grid.FocusCell(focusRow, next);
         if (e.Key == "code" && scenario.UserSwitchesTabs && !userSwitchedTabs)
         {

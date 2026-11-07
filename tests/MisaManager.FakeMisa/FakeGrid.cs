@@ -39,6 +39,8 @@ public sealed class FakeGrid : Border
     private readonly StackPanel headerPanel = new() { Orientation = Orientation.Horizontal };
     private readonly StackPanel rowPanel = new() { Orientation = Orientation.Vertical };
     private readonly ShadowRegion shadow = new();
+    private readonly StackPanel ghostHost = new() { Orientation = Orientation.Vertical };
+    private GhostRow? ghost;
     private readonly TextBlock footer = new() { Margin = new Thickness(4, 2, 0, 2), FontSize = 11 };
     private readonly List<GridRow> rows = [];
     private IReadOnlyList<GridColumn> columns = [];
@@ -62,6 +64,8 @@ public sealed class FakeGrid : Border
         dock.Children.Add(headerPanel);
         DockPanel.SetDock(shadow, Dock.Top);
         dock.Children.Add(shadow);
+        DockPanel.SetDock(ghostHost, Dock.Top);
+        dock.Children.Add(ghostHost);
         if (!footerOutside) dock.Children.Add(FooterBar);
         dock.Children.Add(rowPanel);
         Child = dock;
@@ -114,6 +118,34 @@ public sealed class FakeGrid : Border
 
     public int FooterCountOffset { get; set; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
+    /// <summary>A real mouse click landed on a cell (row index or null for the insertion row, column key).</summary>
+    public event EventHandler<(int? Row, string Key)>? CellClicked;
+    internal void RaiseCellClicked(int? row, string key) => CellClicked?.Invoke(this, (row, key));
+
+    /// <summary>
+    /// R20 (report 0.2.171, HĐ 157): after the row is recreated, a second enabled provider ("-1") of it stays in the
+    /// UIA tree, lying exactly over the visible row with a copy of its values, until the row is committed again.
+    /// </summary>
+    public void ShowGhostRow(int index)
+    {
+        if (rows.FirstOrDefault(row => row.Index == index) is not { } visible) return;
+        UpdateLayout();
+        ghost = new GhostRow(visible);
+        ghostHost.Children.Clear();
+        ghostHost.Children.Add(ghost);
+        UpdateLayout();
+        UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
+    }
+
+    public bool GhostShown => ghost is not null;
+
+    public void ClearGhostRow()
+    {
+        if (ghost is null) return;
+        ghost = null;
+        ghostHost.Children.Clear();
+        UIElementAutomationPeer.FromElement(this)?.ResetChildrenCache();
+    }
     /// <summary>F9 on the Mã hàng cell ("Thêm nhanh").</summary>
     public event EventHandler<int?>? QuickAddRequested;
     public event EventHandler<int?>? QuickSearchRequested;
@@ -167,6 +199,7 @@ public sealed class FakeGrid : Border
 
     private void Rebuild()
     {
+        ClearGhostRow();
         rowPanel.Children.Clear();
         rows.Clear();
         if (source is null) return;
@@ -225,6 +258,9 @@ public sealed class FakeGrid : Border
                 if (UIElementAutomationPeer.CreatePeerForElement(header) is { } peer) children.Add(peer);
             if (owner.shadow.Count > 0 && UIElementAutomationPeer.CreatePeerForElement(owner.shadow) is { } shadowPeer)
                 children.Add(shadowPeer);
+            // Before the real rows, so a reader taking the first match would bind the copy.
+            if (owner.ghost is { } ghostRow && UIElementAutomationPeer.CreatePeerForElement(ghostRow) is { } ghostPeer)
+                children.Add(ghostPeer);
             if (!owner.RowsHidden)
                 foreach (var row in owner.Rows)
                     if (UIElementAutomationPeer.CreatePeerForElement(row) is { } peer) children.Add(peer);
@@ -309,6 +345,54 @@ internal sealed class HeaderCell : Border
     }
 }
 
+/// <summary>Enabled "-1" copy of a visible row: same bounds, read-only cells with the same text.</summary>
+internal sealed class GhostRow : StackPanel
+{
+    private readonly GridRow visible;
+
+    public GhostRow(GridRow visible)
+    {
+        this.visible = visible;
+        Orientation = Orientation.Horizontal;
+        Height = 2;
+        Width = 300;
+        HorizontalAlignment = HorizontalAlignment.Left;
+        AutomationProperties.SetAutomationId(this, "-1");
+        foreach (var cell in visible.Cells)
+            Children.Add(new GhostCell(cell)
+            {
+                Width = 0, Height = 2, IsReadOnly = true,
+                Text = cell switch { TextBox text => text.Text, ComboBox combo => combo.Text, _ => "" }
+            });
+    }
+
+    protected override AutomationPeer OnCreateAutomationPeer() => new GhostRowPeer(this);
+
+    private static System.Windows.Rect BoundsOf(UIElement element)
+        => UIElementAutomationPeer.CreatePeerForElement(element)?.GetBoundingRectangle() ?? System.Windows.Rect.Empty;
+
+    private sealed class GhostRowPeer(GhostRow owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.DataItem;
+        protected override string GetClassNameCore() => "UltraGridRow";
+        protected override System.Windows.Rect GetBoundingRectangleCore() => BoundsOf(owner.visible);
+        protected override bool IsOffscreenCore() => false;
+        protected override List<AutomationPeer> GetChildrenCore()
+            => [.. owner.Children.Cast<UIElement>().Select(UIElementAutomationPeer.CreatePeerForElement).OfType<AutomationPeer>()];
+    }
+
+    private sealed class GhostCell(Control visible) : TextBox
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new GhostCellPeer(this, visible);
+    }
+
+    private sealed class GhostCellPeer(TextBox owner, Control visible) : TextBoxAutomationPeer(owner)
+    {
+        protected override System.Windows.Rect GetBoundingRectangleCore() => BoundsOf(visible);
+        protected override bool IsOffscreenCore() => false;
+    }
+}
+
 internal sealed class GridRow : StackPanel
 {
     private const string NewRowPrompt = "Bấm vào đây để thêm mới";
@@ -382,6 +466,7 @@ internal sealed class GridRow : StackPanel
                 ? TextAlignment.Right : TextAlignment.Left
         };
         text.PreviewKeyDown += (_, e) => OnKey(column.Key, text.Text, e);
+        text.PreviewMouseLeftButtonDown += (_, _) => grid.RaiseCellClicked(Index, column.Key);
         return text;
     }
 

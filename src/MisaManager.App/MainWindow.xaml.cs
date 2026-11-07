@@ -1450,7 +1450,7 @@ public partial class MainWindow : Window
         var services = ((App)Application.Current).Services;
         services.AutoConsole = AutoConsoleItem.IsChecked;
         StatusLabel.Text = services.AutoConsole
-            ? "Đã bật: thu nhỏ/đóng Remote Desktop khi đang chạy thì tool tự chuyển phiên sang console của VPS và chạy tiếp (Remote Desktop bị ngắt, kết nối lại bình thường)."
+            ? "Đã bật: khi bắt đầu nhập trên VPS, tool chuyển phiên sang console của VPS trước (Remote Desktop bị ngắt, kết nối lại bình thường); sau đó thu nhỏ/đóng Remote Desktop không ảnh hưởng tool."
             : "Đã tắt tự chuyển sang console: thu nhỏ/đóng Remote Desktop thì tool chờ đến khi bạn mở lại.";
     }
 

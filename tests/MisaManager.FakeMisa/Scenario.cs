@@ -108,6 +108,13 @@ public sealed record Scenario
     /// session's input desktop is elsewhere this long, then the user reconnects.
     /// </summary>
     public int SessionDisconnectedMilliseconds { get; init; }
+    /// <summary>
+    /// Report 0.2.171, HĐ 157: once the item is on the row, R20 keeps a second enabled "-1" provider of that row exactly
+    /// over it, with the same values, until the row is committed again.
+    /// </summary>
+    public bool GhostRowAfterItemCode { get; init; }
+    /// <summary>Report 0.2.171, HĐ 125: after the first Số lượng click MISA's UI thread is busy this long (UIA times out).</summary>
+    public int BusyAfterQuantityClickMilliseconds { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

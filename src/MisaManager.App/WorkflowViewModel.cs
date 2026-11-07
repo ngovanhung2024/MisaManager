@@ -435,6 +435,11 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 Status = "Chưa nạp database mã hàng. Bấm 'Mã hàng' và chọn file danh mục vật tư, hàng hóa trước khi nhập.";
                 return;
             }
+            // VPS: switch to the console before MISA is touched, so hiding/closing Remote Desktop mid-run changes nothing.
+            var vps = BeginTrace("Chuẩn bị VPS", "Chuyển phiên Remote Desktop sang console trước khi nhập");
+            var vpsStatus = await Task.Run(DesktopSession.PrepareUnattended);
+            FinishTrace(vps, vpsStatus is null ? "Không cần" : "Hoàn tất");
+            if (vpsStatus is not null) Status = vpsStatus;
             // One MISA session per batch: resolving it per invoice costs a UIA window scan each time.
             var findWindow = BeginTrace("Tìm cửa sổ MISA", "Xác định đúng PID/HWND phiên MISA");
             identity = await WaitForSessionAsync();

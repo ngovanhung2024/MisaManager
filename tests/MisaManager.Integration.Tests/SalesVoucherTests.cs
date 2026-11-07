@@ -1314,4 +1314,85 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Equal(("CM GOLD 20.10.10", "Tấn", 0.25m, 3_600_000m), (line.Code, line.Unit, line.Quantity, line.Amount));
         Assert.StartsWith("ItemCatalog:CM GOLD 20.10.10:", result.Context.NativeValues!["unit_absence:" + invoice.Lines[0].LineId]);
     }, catalog: TonCatalog);
+
+    [Fact]
+    public Task CopyOfTheNewRowLyingOverItDoesNotMakeItsItemCodeAmbiguous() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // Report 0.2.171, HĐ 157: "Mã hàng 'HH_193' xuất hiện ở nhiều dòng native" on line 1. R20 kept an enabled "-1"
+        // copy of the new row exactly over it; the voucher was Bỏ (INPUT_UNCERTAIN).
+        var invoice = Invoices.Build(TempDirectory(misa), "1157", Invoices.Consumer,
+            Invoices.Line(0, "", "Phân Kali bột Phú Mỹ (bao PVFCCo)", "Kg", 150, 10_000, "5%"),
+            Invoices.Line(1, "", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Kg", 200, 12_400, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(["HH_193", "HH_08"], voucher.Lines.Select(line => line.Code));
+        Assert.Equal([150m, 200m], voucher.Lines.Select(line => line.Quantity));
+        Assert.Equal(invoice.Subtotal, voucher.Subtotal);
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("ghost row over row 0", events, StringComparison.Ordinal);
+        Assert.Contains("ghost row over row 1", events, StringComparison.Ordinal);
+    }, new FakeScenario(GhostRowAfterItemCode: true, AdditionalItems: [new("HH_193", "Phân Kali bột Phú Mỹ (Bao PVFCCo)", "kg", "5%")]),
+        catalog: [new("HH_193", "Phân Kali bột Phú Mỹ (Bao PVFCCo)", "kg"), new("HH_08", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "kg")]);
+
+    [Fact]
+    public Task MisaBusyRightAfterTheQuantityClickIsAwaitedWithoutDiscardingTheVoucher() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // Report 0.2.171, HĐ 125: right after the Số lượng click the dialog check's ElementFromHandle timed out
+        // (UIA_E_TIMEOUT); the row became ROW_INPUT_UNCERTAIN and the voucher was Bỏ.
+        var invoice = Invoices.Build(TempDirectory(misa), "1125", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal((22m, 220_000m), (line.Quantity, line.Amount));
+        var events = File.ReadAllLines(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains(events, entry => entry.Contains("MISA busy after the quantity click", StringComparison.Ordinal));
+        // Typed once: waiting for MISA only re-read it.
+        Assert.Single(events, entry => entry.Contains(" quantity <- ", StringComparison.Ordinal));
+    }, new FakeScenario(BusyAfterQuantityClickMilliseconds: 5000));
+
+    [Fact]
+    public Task RemoteDesktopSessionIsMovedToTheConsoleBeforeAnyInput()
+    {
+        // User request (VPS): the console move happens once, up front, while nothing is half-typed, instead of when
+        // Remote Desktop is hidden mid-step.
+        var moves = 0;
+        var inputsAtMove = -1L;
+        var (auto, mover, remote) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover,
+            Automation.DesktopSession.RemoteProbe);
+        return WithFakeAsync(async (misa, harness, token) =>
+        {
+            Automation.DesktopSession.AutoConsole = true;
+            Automation.DesktopSession.RemoteProbe = () => Volatile.Read(ref moves) == 0;
+            Automation.DesktopSession.ConsoleMover = () =>
+            {
+                Interlocked.Exchange(ref inputsAtMove, harness.Input.WorkflowInputSequence);
+                Interlocked.Increment(ref moves);
+                return true;
+            };
+            try
+            {
+                var invoice = Invoices.Build(TempDirectory(misa), "1084", Invoices.AV,
+                    Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+                var result = await harness.RunAsync(invoice, misa, token);
+
+                Assert.True(result.Outcome == "saved", Describe(result));
+                Assert.Equal("1084", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+                Assert.Equal(1, moves);
+                Assert.Equal(0, Interlocked.Read(ref inputsAtMove));
+            }
+            finally
+            {
+                Automation.DesktopSession.AutoConsole = auto;
+                Automation.DesktopSession.ConsoleMover = mover;
+                Automation.DesktopSession.RemoteProbe = remote;
+            }
+        });
+    }
 }

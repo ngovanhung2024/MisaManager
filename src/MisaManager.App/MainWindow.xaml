@@ -196,7 +196,7 @@
           <Separator/>
           <MenuItem Header="VPS / Remote Desktop">
             <MenuItem x:Name="AutoConsoleItem" Header="Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop" IsCheckable="True" Click="AutoConsole_Click"
-                      ToolTip="Bật: khi cửa sổ Remote Desktop bị thu nhỏ/ẩn hoặc đóng giữa lúc chạy, tool tự chuyển phiên Windows sang màn hình console của VPS (tscon) rồi chạy tiếp; Remote Desktop trên máy bạn bị ngắt, kết nối lại bình thường khi cần xem. Tắt: tool chỉ chờ đến khi bạn mở lại Remote Desktop."/>
+                      ToolTip="Bật (mặc định): ngay khi bấm Thêm vào MISA trên VPS (và trước mỗi hóa đơn), tool chuyển phiên Windows sang màn hình console của VPS (tscon), giữ nguyên độ phân giải, rồi mới nhập. Sau đó thu nhỏ hay đóng Remote Desktop không ảnh hưởng tool, như chạy trên máy tính thật. Remote Desktop trên máy bạn bị ngắt; kết nối lại khi cần xem (hóa đơn kế tiếp tool lại tự chuyển về console). Tắt: tool chỉ chờ đến khi bạn mở lại Remote Desktop."/>
             <MenuItem Header="Ngắt Remote Desktop ngay, giữ MISA chạy" Click="DetachRemoteDesktop_Click"
                       ToolTip="Dùng thay cho nút X của Remote Desktop: đóng kết nối nhưng chuyển phiên sang màn hình console của VPS, để MISA vẫn nhận phím/chuột và tool chạy tiếp."/>
             <MenuItem Header="Copy lệnh cho máy tính của bạn (thu nhỏ Remote Desktop vẫn chạy)" Click="CopyClientRegistry_Click"

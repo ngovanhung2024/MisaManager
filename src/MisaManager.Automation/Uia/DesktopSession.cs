@@ -69,16 +69,46 @@ public static class DesktopSession
             reason = "Không đưa được MISA lên trước trong phiên Remote Desktop: cửa sổ Remote Desktop trên máy bạn đang thu nhỏ/ẩn, "
                 + "Windows trên VPS bỏ qua phím/chuột khi đó." + Guidance;
         if (reason is null) return false;
-        if (AutoConsole && TryAutoConsole(activationFailed)) return true;
+        if (AutoConsole && TryAutoConsole()) return true;
         throw new AutomationException(UnavailableCode, reason);
     }
 
-    private static bool TryAutoConsole(bool activationFailed)
+    private static bool TryAutoConsole()
     {
         var now = Stopwatch.GetTimestamp();
         var last = Interlocked.Read(ref lastConsoleMove);
         if (last != 0 && Stopwatch.GetElapsedTime(last, now) < ConsoleRetryInterval) return false;
         Interlocked.Exchange(ref lastConsoleMove, now);
+        return MoveToConsoleKeepingDisplay();
+    }
+
+    /// <summary>
+    /// Run start and every invoice start on a VPS, before any input reaches MISA: a Remote Desktop session is moved to
+    /// the VPS console right away, while nothing is half-typed. Minimising or closing Remote Desktop afterwards changes
+    /// nothing for the run, so no desktop switch can happen in the middle of a step. The late move in
+    /// <see cref="ThrowIfUnavailable"/> only remains for a user who reconnects and hides Remote Desktop mid-invoice.
+    /// </summary>
+    /// <returns>A status line when the session had to change; null when it was already fit for unattended work.</returns>
+    public static string? PrepareUnattended()
+    {
+        if (!OperatingSystem.IsWindows() || !AutoConsole) return null;
+        lock (PrepareGate)
+        {
+            if (!IsRemote) return null;
+            Interlocked.Exchange(ref lastConsoleMove, Stopwatch.GetTimestamp());
+            return MoveToConsoleKeepingDisplay()
+                ? "Đã chuyển phiên Windows sang màn hình console của VPS trước khi nhập: thu nhỏ hoặc đóng Remote Desktop "
+                    + "không còn làm gián đoạn tool. Kết nối lại khi cần xem; hóa đơn kế tiếp tool lại tự chuyển về console."
+                : "Không chuyển được phiên sang console của VPS (cần chạy tool bằng quyền administrator). "
+                    + "Đừng thu nhỏ/đóng Remote Desktop khi tool đang chạy.";
+        }
+    }
+
+    private static readonly Lock PrepareGate = new();
+
+    private static bool MoveToConsoleKeepingDisplay()
+    {
+        var before = CurrentDisplayMode();
         bool moved;
         try { moved = ConsoleMover(); }
         catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
@@ -89,12 +119,52 @@ public static class DesktopSession
         if (!moved) return false;
         Trace.TraceInformation("Đã chuyển phiên Remote Desktop sang console của VPS để MISA tiếp tục nhận phím/chuột.");
         // tscon returns before the session's desktop is attached to the console.
-        for (var poll = 0; poll < 50; poll++)
+        for (var poll = 0; poll < 100 && (Blocker() is not null || IsRemote); poll++) Thread.Sleep(100);
+        // The console usually starts at another resolution than the RDP client. Give MISA its screen size back so its
+        // layout (grid columns in view) and the frames captured before the move stay valid.
+        if (before is { } mode) RestoreDisplayMode(mode);
+        WaitForSteadyDesktop();
+        return Blocker() is null;
+    }
+
+    // Screen size and input desktop unchanged for a moment: MISA has finished re-laying out after the switch.
+    private static void WaitForSteadyDesktop()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var deadline = Environment.TickCount64 + 15000;
+        var last = DesktopState();
+        var since = Environment.TickCount64;
+        while (Environment.TickCount64 < deadline)
         {
-            if (Blocker() is null) return true;
-            Thread.Sleep(100);
+            Thread.Sleep(200);
+            var current = DesktopState();
+            if (current != last) (last, since) = (current, Environment.TickCount64);
+            else if (Environment.TickCount64 - since >= 1500) return;
         }
-        return activationFailed && Blocker() is null;
+    }
+
+    private static (int Width, int Height, bool Input) DesktopState()
+        => (GetSystemMetrics(SmCxScreen), GetSystemMetrics(SmCyScreen), Blocker() is null);
+
+    private static DevMode? CurrentDisplayMode()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var mode = new DevMode { Size = (ushort)Marshal.SizeOf<DevMode>() };
+        return EnumDisplaySettings(null, EnumCurrentSettings, ref mode) ? mode : null;
+    }
+
+    private static void RestoreDisplayMode(DevMode before)
+    {
+        if (CurrentDisplayMode() is not { } current
+            || current.PelsWidth == before.PelsWidth && current.PelsHeight == before.PelsHeight) return;
+        var wanted = current;
+        wanted.PelsWidth = before.PelsWidth;
+        wanted.PelsHeight = before.PelsHeight;
+        wanted.Fields = DmPelsWidth | DmPelsHeight;
+        // Not persisted (flags 0): a later Remote Desktop connection applies its own size as usual.
+        var result = ChangeDisplaySettingsEx(null, ref wanted, 0, 0, 0);
+        if (result != 0)
+            Trace.TraceWarning($"Console VPS không nhận độ phân giải {before.PelsWidth}x{before.PelsHeight} (mã {result}).");
     }
 
     /// <summary>
@@ -111,7 +181,10 @@ public static class DesktopSession
     private static int SessionId { get { using var self = Process.GetCurrentProcess(); return self.SessionId; } }
 
     /// <summary>True when this process runs in a Remote Desktop session (not on the VPS console).</summary>
-    public static bool IsRemote => OperatingSystem.IsWindows() && GetSystemMetrics(SmRemoteSession) != 0;
+    public static bool IsRemote => RemoteProbe();
+
+    /// <summary>Remote Desktop probe behind <see cref="IsRemote"/>. Replaced by integration tests.</summary>
+    public static Func<bool> RemoteProbe { get; set; } = () => OperatingSystem.IsWindows() && GetSystemMetrics(SmRemoteSession) != 0;
 
     /// <summary>
     /// Keeps the display on and the machine awake while a run works on MISA, so an idle VPS console neither sleeps nor
@@ -181,6 +254,9 @@ public static class DesktopSession
     private const uint DesktopReadObjects = 0x0001;
     private const int UoiName = 2;
     private const int SmRemoteSession = 0x1000;
+    private const int SmCxScreen = 0, SmCyScreen = 1;
+    private const int EnumCurrentSettings = -1;
+    private const uint DmPelsWidth = 0x00080000, DmPelsHeight = 0x00100000;
     private const uint EsSystemRequired = 0x00000001, EsDisplayRequired = 0x00000002, EsContinuous = 0x80000000;
 
     [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, EntryPoint = "WTSQuerySessionInformationW", SetLastError = true)]
@@ -195,4 +271,24 @@ public static class DesktopSession
     [DllImport("kernel32.dll")] private static extern uint SetThreadExecutionState(uint flags);
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
     [DllImport("kernel32.dll")] private static extern uint WTSGetActiveConsoleSessionId();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "EnumDisplaySettingsW")]
+    private static extern bool EnumDisplaySettings(string? device, int mode, ref DevMode devMode);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "ChangeDisplaySettingsExW")]
+    private static extern int ChangeDisplaySettingsEx(string? device, ref DevMode devMode, nint window, uint flags, nint parameter);
+
+    // DEVMODEW (display part of the unions), 220 bytes.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DevMode
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        public ushort SpecVersion, DriverVersion, Size, DriverExtra;
+        public uint Fields;
+        public int PositionX, PositionY;
+        public uint DisplayOrientation, DisplayFixedOutput;
+        public short Color, Duplex, YResolution, TTOption, Collate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FormName;
+        public ushort LogPixels;
+        public uint BitsPerPel, PelsWidth, PelsHeight, DisplayFlags, DisplayFrequency;
+        public uint IcmMethod, IcmIntent, MediaType, DitherType, Reserved1, Reserved2, PanningWidth, PanningHeight;
+    }
 }
