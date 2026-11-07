@@ -558,6 +558,28 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(SaveBusyMilliseconds: 4000));
 
     [Fact]
+    public Task SaveWhileMisaPostsWithTheEditorLockedIsConfirmedWithoutASecondCat() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // Report 0.2.174, HĐ 183: after Cất R20 kept the editor locked and UIA timed out; the save check gave up after
+        // ~4 s, the run went SaveUncertain and the Bỏ attempt failed on "Native read timed out".
+        var invoice = Invoices.Build(TempDirectory(misa), "1183", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(WorkflowStatus.Saved, result.Context.Snapshot.Status);
+        Assert.Equal("1183", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("MISA ghi sổ xong", log, StringComparison.Ordinal);
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (", StringComparison.Ordinal)));
+        // The editor was never closed before the save was proven.
+        Assert.DoesNotContain("saved=False)", string.Join('\n', log.Split('\n').Where(entry => entry.Contains(" Đóng (", StringComparison.Ordinal))),
+            StringComparison.Ordinal);
+    }, new FakeScenario(SavePostingMilliseconds: 9000));
+
+    [Fact]
     public Task SaveIsProvenByBoGhiWhileCatStaysEnabled() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1545", Invoices.Consumer,

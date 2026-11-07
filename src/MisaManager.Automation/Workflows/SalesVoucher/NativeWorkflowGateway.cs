@@ -336,8 +336,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         Trace.TraceInformation("Bấm OK hộp thông báo MISA trước khi Bỏ: " + notice);
                 // A confirmed discard may be retried after the editor has already closed;
                 // let its fresh register readback decide whether an editor is needed.
-                if (transition.To != WorkflowStatus.Discarded
-                    || await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                if (transition.To != WorkflowStatus.Discarded || await EditorExistsAsync(window, token))
                     await BindEditor(context, token);
                 switch (transition.To)
                 {
@@ -430,7 +429,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         sent = true;
                         string? duplicate = null;
                         var taxPromptAnswered = false;
-                        var readRetries = 0;
+                        var readDeadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * SaveReadSeconds;
                         for (var attempt = 0; ; attempt++)
                         {
                             try
@@ -446,8 +445,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                             {
                                 // MISA can stop answering UIA for a moment while it posts the voucher. Only reads
                                 // are repeated (prompt check, saved proof); Cất itself is never sent again.
-                                if (IsTransientRead(error) && readRetries++ < SaveReadRetries)
+                                if (IsTransientRead(error) && Stopwatch.GetTimestamp() < readDeadline)
                                 {
+                                    Trace.TraceInformation("Chờ MISA sau Cất (chỉ đọc lại): " + error.Message);
                                     await Task.Delay(1000, token);
                                     continue;
                                 }
@@ -489,7 +489,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                                 throw new AutomationException("DISCARD_SAVE_PROOF_PRESENT", "Register contains the expected voucher and invoice; verify Saved instead of discarding.");
                             // An earlier explicit discard may have closed the editor before
                             // its result was persisted; fresh register absence is sufficient.
-                            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                            if (!await EditorExistsAsync(window, token))
                                 break;
                             await BindEditor(context, token);
                             await VerifyVoucherIdentity(context, await input.CaptureAsync(token), token);
@@ -497,7 +497,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                                 throw new AutomationException("DISCARD_SAVE_PROOF_PRESENT", "Editor shows Bỏ ghi (voucher posted); verify Saved instead of discarding.");
                             await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), profile.SaveVoucher, true, token);
                         }
-                        if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                        if (await EditorExistsAsync(window, token))
                         {
                             // A voucher left open by Dừng ngay may have been replaced by the user meanwhile.
                             if (context.Snapshot.Status == WorkflowStatus.Paused
@@ -1388,16 +1388,20 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         }
     }
 
-    private const int SaveReadRetries = 5;
-    private static readonly string[] TransientReadCodes = ["NATIVE_READ_TIMEOUT", "NATIVE_ELEMENT_UNAVAILABLE"];
+    // R20 can keep the editor disabled and stop answering UIA for several seconds while it posts the voucher
+    // (report 0.2.174, HĐ 183). Only reads are repeated while it does; Cất is never sent again.
+    private const int SaveReadSeconds = 45;
+    private static readonly string[] TransientReadCodes = ["NATIVE_READ_TIMEOUT", "NATIVE_ELEMENT_UNAVAILABLE",
+        "NATIVE_CALL_INTERRUPTED", "NATIVE_OWNER_UNAVAILABLE", "NATIVE_BUSY", "SCOPE_DISABLED", "SCOPE_IDENTITY_CHANGED",
+        "EDITOR_NOT_FOUND", "STALE_NATIVE_FRAME"];
 
     private static bool IsTransientRead(Exception error)
         => error is AutomationException { InputMayHaveBeenSent: false } fault && TransientReadCodes.Contains(fault.Code);
 
-    // A completed UIA read that timed out says nothing about the editor; poll until MISA answers.
+    // A UIA read that timed out says nothing about the editor; poll until MISA answers (Cất and Bỏ alike).
     private Task<bool> EditorExistsAsync(WindowIdentity window, CancellationToken token)
         => NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token), _ => true,
-            "NATIVE_READ_TIMEOUT", "MISA chưa trả lời khi kiểm tra chứng từ sau Cất.", token, timeoutMilliseconds: 30000);
+            "NATIVE_READ_TIMEOUT", "MISA chưa trả lời khi kiểm tra chứng từ đang mở.", token, timeoutMilliseconds: 30000);
 
     private async Task<bool> ShowsUnpostAsync(CancellationToken token)
     {

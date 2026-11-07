@@ -118,6 +118,11 @@ public sealed record Scenario
     /// first list opens 800 ms late, and a click on the add row starts a line with the item above.
     /// </summary>
     public bool R20UnitList { get; init; }
+    /// <summary>
+    /// R20 posting a voucher (report 0.2.174, HĐ 183): after Cất the editor stays open but disabled this long, and its UI
+    /// thread stops answering UIA in 2.5 s stretches, before it closes (or shows the saved state).
+    /// </summary>
+    public int SavePostingMilliseconds { get; init; }
     /// <summary>Report 0.2.171, HĐ 125: after the first Số lượng click MISA's UI thread is busy this long (UIA times out).</summary>
     public int BusyAfterQuantityClickMilliseconds { get; init; }
 

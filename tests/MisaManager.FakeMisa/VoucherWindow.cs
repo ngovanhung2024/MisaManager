@@ -697,6 +697,33 @@ public sealed class VoucherWindow : Window, IGridSource
             FakeLog.Write($"MISA bận {scenario.SaveBusyMilliseconds} ms sau Cất");
             Thread.Sleep(scenario.SaveBusyMilliseconds);
         }
+        if (scenario.SavePostingMilliseconds > 0)
+        {
+            IsEnabled = false;
+            FakeLog.Write($"MISA ghi sổ: editor bị khóa {scenario.SavePostingMilliseconds} ms");
+            var until = DateTime.UtcNow.AddMilliseconds(scenario.SavePostingMilliseconds);
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            var stalls = 0;
+            timer.Tick += (_, _) =>
+            {
+                if (DateTime.UtcNow < until)
+                {
+                    if (stalls++ % 3 == 0) Thread.Sleep(2500);
+                    return;
+                }
+                timer.Stop();
+                IsEnabled = true;
+                FakeLog.Write("MISA ghi sổ xong");
+                FinishSave();
+            };
+            timer.Start();
+            return;
+        }
+        FinishSave();
+    }
+
+    private void FinishSave()
+    {
         if (scenario.SaveClosesEditor) { Close(); return; }
         save.IsEnabled = scenario.SaveKeepsCatEnabled;
         // R20 turns "Ghi sổ" into an enabled "Bỏ ghi" once the voucher is saved and posted.
