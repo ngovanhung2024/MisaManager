@@ -158,11 +158,27 @@ public sealed class VoucherWindow : Window, IGridSource
 
         grid = new FakeGrid(profile.GridId(screen, "items"), 230, scenario.GridFooterOutside)
         {
-            ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset
+            ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset,
+            R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0
         };
         grid.CellCommitted += OnCellCommitted;
         grid.CellClicked += (_, click) =>
         {
+            // R20 (report 0.2.172): a click on the add row's cells starts a new line holding the line above's item.
+            if (scenario.R20UnitList && click.Row is null && lines.Count > 0 && !saved)
+            {
+                var above = lines[^1];
+                lines.Add(new LineModel
+                {
+                    Code = above.Code, Name = above.Name, Unit = above.Unit, DebitAccount = above.DebitAccount,
+                    RevenueAccount = above.RevenueAccount, Quantity = above.Quantity, UnitPrice = above.UnitPrice,
+                    Amount = above.Amount, TaxRate = above.TaxRate, TaxAmount = above.TaxAmount
+                });
+                FakeLog.Write($"click on the add row ({click.Key}) started line {lines.Count - 1} with {above.Code}");
+                dirty = true;
+                Dispatcher.BeginInvoke(() => { grid.Refresh(force: true); RefreshTotals(); });
+                return;
+            }
             if (scenario.BusyAfterQuantityClickMilliseconds <= 0 || busyAfterQuantityClickShown || click.Key != "quantity") return;
             busyAfterQuantityClickShown = true;
             // R20 recalculating on the Số lượng click (report 0.2.171, HĐ 125): its UI thread stops answering UIA while

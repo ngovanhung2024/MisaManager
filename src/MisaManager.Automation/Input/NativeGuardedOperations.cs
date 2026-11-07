@@ -546,6 +546,7 @@ public sealed partial class NativeInputService
                 throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở danh sách ĐVT.", true, error);
             }
             var host = automation.FromHandle(identity!.WindowHandle);
+            var gridWindow = KeyboardHandle(target);
             AutomationElement[] registered = [];
             AutomationElement[] options = [];
             var expectedName = NormalizeOptionName(expected);
@@ -553,7 +554,7 @@ public sealed partial class NativeInputService
             for (var attempt = 0; attempt < 40; attempt++)
             {
                 token.ThrowIfCancellationRequested();
-                registered = RegisteredOptions(host, cellBounds);
+                registered = RegisteredOptions(host, cellBounds, gridWindow);
                 // R20 can expose the same ValueList row more than once through
                 // UIA, and can populate the list in more than one pass. Read
                 // each name once, normalize invisible formatting, then keep a
@@ -563,7 +564,8 @@ public sealed partial class NativeInputService
                     .Select(item => (Element: item, Name: NormalizeOptionName(item.Name)))
                     .Where(item => item.Name == expectedName)
                     .GroupBy(item => item.Name, StringComparer.Ordinal)
-                    .Select(group => group.First().Element)
+                    // Prefer the copy UIA hit-tests at its own point: a stale copy can lie under the open list.
+                    .Select(group => group.Select(item => item.Element).FirstOrDefault(ShowsAt) ?? group.First().Element)
                     .ToArray();
                 if (options.Length > 0 || registered.Length > 0 && attempt >= 11) break;
                 Thread.Sleep(50);
@@ -590,7 +592,7 @@ public sealed partial class NativeInputService
                 for (var attempt = 0; attempt < 24; attempt++)
                 {
                     token.ThrowIfCancellationRequested();
-                    registered = RegisteredOptions(host, cellBounds);
+                    registered = RegisteredOptions(host, cellBounds, gridWindow);
                     if (registered.Length == 0) break;
 
                     // R20 can leave the Infragistics ValueList focused after
@@ -643,6 +645,9 @@ public sealed partial class NativeInputService
                 var optionBounds = options[0].BoundingRectangle;
                 if (optionBounds.Width <= 0 || optionBounds.Height <= 0)
                     throw new AutomationException("BOUNDS_UNREADABLE", $"ĐVT '{expected}' không có bounds native.");
+                // The list can close between the poll and the click; never click through it onto the grid.
+                if (!DrawnOutside(optionBounds, gridWindow))
+                    throw new AutomationException("GRID_DROPDOWN_MISSING", $"Danh sách ĐVT đã đóng trước khi chọn '{expected}'; không click.");
                 NativeKeyboard.Click(optionBounds.X + optionBounds.Width / 2,
                     optionBounds.Y + optionBounds.Height / 2, identity!.WindowHandle, identity.ProcessId);
                 epoch++;
@@ -661,6 +666,20 @@ public sealed partial class NativeInputService
         }
         return await VerifyWrittenAsync(() => ReadCellAsync(sentFrame, cell, token), expected,
             NativeValueKind.Text, cultureName, token);
+    }
+
+    private bool ShowsAt(AutomationElement item)
+    {
+        try
+        {
+            var bounds = item.BoundingRectangle;
+            var at = automation.FromPoint(new System.Drawing.Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2));
+            for (var depth = 0; at is not null && depth < 4; depth++, at = at.Parent)
+                if (at.Equals(item)) return true;
+        }
+        catch (Exception error) when (error is COMException or TimeoutException
+            or FlaUI.Core.Exceptions.ElementNotAvailableException) { }
+        return false;
     }
 
     private static async Task<Readback> VerifyWrittenAsync(Func<Task<Readback>> read, string expected,
@@ -925,9 +944,8 @@ public sealed partial class NativeInputService
                 identity!.ProcessId, onscreen: false))
             .Where(element => element.HasArea && IsLogicalCustomRow(element)
                 && (!dataRowsOnly || element.AutomationId != "-1") && (!onscreenOnly || !element.Offscreen))
-            // R20 can keep a second enabled provider of the row it just recreated, lying exactly over it with the same
-            // values (report 0.2.171, HĐ 157: 'HH_193' on two native rows of a one-line voucher). One screen rectangle
-            // is one grid row: keep the committed id so the code lookup and row ordinals stay unique.
+            // One screen rectangle is one grid row: a second provider lying exactly over a row (same bounds) is not
+            // another line. Keep the committed id so the code lookup and row ordinals stay unique.
             .GroupBy(element => element.Bounds)
             .Select(group => group.OrderBy(element => element.AutomationId == "-1" ? 1 : 0).First())
             .OrderBy(element => element.Bounds.Y).Select(element => element.Element).ToArray();

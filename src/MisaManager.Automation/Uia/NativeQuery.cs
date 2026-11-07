@@ -105,14 +105,24 @@ public sealed partial class NativeInputService
             .FirstOrDefault()?.Element;
 
     // Dropdown list items drawn next to the grid cell that opened them.
-    private AutomationElement[] RegisteredOptions(AutomationElement host, Rectangle cellBounds)
+    // R20 unit cells keep their value-list items in the UIA tree while the list is closed (or not drawn yet), with
+    // bounds over the next grid row (report 0.2.172, HĐ 151/164). Clicking one clicked that row instead, and MISA
+    // put the item on a second line. Only items whose point is drawn outside the grid's own window are options.
+    private AutomationElement[] RegisteredOptions(AutomationElement host, Rectangle cellBounds, nint gridWindow)
         => Snapshots(host, Live(automation.ConditionFactory.ByControlType(ControlType.ListItem), identity!.ProcessId))
             .Where(item => item.HasArea
                 && item.Bounds.Left < cellBounds.Right && item.Bounds.Right > cellBounds.Left
-                && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420)
+                && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420
+                && DrawnOutside(item.Bounds, gridWindow))
             .Select(item => item.Element)
             .Where(item => item.Patterns.SelectionItem.IsSupported)
             .ToArray();
+
+    private static bool DrawnOutside(Rectangle bounds, nint gridWindow)
+    {
+        var hit = NativeKeyboard.WindowAt(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+        return hit != nint.Zero && hit != gridWindow && !PInvoke.IsChild((HWND)gridWindow, (HWND)hit);
+    }
 
     private WindowIdentity RefreshWindow(WindowIdentity expected) => windowTracker.Refresh(expected);
 

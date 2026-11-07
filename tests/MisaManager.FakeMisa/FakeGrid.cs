@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls.Primitives;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -73,6 +75,13 @@ public sealed class FakeGrid : Border
 
     public bool ShowInsertionRow { get; set; }
     /// <summary>
+    /// R20 unit cells (report 0.2.172, HĐ 151/164): the "ĐVT" combo exposes an invokable "[Editor] dropdown button"; while
+    /// its list is closed it still exposes the list's items, with bounds over the next grid row; the first opening of a
+    /// list is drawn only after <see cref="UnitListOpenDelayMilliseconds"/>.
+    /// </summary>
+    public bool R20UnitList { get; set; }
+    public int UnitListOpenDelayMilliseconds { get; set; }
+    /// <summary>
     /// R20 (VPS 0.2.163): a "DataRowCount" Tree region holding disabled copies of the data rows whose cells have no
     /// area, so nothing lies under the headers. Rebuilt with the rows while set.
     /// </summary>
@@ -123,8 +132,8 @@ public sealed class FakeGrid : Border
     internal void RaiseCellClicked(int? row, string key) => CellClicked?.Invoke(this, (row, key));
 
     /// <summary>
-    /// R20 (report 0.2.171, HĐ 157): after the row is recreated, a second enabled provider ("-1") of it stays in the
-    /// UIA tree, lying exactly over the visible row with a copy of its values, until the row is committed again.
+    /// A second enabled provider ("-1") of a row lying exactly over the visible row with a copy of its values, until the
+    /// row is committed again.
     /// </summary>
     public void ShowGhostRow(int index)
     {
@@ -393,6 +402,95 @@ internal sealed class GhostRow : StackPanel
     }
 }
 
+internal sealed class R20UnitCombo : ComboBox
+{
+    private readonly FakeGrid grid;
+    private bool openedOnce;
+
+    public R20UnitCombo(FakeGrid grid)
+    {
+        this.grid = grid;
+        DropDownOpened += (_, _) =>
+        {
+            if (openedOnce || grid.UnitListOpenDelayMilliseconds <= 0) return;
+            openedOnce = true;
+            IsDropDownOpen = false;
+            FakeLog.Write("unit list opens late");
+            var timer = new System.Windows.Threading.DispatcherTimer
+            { Interval = TimeSpan.FromMilliseconds(grid.UnitListOpenDelayMilliseconds) };
+            timer.Tick += (_, _) => { timer.Stop(); IsDropDownOpen = true; };
+            timer.Start();
+        };
+    }
+
+    protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
+
+    private sealed class Peer(R20UnitCombo owner) : ComboBoxAutomationPeer(owner)
+    {
+        private DropDownButtonPeer? button;
+        private List<StaleOptionPeer>? stale;
+
+        protected override List<AutomationPeer> GetChildrenCore()
+        {
+            var children = base.GetChildrenCore() ?? [];
+            if (!owner.IsDropDownOpen)
+            {
+                stale ??= [.. owner.Items.Cast<object>().Select((item, index) => new StaleOptionPeer(owner, item.ToString() ?? "", index))];
+                children.InsertRange(0, stale);
+            }
+            if (button is null && FindToggle(owner) is { } toggle) button = new DropDownButtonPeer(toggle, owner);
+            if (button is not null) children.Add(button);
+            return children;
+        }
+
+        private static ToggleButton? FindToggle(DependencyObject parent)
+        {
+            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, index);
+                if (child is ToggleButton toggle) return toggle;
+                if (FindToggle(child) is { } nested) return nested;
+            }
+            return null;
+        }
+    }
+
+    private sealed class DropDownButtonPeer(ToggleButton toggle, ComboBox combo) : FrameworkElementAutomationPeer(toggle), IInvokeProvider
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Button;
+        protected override string GetAutomationIdCore() => "[Editor] dropdown button";
+        protected override List<AutomationPeer> GetChildrenCore() => [];
+        public override object? GetPattern(PatternInterface patternInterface)
+            => patternInterface == PatternInterface.Invoke ? this : null;
+        public void Invoke() => combo.IsDropDownOpen = !combo.IsDropDownOpen;
+    }
+
+    // A closed list's item, laid over the next grid row in a 2-pixel band per item.
+    private sealed class StaleOptionPeer(R20UnitCombo combo, string name, int index)
+        : FrameworkElementAutomationPeer(combo), ISelectionItemProvider
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.ListItem;
+        protected override string GetNameCore() => name;
+        protected override string GetAutomationIdCore() => "";
+        protected override string GetClassNameCore() => "ValueListItem";
+        protected override bool IsOffscreenCore() => false;
+        protected override bool IsKeyboardFocusableCore() => false;
+        protected override List<AutomationPeer> GetChildrenCore() => [];
+        protected override System.Windows.Rect GetBoundingRectangleCore()
+        {
+            var cell = base.GetBoundingRectangleCore();
+            return cell.IsEmpty ? cell : new System.Windows.Rect(cell.X, cell.Bottom + 2 + index * 2, cell.Width, 2);
+        }
+        public override object? GetPattern(PatternInterface patternInterface)
+            => patternInterface == PatternInterface.SelectionItem ? this : null;
+        bool ISelectionItemProvider.IsSelected => false;
+        IRawElementProviderSimple? ISelectionItemProvider.SelectionContainer => null;
+        void ISelectionItemProvider.AddToSelection() { }
+        void ISelectionItemProvider.RemoveFromSelection() { }
+        void ISelectionItemProvider.Select() { }
+    }
+}
+
 internal sealed class GridRow : StackPanel
 {
     private const string NewRowPrompt = "Bấm vào đây để thêm mới";
@@ -472,7 +570,11 @@ internal sealed class GridRow : StackPanel
 
     private ComboBox CreateCombo(GridColumn column)
     {
-        var combo = new ComboBox { IsEditable = true, FontSize = 11, ItemsSource = column.Options ?? [] };
+        var combo = grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid) : new ComboBox();
+        combo.IsEditable = true;
+        combo.FontSize = 11;
+        combo.ItemsSource = column.Options ?? [];
+        combo.PreviewMouseLeftButtonDown += (_, _) => grid.RaiseCellClicked(Index, column.Key);
         combo.PreviewKeyDown += (_, e) => OnKey(column.Key, combo.Text, e);
         combo.SelectionChanged += (_, _) =>
         {

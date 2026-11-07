@@ -233,6 +233,9 @@ internal static class NativeKeyboard
     }
     private static NativeInput Key(ushort code, bool up = false) => new()
     { Type = 1, Data = new() { Keyboard = new() { Key = code, Flags = up ? 2u : 0u } } };
+    /// <summary>The native window that would receive a click at this screen point.</summary>
+    internal static nint WindowAt(int x, int y) => WindowFromPoint(new PointStruct { X = x, Y = y });
+
     [StructLayout(LayoutKind.Sequential)] private struct PointStruct { public int X, Y; }
     [DllImport("user32.dll")] private static extern nint WindowFromPoint(PointStruct point);
     private static NativeInput Mouse(uint flags, int x, int y) => new()

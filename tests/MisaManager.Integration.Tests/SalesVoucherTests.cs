@@ -1318,8 +1318,7 @@ public sealed class SalesVoucherTests : UiTest
     [Fact]
     public Task CopyOfTheNewRowLyingOverItDoesNotMakeItsItemCodeAmbiguous() => WithFakeAsync(async (misa, harness, token) =>
     {
-        // Report 0.2.171, HĐ 157: "Mã hàng 'HH_193' xuất hiện ở nhiều dòng native" on line 1. R20 kept an enabled "-1"
-        // copy of the new row exactly over it; the voucher was Bỏ (INPUT_UNCERTAIN).
+        // An enabled "-1" copy lying exactly over the new row is the same grid row, not a second line with that code.
         var invoice = Invoices.Build(TempDirectory(misa), "1157", Invoices.Consumer,
             Invoices.Line(0, "", "Phân Kali bột Phú Mỹ (bao PVFCCo)", "Kg", 150, 10_000, "5%"),
             Invoices.Line(1, "", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Kg", 200, 12_400, "5%"));
@@ -1336,6 +1335,26 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("ghost row over row 1", events, StringComparison.Ordinal);
     }, new FakeScenario(GhostRowAfterItemCode: true, AdditionalItems: [new("HH_193", "Phân Kali bột Phú Mỹ (Bao PVFCCo)", "kg", "5%")]),
         catalog: [new("HH_193", "Phân Kali bột Phú Mỹ (Bao PVFCCo)", "kg"), new("HH_08", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "kg")]);
+
+    [Fact]
+    public Task ClosedUnitListItemsOverTheNextRowAreNeverClicked() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // Report 0.2.172, HĐ 151/164: "Mã hàng 'HH_95' xuất hiện ở nhiều dòng native: #0 [458,534], #1 [458,556]".
+        // The Kg line opened the ĐVT list of HH_95 (Tấn, conversion kg); the tool clicked a closed list's item lying
+        // over the add row, MISA started line 2 with HH_95, and the voucher was Bỏ.
+        var invoice = Invoices.Build(TempDirectory(misa), "1164", Invoices.Consumer,
+            Invoices.Line(0, "", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Kg", 300, 12_400, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal(("HH_95", "kg", 300m, 3_720_000m), (line.Code, line.Unit, line.Quantity, line.Amount));
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Contains("unit list opens late", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("click on the add row", events, StringComparison.Ordinal);
+    }, new FakeScenario(R20UnitList: true, AdditionalItems: [new("HH_95", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Tấn", "5%")]),
+        catalog: [new("HH_95", "Phân Ure Đạm Phú Mỹ loại 1 (bao)", "Tấn", "kg")]);
 
     [Fact]
     public Task MisaBusyRightAfterTheQuantityClickIsAwaitedWithoutDiscardingTheVoucher() => WithFakeAsync(async (misa, harness, token) =>

@@ -109,10 +109,15 @@ public sealed record Scenario
     /// </summary>
     public int SessionDisconnectedMilliseconds { get; init; }
     /// <summary>
-    /// Report 0.2.171, HĐ 157: once the item is on the row, R20 keeps a second enabled "-1" provider of that row exactly
-    /// over it, with the same values, until the row is committed again.
+    /// A second enabled "-1" provider of the new row lying exactly over it, with the same values, until the row is
+    /// committed again.
     /// </summary>
     public bool GhostRowAfterItemCode { get; init; }
+    /// <summary>
+    /// R20 "ĐVT" list (report 0.2.172, HĐ 151/164): closed lists keep their items in the UIA tree over the next row, the
+    /// first list opens 800 ms late, and a click on the add row starts a line with the item above.
+    /// </summary>
+    public bool R20UnitList { get; init; }
     /// <summary>Report 0.2.171, HĐ 125: after the first Số lượng click MISA's UI thread is busy this long (UIA times out).</summary>
     public int BusyAfterQuantityClickMilliseconds { get; init; }
 
