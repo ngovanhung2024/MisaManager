@@ -55,6 +55,9 @@ public sealed class VoucherWindow : Window, IGridSource
     private bool saved;
     private bool busyAfterQuantityClickShown;
 
+    private static int vouchersOpened;
+    private readonly bool firstVoucher = Interlocked.Increment(ref vouchersOpened) == 1;
+
     public VoucherWindow(FakeProfile profile, Scenario scenario, FakeStore store, MainWindow main, string company)
     {
         this.profile = profile;
@@ -500,7 +503,7 @@ public sealed class VoucherWindow : Window, IGridSource
                 case "credit_account": line.CreditAccount = text; break;
                 case "revenue_account": line.RevenueAccount = text; break;
                 case "unit": line.Unit = text; break;
-                case "quantity" when row == scenario.QuantityIgnoredRow:
+                case "quantity" when row == scenario.QuantityIgnoredRow && (firstVoucher || !scenario.QuantityIgnoredInFirstVoucherOnly):
                     FakeLog.Write($"Bỏ qua số lượng dòng {row + 1}");
                     break;
                 case "quantity" when Ui.TryNumber(text, out var quantity):

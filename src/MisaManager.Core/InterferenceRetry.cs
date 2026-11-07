@@ -10,6 +10,7 @@ public static class InterferenceRetry
 {
     public const int StepRetries = 3;
     public const int ReconcileRetries = 2;
+    /// <summary>Reruns of a failed invoice back to back; after that it waits at the end of the queue between reruns.</summary>
     public const int InvoiceReruns = 2;
 
     private static readonly HashSet<string> TransientCodes = new(StringComparer.Ordinal)
@@ -30,6 +31,28 @@ public static class InterferenceRetry
     public const string DesktopUnavailableCode = "SESSION_NOT_INTERACTIVE";
 
     public static bool IsTransient(string? code) => code is not null && TransientCodes.Contains(code);
+
+    // Failures a rerun reproduces: source data, catalog/customer lists, MISA values that differ from the invoice,
+    // or the MISA session/profile itself. They need the user, so a batch never reruns them.
+    private static readonly HashSet<string> PermanentInvoiceCodes = new(StringComparer.Ordinal)
+    {
+        "RECONCILIATION_FAILED", "ACCOUNT_READBACK_INVALID", "UNIT_CONVERSION_PROVENANCE_INVALID", "DOCUMENT_TYPE_UNSUPPORTED",
+        "LINE_IDENTITY_INVALID", "INVALID_TEXT", "WINDOW_IDENTITY_CHANGED", "WINDOW_IDENTITY_INVALID", "NOT_MISA",
+        "PROFILE_MISSING", "PROFILE_REVISION_CHANGED", "PURCHASE_PROFILE_MISSING", "CUSTOMER_AMBIGUOUS", "CUSTOMER_CODE_TAKEN",
+        "CUSTOMER_SAVE_BLOCKED", "SUPPLIER_AMBIGUOUS", "INVOICE_ALREADY_EXISTS", "CUSTOMER_CODE_MISSING", "ITEM_CODE_MISSING"
+    };
+
+    /// <summary>
+    /// A batch may run the invoice again from the start: its voucher was Bỏ (confirmed unsaved) or never opened, and the
+    /// error is one a fresh attempt can get past (MISA busy or redrawing, a list or dialog in the way…). Catalog and
+    /// data errors (ITEM_*) and the codes above are excluded. Callers must also require a clean MISA state.
+    /// </summary>
+    public static bool InvoiceRerunAllowed(string? code)
+        => !string.IsNullOrWhiteSpace(code) && !code.StartsWith("ITEM_", StringComparison.Ordinal)
+            && !PermanentInvoiceCodes.Contains(code);
+
+    /// <summary>Pause before rerun <paramref name="rerun"/> of the same invoice, so a busy MISA can settle.</summary>
+    public static TimeSpan RerunDelay(int rerun) => TimeSpan.FromSeconds(rerun switch { 1 => 2, 2 => 5, _ => 15 });
 
     /// <summary>Back-off that gives the user's click or tab drag time to settle.</summary>
     public static TimeSpan Delay(int attempt) => TimeSpan.FromMilliseconds(attempt switch { 1 => 400, 2 => 900, _ => 1600 });

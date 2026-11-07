@@ -632,6 +632,29 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Single(misa.State().Vouchers);
     }, new FakeScenario(QuantityIgnoredRow: 1));
 
+    [Fact]
+    public Task InvoiceWhoseVoucherWasBoIsRerunAndSavedOnce() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // User request: failed invoices are retried continuously. The batch reruns an invoice only after its voucher was
+        // Bỏ; the rerun must open a new voucher and save exactly one.
+        var invoice = Invoices.Build(TempDirectory(misa), "1034", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var failed = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(failed.Outcome == WorkflowRunner.ErrorDiscardedOutcome, Describe(failed));
+        Assert.True(failed.MisaClean, Describe(failed));
+        Assert.True(InterferenceRetry.InvoiceRerunAllowed(failed.Context.Snapshot.LastErrorCode), Describe(failed));
+        Assert.Empty(misa.State().Vouchers);
+
+        var rerun = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(rerun.Outcome == "saved", Describe(rerun));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal([22m, 38m], voucher.Lines.Select(line => line.Quantity));
+    }, new FakeScenario(QuantityIgnoredRow: 1, QuantityIgnoredInFirstVoucherOnly: true));
+
     // A MISA notice ("Dữ liệu không có trong danh mục.", only OK) over the failed voucher is acknowledged, the voucher is
     // Bỏ (không Cất) and the batch goes on with the next invoice (user request, 0.2.164).
     [Fact]

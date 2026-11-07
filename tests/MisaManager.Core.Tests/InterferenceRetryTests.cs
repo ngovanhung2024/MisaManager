@@ -47,6 +47,39 @@ public sealed class InterferenceRetryTests
         Assert.Equal(delays.Order(), delays);
     }
 
+    [Theory]
+    [InlineData("INPUT_UNCERTAIN")]
+    [InlineData("ROW_INPUT_UNCERTAIN")]
+    [InlineData("GRID_ROW_AMBIGUOUS")]
+    [InlineData("DIALOG_REQUIRES_ATTENTION")]
+    [InlineData("READBACK_MISMATCH")]
+    [InlineData("NATIVE_READ_TIMEOUT")]
+    [InlineData("WORKFLOW_ERROR")]
+    public void InvoicesFailingOnMisaStateAreRerun(string code) => Assert.True(InterferenceRetry.InvoiceRerunAllowed(code));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("RECONCILIATION_FAILED")]
+    [InlineData("ITEM_CATALOG_STALE")]
+    [InlineData("ITEM_UNIT_MISMATCH")]
+    [InlineData("ACCOUNT_READBACK_INVALID")]
+    [InlineData("CUSTOMER_CODE_MISSING")]
+    [InlineData("ITEM_CODE_MISSING")]
+    [InlineData("INVOICE_ALREADY_EXISTS")]
+    [InlineData("WINDOW_IDENTITY_CHANGED")]
+    [InlineData("PROFILE_REVISION_CHANGED")]
+    public void InvoicesFailingOnDataAreNotRerun(string? code) => Assert.False(InterferenceRetry.InvoiceRerunAllowed(code));
+
+    [Fact]
+    public void RerunDelayGrowsAndThenStaysAtTheCeiling()
+    {
+        var delays = Enumerable.Range(1, 6).Select(InterferenceRetry.RerunDelay).ToArray();
+
+        Assert.Equal(delays.Order(), delays);
+        Assert.Equal(TimeSpan.FromSeconds(15), delays[^1]);
+    }
+
     [Fact]
     public void RetryLimitsAreSmallAndPositive()
     {

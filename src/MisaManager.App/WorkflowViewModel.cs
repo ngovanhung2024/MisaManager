@@ -109,6 +109,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public bool IsStopping => running && stopRequested;
 
+    // Wait before rerunning a failed invoice; Dừng ngay ends the wait at once.
+    private async Task<bool> RerunPauseAsync(TimeSpan wait)
+    {
+        var until = DateTime.UtcNow + wait;
+        while (!stopRequested && DateTime.UtcNow < until) await Task.Delay(200);
+        return !stopRequested;
+    }
+
     /// <summary>
     /// Cập nhật app: releases the old checkpoint (lỗi, chưa rõ, tạm dừng) like a new Thêm vào MISA does. History keeps
     /// the uncertainty, so that invoice still needs register proof before it is entered again. Returns an error or null.
@@ -459,11 +467,19 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
             FinishTrace(precheck, "Hoàn tất", screens.Report is null ? screens.Summary : null);
             operation = "enter";
             SetConnection(MisaConnection.Connected, "");
-            foreach (var invoice in queue)
+            // Invoices whose failed attempt left MISA clean are run again until they save or Dừng ngay is pressed:
+            // back to back at first, then from the end of the queue so the other invoices are not held up.
+            var work = new LinkedList<InvoiceDocument>(queue);
+            var reruns = new Dictionary<string, int>(StringComparer.Ordinal);
+            while (work.First is { } next)
             {
+                work.RemoveFirst();
+                var invoice = next.Value;
                 if (stopRequested) break;
                 var fingerprint = invoice.Fingerprint;
-                var position = $"Hóa đơn {++batchIndex}/{batchTotal}: {invoice.Identity.Number}";
+                var rerun = reruns.GetValueOrDefault(fingerprint);
+                var position = rerun == 0 ? $"Hóa đơn {++batchIndex}/{batchTotal}: {invoice.Identity.Number}"
+                    : $"Hóa đơn {invoice.Identity.Number} · chạy lại lần {rerun}";
                 if (IsDone(invoice))
                 {
                     handledInBatch.Add(fingerprint);
@@ -492,7 +508,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 PropertyChanged?.Invoke(this, new(nameof(PerformanceInvoice)));
                 Status = $"{position} · đang nhập và đối chiếu. Bấm Dừng ngay để dừng sau thao tác hiện tại.";
                 PerformanceCurrent = "Nhập hóa đơn · đang chạy";
-                // One attempt per invoice: an error stops the run with the voucher left open, it is never Bỏ and entered again.
+                // An error whose voucher could not be proven Bỏ stops the batch; it is never entered again blindly.
                 var liveRun = BeginTrace("Nhập hóa đơn", $"Nhập và đối chiếu hóa đơn {invoice.Identity.Number}");
                 var liveRunIndex = PerformanceEntries.Count - 1;
                 var response = await services.RunInvoiceAsync(invoice, identity ?? "");
@@ -538,6 +554,21 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 {
                     History = [finished, .. History.Where(run => run.Snapshot.RunId != finished.Snapshot.RunId)];
                     NotifyWorkflowChanged();
+                }
+                if ((errorDiscarded || cleanFailure) && !stopRequested && !response.RefusedBeforeStart
+                    && lastLive is { MisaClean: true } && InterferenceRetry.InvoiceRerunAllowed(lastLive.Context.Snapshot.LastErrorCode))
+                {
+                    reruns[fingerprint] = ++rerun;
+                    if (rerun <= InterferenceRetry.InvoiceReruns) work.AddFirst(invoice);
+                    else work.AddLast(invoice);
+                    var wait = InterferenceRetry.RerunDelay(rerun);
+                    Status = $"{position} · bị lỗi, {(errorDiscarded ? "đã Bỏ chứng từ (không Cất)" : "chưa nhập gì vào MISA")}; "
+                        + $"tự chạy lại sau {wait.TotalSeconds:0} giây"
+                        + (work.Count > 1 && rerun > InterferenceRetry.InvoiceReruns ? " (sau các hóa đơn còn lại)" : "")
+                        + ". Bấm Dừng ngay để ngừng thử lại.";
+                    NotifyWorkflowChanged();
+                    if (!await RerunPauseAsync(wait)) break;
+                    continue;
                 }
                 if (errorDiscarded || cleanFailure)
                 {

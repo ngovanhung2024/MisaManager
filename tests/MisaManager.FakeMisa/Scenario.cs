@@ -62,6 +62,8 @@ public sealed record Scenario
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>
     public int QuantityIgnoredRow { get; init; } = -1;
+    /// <summary><see cref="QuantityIgnoredRow"/> applies to the first voucher opened only: a rerun of the invoice succeeds.</summary>
+    public bool QuantityIgnoredInFirstVoucherOnly { get; init; }
     /// <summary>After "Thành tiền" is committed the line's code cell reads empty this long (R20 redrawing the row).</summary>
     public int RowRedrawAfterAmountMilliseconds { get; init; }
     /// <summary>After "Thành tiền" the grid scrolls sideways: Tên hàng slides under the frozen Mã hàng column (report 0.2.143).</summary>
