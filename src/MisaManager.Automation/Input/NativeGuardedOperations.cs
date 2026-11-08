@@ -54,6 +54,15 @@ public sealed partial class NativeInputService
             return frame;
         }, token);
 
+    /// <summary>Read-only: the text of a MISA modal dialog blocking the bound window, or null when none is shown.</summary>
+    public Task<string?> BlockingDialogAsync(WindowIdentity window, CancellationToken token)
+        => dispatcher.RunAsync<string?>(() =>
+        {
+            if (identity is null || identity.ProcessId != window.ProcessId || identity.WindowHandle != window.WindowHandle) return null;
+            try { ThrowIfBlockingDialogOnce(); return null; }
+            catch (AutomationException error) when (error.Code == "DIALOG_REQUIRES_ATTENTION") { return error.Message; }
+        }, token);
+
     // R20 can show the voucher as a window owned by MISA's main window. Its grid must be read while that window is active:
     // inactive, its "Thuế" grid exposed rows without cells (VPS 0.2.166, HĐ 81). Sends nothing when it is already in front.
     public Task<NativeFrame> ActivateWorkflowScopeAsync(NativeFrame frame, CancellationToken token)

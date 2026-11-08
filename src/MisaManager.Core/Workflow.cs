@@ -1351,7 +1351,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 // Save includes full reconciliation before the single write
                 // and native register readback afterward. Give both stages
                 // their bounded budget instead of cancelling the last read.
-                action, "Authoritative result and voucher identity", TimeSpan.FromSeconds(save || discardUncertain ? 300 : 30));
+                // Bỏ may first wait for MISA to unlock a form it is still loading.
+                action, "Authoritative result and voucher identity", TimeSpan.FromSeconds(save || discardUncertain ? 300 : 150));
             current = current with { Snapshot = current.Snapshot with { InputPending = true, PendingAction = action } };
             lock (gate) context = current;
             await PersistAsync(current, CancellationToken.None);

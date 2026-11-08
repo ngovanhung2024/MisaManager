@@ -332,7 +332,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         Trace.TraceInformation("Bấm OK hộp thông báo MISA trước khi Bỏ: " + notice);
                 // A confirmed discard may be retried after the editor has already closed;
                 // let its fresh register readback decide whether an editor is needed.
-                if (transition.To != WorkflowStatus.Discarded || await EditorExistsAsync(window, token))
+                // Bỏ waits (reads only) while MISA still keeps the form locked instead of failing on SCOPE_DISABLED.
+                if (transition.To != WorkflowStatus.Discarded)
+                    await BindEditor(context, token);
+                else if (await EditorExistsAsync(window, token)
+                    && await WaitEditorEnabled(context, 0, token, DiscardLockedMilliseconds) is not null)
                     await BindEditor(context, token);
                 switch (transition.To)
                 {
@@ -1615,12 +1619,57 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     {
         if (visible)
         {
-            var editor = await NativeWait.UntilAsync(() => input.TryBindWorkflowScopeAsync(BindTarget(context, editor: true), profile.EditorId, null, token, waitForEnabled: true),
-                frame => frame is not null, "EDITOR_NOT_FOUND", "Editor chưa sẵn sàng.", token, timeoutMilliseconds: 60000);
-            return await input.ActivateWorkflowScopeAsync(editor!, token);
+            var editor = await WaitEditorEnabled(context, EditorAbsentMilliseconds, token)
+                ?? throw new AutomationException("EDITOR_NOT_FOUND", "Editor chưa sẵn sàng.");
+            return await input.ActivateWorkflowScopeAsync(editor, token);
         }
         await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(BindTarget(context), profile.EditorId, token),
             exists => !exists, "EDITOR_STILL_OPEN", "Editor chưa đóng; cần kiểm tra Cất/Bỏ.", token, timeoutMilliseconds: 15000);
+        return null;
+    }
+
+    // Report 0.2.179, HĐ 470: after Thêm R20 kept the new voucher form disabled for over 60 s (MISA busy or a dialog over it).
+    // The wait reported "Không thấy form" and Bỏ then failed at once on the still-locked form. A form that exists but is
+    // locked gets a longer read-only wait; a MISA dialog that keeps it locked is reported with its text, never answered.
+    private const int EditorAbsentMilliseconds = 60000;
+    private const int EditorLockedMilliseconds = 180000;
+    private const int DiscardLockedMilliseconds = 90000;
+    private const int EditorDialogGraceMilliseconds = 10000;
+
+    private sealed record EditorState(NativeFrame? Frame, bool Locked, string? Dialog);
+
+    // Null when no editor appeared within absentMilliseconds; reads only.
+    private async Task<NativeFrame?> WaitEditorEnabled(WorkflowContext context, int absentMilliseconds, CancellationToken token,
+        int lockedMilliseconds = EditorLockedMilliseconds)
+    {
+        var started = Stopwatch.GetTimestamp();
+        long? lockedSince = null;
+        var state = await NativeWait.UntilAsync(async () =>
+        {
+            var window = BindTarget(context, editor: true);
+            if (await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true) is { } frame)
+                return new EditorState(frame, false, null);
+            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+            {
+                lockedSince = null;
+                return new EditorState(null, false, null);
+            }
+            lockedSince ??= Stopwatch.GetTimestamp();
+            // A dialog that opens and closes with the form is MISA loading; only one that stays is reported.
+            var dialog = Stopwatch.GetElapsedTime(lockedSince.Value).TotalMilliseconds >= EditorDialogGraceMilliseconds
+                ? await input.BlockingDialogAsync(window, token) : null;
+            return new EditorState(null, true, dialog);
+        }, value => value.Frame is not null || value.Dialog is not null
+            || !value.Locked && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= absentMilliseconds,
+            "EDITOR_NOT_FOUND", "Editor chưa sẵn sàng.", token,
+            timeoutMilliseconds: Math.Max(absentMilliseconds, lockedMilliseconds), returnLastMismatch: true);
+        if (state.Frame is not null) return state.Frame;
+        if (state.Dialog is not null)
+            throw new AutomationException("DIALOG_REQUIRES_ATTENTION",
+                "Form chứng từ đã mở nhưng bị hộp thoại MISA chặn; tool không tự trả lời. " + state.Dialog);
+        if (state.Locked)
+            throw new AutomationException("SCOPE_DISABLED",
+                $"Form chứng từ đã mở nhưng MISA vẫn khóa sau {lockedMilliseconds / 1000} giây (MISA đang bận hoặc có hộp thoại).");
         return null;
     }
     // resolve_stale only reads the sales register with the current profile, so a checkpoint left by an older
