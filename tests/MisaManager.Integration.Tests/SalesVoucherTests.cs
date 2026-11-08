@@ -1045,6 +1045,27 @@ public sealed class SalesVoucherTests : UiTest
     });
 
     [Fact]
+    public Task EntryStepsReuseTheBoundVoucherWithoutSearchingMisaAgain() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1015", Invoices.Consumer,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 1, 16_000, "8%"));
+        var started = await harness.Runner.StartAsync(invoice, "", misa.WindowIdentityText, token, liveValidation: true,
+            harness.Profile.Revision, allowKgToTon: true, executionMode: WorkflowExecutionMode.LiveProduction);
+        var opened = await harness.Runner.RunUntilAsync(started.Snapshot.RunId, invoice.Fingerprint, WorkflowStatus.Ready,
+            WorkflowStatus.VoucherCreated, 20, token, allowKgToTon: true);
+        Assert.Equal(WorkflowStatus.VoucherCreated, opened.Context.Snapshot.Status);
+        var searches = harness.Input.WorkflowScopeSearches;
+
+        // Customer → reconciliation: every step rebinds the voucher found when it opened instead of walking MISA again.
+        var entered = await harness.Runner.RunUntilAsync(started.Snapshot.RunId, invoice.Fingerprint, WorkflowStatus.VoucherCreated,
+            WorkflowStatus.AwaitingSave, 20, token, allowKgToTon: true);
+
+        Assert.Equal(WorkflowStatus.AwaitingSave, entered.Context.Snapshot.Status);
+        Assert.Equal(searches, harness.Input.WorkflowScopeSearches);
+    });
+
+    [Fact]
     public Task CustomerWithoutCodeIsFoundInTheCustomerListByNormalisedName() => WithFakeAsync(async (misa, harness, token) =>
     {
         // The e-invoice abbreviates the legal form; the customer list has MISA's full name.

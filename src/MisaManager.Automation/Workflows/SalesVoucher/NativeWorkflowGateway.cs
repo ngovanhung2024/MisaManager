@@ -1125,7 +1125,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             }
             return actual.Frame;
         }
-        // Tab order: tax grid (selected after entry) → item grid + totals → receipt → invoice.
+        // Tab order: tax grid (selected after entry) → item grid + totals → invoice → receipt (where Cất reads txtRefNo).
         foreach (var taxTab in new[] { true, false })
         {
             StopPoint();
@@ -1641,17 +1641,26 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         // Restore and foreground MISA before binding UIA scopes; minimized windows expose no workflow surface.
         // Read-only observations do not need to change the foreground window.
         // Verify the bound session before activating it, so a login/"Mở dữ liệu" window is never brought forward.
-        var window = windows.Bind((nint)handle, pid);
+        var window = BoundWindow((nint)handle, pid, start.UtcDateTime, parts.GetValueOrDefault("exe") ?? "");
         if (window.ProcessStartUtc != start.UtcDateTime || !string.Equals(window.ExecutablePath, parts.GetValueOrDefault("exe"), StringComparison.OrdinalIgnoreCase)
             || !window.Title.StartsWith(profile.VersionTitle + " - ", StringComparison.Ordinal))
             throw new AutomationException("WINDOW_IDENTITY_CHANGED",
                 "Phiên MISA đã thay đổi (MISA mở lại, đổi dữ liệu hoặc đang ở màn hình đăng nhập). Đăng nhập/mở đúng dữ liệu rồi bấm Kết nối lại.");
         if (!activate) return window;
-        if (!editor) return windows.Focus((nint)handle, pid);
+        MisaWindowDiscovery.RestoreIfMinimized((nint)handle);
         // Activating the main window deactivates R20's owned voucher window (focus moved to the Bán hàng list), whose grid
         // then exposed rows without cells (VPS 0.2.166, HĐ 81). Editor steps only restore MISA and activate the voucher itself.
-        MisaWindowDiscovery.RestoreIfMinimized((nint)handle);
-        return windows.Bind((nint)handle, pid);
+        if (!editor) NativeKeyboard.Activate((nint)handle, (nint)handle, pid);
+        return BoundWindow((nint)handle, pid, start.UtcDateTime, parts.GetValueOrDefault("exe") ?? "");
+    }
+
+    // Every step binds MISA several times. The tracker keeps the process handle open (its PID cannot be reused), so
+    // only the first bind reads the process start and executable; later ones re-read handle, title, bounds and DPI.
+    private readonly BoundWindowTracker windowTracker = new();
+    private WindowIdentity BoundWindow(nint handle, int pid, DateTime start, string executable)
+    {
+        lock (windowTracker)
+            return windowTracker.Refresh(new(pid, start, handle, executable, "", 0, new(0, 0, 0, 0), ""));
     }
     private Task<Readback> Field(string key, CancellationToken token)
         => Steady(async () => await input.ReadFieldAsync(await input.CaptureAsync(token), profile.Fields[key], token), token);

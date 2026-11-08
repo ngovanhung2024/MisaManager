@@ -37,7 +37,7 @@ public sealed partial class NativeInputService
         CancellationToken token, bool waitForEnabled = false)
         => dispatcher.RunAsync<NativeFrame?>(() =>
         {
-            var scopes = WorkflowScopes(window, scopeId);
+            var scopes = BoundScope(window, scopeId) is { } bound ? [bound] : WorkflowScopes(window, scopeId);
             if (scopes.Length == 0) return null;
             if (scopes.Length != 1) throw new AutomationException("SCOPE_AMBIGUOUS", "Native scope không duy nhất: " + scopeId);
             var scope = scopes[0];
@@ -70,13 +70,39 @@ public sealed partial class NativeInputService
         catch (Exception error) when (error is AutomationException or COMException || Vanished(error)) { return "không rõ"; }
     }
 
-    private AutomationElement[] WorkflowScopes(WindowIdentity window, string scopeId)
+    private long scopeSearches;
+    /// <summary>Full searches of MISA's window for a workflow scope (each one walks the Bán hàng list too).</summary>
+    public long WorkflowScopeSearches => Interlocked.Read(ref scopeSearches);
+
+    private void RequireWindow(WindowIdentity window)
     {
-        RecordQuery(false);
         var current = RefreshWindow(window);
         if (current.ProcessStartUtc != window.ProcessStartUtc || current.ExecutablePath != window.ExecutablePath
             || current.Title != window.Title)
             throw new AutomationException("WINDOW_IDENTITY_CHANGED", "Phiên MISA thay đổi trong khi bind scope.");
+    }
+
+    // The scope an earlier step bound (unique when found) stays the proven target while that same element is live,
+    // on screen and still carries the scope id. Closed, replaced or hidden scopes are searched for again.
+    private AutomationElement? BoundScope(WindowIdentity window, string scopeId)
+    {
+        if (root is null || identity is null || identity.WindowHandle != window.WindowHandle
+            || identity.ProcessId != window.ProcessId || identity.ProcessStartUtc != window.ProcessStartUtc)
+            return null;
+        RecordQuery(false);
+        RequireWindow(window);
+        ElementSnapshot? snapshot;
+        try { snapshot = TrySnapshot(root); }
+        catch (Exception error) when (Vanished(error)) { return null; }
+        return snapshot is { Offscreen: false, HasArea: true } && snapshot.AutomationId == scopeId
+            && snapshot.ProcessId == window.ProcessId ? root : null;
+    }
+
+    private AutomationElement[] WorkflowScopes(WindowIdentity window, string scopeId)
+    {
+        RecordQuery(false);
+        Interlocked.Increment(ref scopeSearches);
+        RequireWindow(window);
         return Snapshots(automation.FromHandle(window.WindowHandle),
                 Live(automation.ConditionFactory.ByAutomationId(scopeId), window.ProcessId, enabled: false))
             .Select(item => item.Element).ToArray();
