@@ -909,19 +909,23 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(SessionDisconnectedMilliseconds: 15000));
 
     [Fact]
-    public Task HiddenRemoteDesktopIsMovedToTheConsoleAndTheRunContinues()
+    public Task ClosedRemoteDesktopIsMovedToTheConsoleAndTheRunContinues()
     {
-        // "Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop": instead of waiting for the user, the tool runs tscon once.
+        // "Tự giữ MISA chạy khi đóng Remote Desktop": instead of waiting for the user, the tool runs tscon once.
         // The fake's session would stay disconnected for 10 minutes; only the console move brings its desktop back.
         var moves = 0;
-        var (auto, mover) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover);
+        var (auto, mover, disconnected) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover,
+            Automation.DesktopSession.DisconnectedProbe);
         return WithFakeAsync(async (misa, harness, token) =>
         {
+            var flag = Path.Combine(misa.Root, "console.flag");
             Automation.DesktopSession.AutoConsole = true;
+            // The fake models a closed Remote Desktop by taking the input desktop away until tscon.
+            Automation.DesktopSession.DisconnectedProbe = () => !File.Exists(flag) && Automation.DesktopSession.Blocker() is not null;
             Automation.DesktopSession.ConsoleMover = () =>
             {
                 Interlocked.Increment(ref moves);
-                File.WriteAllText(Path.Combine(misa.Root, "console.flag"), "tscon");
+                File.WriteAllText(flag, "tscon");
                 return true;
             };
             try
@@ -946,6 +950,47 @@ public sealed class SalesVoucherTests : UiTest
             {
                 Automation.DesktopSession.AutoConsole = auto;
                 Automation.DesktopSession.ConsoleMover = mover;
+                Automation.DesktopSession.DisconnectedProbe = disconnected;
+            }
+        }, new FakeScenario(SessionDisconnectedMilliseconds: 600_000));
+    }
+
+    [Fact]
+    public Task ClosedRemoteDesktopIsMovedToTheConsoleByTheGuardArmedAtStartup()
+    {
+        // User request: closing Remote Desktop must not affect the tool, armed when the tool starts, not when a run starts.
+        var moves = 0;
+        var (auto, mover, disconnected) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover,
+            Automation.DesktopSession.DisconnectedProbe);
+        return WithFakeAsync(async (misa, harness, token) =>
+        {
+            var flag = Path.Combine(misa.Root, "console.flag");
+            Automation.DesktopSession.DisconnectedProbe = () => !File.Exists(flag) && Automation.DesktopSession.Blocker() is not null;
+            Automation.DesktopSession.ConsoleMover = () =>
+            {
+                Interlocked.Increment(ref moves);
+                File.WriteAllText(flag, "tscon");
+                return true;
+            };
+            Automation.DesktopSession.AutoConsole = true;
+            try
+            {
+                Automation.DesktopSession.StartGuard();
+                var events = Path.Combine(misa.Root, "fake-events.log");
+                string Log() => File.Exists(events) ? File.ReadAllText(events) : "";
+                // No invoice is running: the guard alone gives MISA its desktop back.
+                for (var wait = 0; wait < 150 && !Log().Contains("SESSION moved to console", StringComparison.Ordinal); wait++)
+                    await Task.Delay(200, token);
+
+                Assert.Contains("SESSION moved to console", Log(), StringComparison.Ordinal);
+                Assert.Equal(1, Volatile.Read(ref moves));
+                Assert.Null(Automation.DesktopSession.Blocker());
+            }
+            finally
+            {
+                Automation.DesktopSession.AutoConsole = auto;
+                Automation.DesktopSession.ConsoleMover = mover;
+                Automation.DesktopSession.DisconnectedProbe = disconnected;
             }
         }, new FakeScenario(SessionDisconnectedMilliseconds: 600_000));
     }
@@ -1500,26 +1545,26 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(BusyAfterQuantityClickMilliseconds: 5000));
 
     [Fact]
-    public Task RemoteDesktopSessionIsMovedToTheConsoleBeforeAnyInput()
+    public Task ConnectedRemoteDesktopIsNeverDisconnectedByTheTool()
     {
-        // User request (VPS): the console move happens once, up front, while nothing is half-typed, instead of when
-        // Remote Desktop is hidden mid-step.
+        // User report (VPS): "You have been disconnected because another connection was made to the remote computer" —
+        // the run's up-front tscon. A connected Remote Desktop is left alone, by the run and by the startup guard.
         var moves = 0;
-        var inputsAtMove = -1L;
-        var (auto, mover, remote) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover,
-            Automation.DesktopSession.RemoteProbe);
+        var (auto, mover, remote, disconnected) = (Automation.DesktopSession.AutoConsole, Automation.DesktopSession.ConsoleMover,
+            Automation.DesktopSession.RemoteProbe, Automation.DesktopSession.DisconnectedProbe);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             Automation.DesktopSession.AutoConsole = true;
-            Automation.DesktopSession.RemoteProbe = () => Volatile.Read(ref moves) == 0;
+            Automation.DesktopSession.RemoteProbe = () => true;
+            Automation.DesktopSession.DisconnectedProbe = () => false;
             Automation.DesktopSession.ConsoleMover = () =>
             {
-                Interlocked.Exchange(ref inputsAtMove, harness.Input.WorkflowInputSequence);
                 Interlocked.Increment(ref moves);
                 return true;
             };
             try
             {
+                Automation.DesktopSession.StartGuard();
                 var invoice = Invoices.Build(TempDirectory(misa), "1084", Invoices.AV,
                     Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
 
@@ -1527,14 +1572,14 @@ public sealed class SalesVoucherTests : UiTest
 
                 Assert.True(result.Outcome == "saved", Describe(result));
                 Assert.Equal("1084", Assert.Single(misa.State().Vouchers).InvoiceNumber);
-                Assert.Equal(1, moves);
-                Assert.Equal(0, Interlocked.Read(ref inputsAtMove));
+                Assert.Equal(0, Volatile.Read(ref moves));
             }
             finally
             {
                 Automation.DesktopSession.AutoConsole = auto;
                 Automation.DesktopSession.ConsoleMover = mover;
                 Automation.DesktopSession.RemoteProbe = remote;
+                Automation.DesktopSession.DisconnectedProbe = disconnected;
             }
         });
     }

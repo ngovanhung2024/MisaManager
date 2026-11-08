@@ -14,8 +14,8 @@ public static class DesktopSession
     public const string UnavailableCode = InterferenceRetry.DesktopUnavailableCode;
 
     private const string Guidance = " Tool đang chờ, chưa gửi phím/chuột nào và sẽ tự chạy tiếp khi màn hình VPS hoạt động lại. "
-        + "Để ẩn VPS mà tool vẫn chạy: bật ••• → VPS → \"Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop\", "
-        + "hoặc chạy lệnh ••• → VPS → \"Copy lệnh cho máy tính của bạn\" trên máy bạn dùng để kết nối.";
+        + "Đóng Remote Desktop (nút X) thì tool tự giữ MISA chạy khi bật ••• → VPS → \"Tự giữ MISA chạy khi đóng Remote Desktop\". "
+        + "Để thu nhỏ Remote Desktop mà tool vẫn chạy: chạy lệnh ••• → VPS → \"Copy lệnh cho máy tính của bạn\" một lần trên máy bạn dùng để kết nối.";
 
     /// <summary>
     /// Registry fix for the PC the user connects from (not the VPS): mstsc and other clients built on its ActiveX
@@ -26,13 +26,16 @@ public static class DesktopSession
         + "reg add \"HKCU\\Software\\Wow6432Node\\Microsoft\\Terminal Server Client\" /v RemoteDesktop_SuppressWhenMinimized /t REG_DWORD /d 2 /f\r\n";
 
     /// <summary>
-    /// When input cannot reach MISA in a Remote Desktop session (window minimised or closed), move the session to the
-    /// VPS console instead of waiting for the user to come back. The RDP client is disconnected; reconnecting is normal.
+    /// When Remote Desktop is closed (the session is left without a client), move the session to the VPS console so
+    /// MISA keeps a desktop that takes input. A connected session is never moved: tscon would end the user's connection.
     /// </summary>
     public static bool AutoConsole { get; set; }
 
     /// <summary>Moves this session to the console; true when it was attempted successfully. Replaced by integration tests.</summary>
     public static Func<bool> ConsoleMover { get; set; } = TryMoveToConsole;
+
+    /// <summary>True while no client is connected to this session (Remote Desktop closed). Replaced by integration tests.</summary>
+    public static Func<bool> DisconnectedProbe { get; set; } = () => OperatingSystem.IsWindows() && ConnectState() is { } state && state != WtsActive;
 
     private static readonly TimeSpan ConsoleRetryInterval = TimeSpan.FromSeconds(20);
     private static long lastConsoleMove;
@@ -67,9 +70,10 @@ public static class DesktopSession
         var reason = Blocker();
         if (reason is null && activationFailed && IsRemote)
             reason = "Không đưa được MISA lên trước trong phiên Remote Desktop: cửa sổ Remote Desktop trên máy bạn đang thu nhỏ/ẩn, "
-                + "Windows trên VPS bỏ qua phím/chuột khi đó." + Guidance;
+                + "Windows trên VPS bỏ qua phím/chuột khi đó. Tool không ngắt kết nối của bạn." + Guidance;
         if (reason is null) return false;
-        if (AutoConsole && TryAutoConsole()) return true;
+        // Only a closed Remote Desktop is moved; a minimised or locked one still has the user's connection.
+        if (AutoConsole && DisconnectedProbe() && TryAutoConsole()) return true;
         throw new AutomationException(UnavailableCode, reason);
     }
 
@@ -82,49 +86,77 @@ public static class DesktopSession
         return MoveToConsoleKeepingDisplay();
     }
 
+    private static readonly Lock GuardGate = new();
+    private static Thread? guard;
+    private static DevMode? connectedDisplay;
+
     /// <summary>
-    /// Run start and every invoice start on a VPS, before any input reaches MISA: a Remote Desktop session is moved to
-    /// the VPS console right away, while nothing is half-typed. Minimising or closing Remote Desktop afterwards changes
-    /// nothing for the run, so no desktop switch can happen in the middle of a step. The late move in
-    /// <see cref="ThrowIfUnavailable"/> only remains for a user who reconnects and hides Remote Desktop mid-invoice.
+    /// Armed once when the app starts, whether or not a run is going: the moment Remote Desktop is closed, the session is
+    /// moved to the VPS console (one tscon per disconnect), so MISA keeps its desktop before anything needs it. Its
+    /// screen size while connected is remembered and given back on the console.
     /// </summary>
-    /// <returns>A status line when the session had to change; null when it was already fit for unattended work.</returns>
-    public static string? PrepareUnattended()
+    public static void StartGuard()
     {
-        if (!OperatingSystem.IsWindows() || !AutoConsole) return null;
-        lock (PrepareGate)
+        if (!OperatingSystem.IsWindows()) return;
+        lock (GuardGate)
         {
-            if (!IsRemote) return null;
-            Interlocked.Exchange(ref lastConsoleMove, Stopwatch.GetTimestamp());
-            return MoveToConsoleKeepingDisplay()
-                ? "Đã chuyển phiên Windows sang màn hình console của VPS trước khi nhập: thu nhỏ hoặc đóng Remote Desktop "
-                    + "không còn làm gián đoạn tool. Kết nối lại khi cần xem; hóa đơn kế tiếp tool lại tự chuyển về console."
-                : "Không chuyển được phiên sang console của VPS (cần chạy tool bằng quyền administrator). "
-                    + "Đừng thu nhỏ/đóng Remote Desktop khi tool đang chạy.";
+            if (guard is not null) return;
+            guard = new Thread(GuardLoop) { IsBackground = true, Name = "VPS console guard" };
+            guard.Start();
         }
     }
 
-    private static readonly Lock PrepareGate = new();
+    private static void GuardLoop()
+    {
+        var handled = false;
+        while (true)
+        {
+            Thread.Sleep(300);
+            try
+            {
+                if (!DisconnectedProbe())
+                {
+                    handled = false;
+                    if (Blocker() is null && CurrentDisplayMode() is { } mode) lock (GuardGate) connectedDisplay = mode;
+                    continue;
+                }
+                if (handled || !AutoConsole) continue;
+                handled = true;
+                Interlocked.Exchange(ref lastConsoleMove, Stopwatch.GetTimestamp());
+                MoveToConsoleKeepingDisplay();
+            }
+            catch (Exception error) { Trace.TraceWarning("VPS console guard: " + error.Message); }
+        }
+    }
+
+    private static readonly Lock MoveGate = new();
 
     private static bool MoveToConsoleKeepingDisplay()
     {
-        var before = CurrentDisplayMode();
-        bool moved;
-        try { moved = ConsoleMover(); }
-        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+        lock (MoveGate)
         {
-            Trace.TraceWarning("Không chuyển được phiên sang console: " + error.Message);
-            return false;
+            // The guard and a blocked step can both ask; the second finds the session already on the console.
+            if (!DisconnectedProbe()) return Blocker() is null;
+            DevMode? before;
+            lock (GuardGate) before = connectedDisplay;
+            before ??= CurrentDisplayMode();
+            bool moved;
+            try { moved = ConsoleMover(); }
+            catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+            {
+                Trace.TraceWarning("Không chuyển được phiên sang console: " + error.Message);
+                return false;
+            }
+            if (!moved) return false;
+            Trace.TraceInformation("Remote Desktop đã đóng: chuyển phiên sang console của VPS để MISA tiếp tục nhận phím/chuột.");
+            // tscon returns before the session's desktop is attached to the console.
+            for (var poll = 0; poll < 100 && (Blocker() is not null || IsRemote); poll++) Thread.Sleep(100);
+            // The console usually starts at another resolution than the RDP client. Give MISA its screen size back so its
+            // layout (grid columns in view) and the frames captured before the move stay valid.
+            if (before is { } mode) RestoreDisplayMode(mode);
+            WaitForSteadyDesktop();
+            return Blocker() is null;
         }
-        if (!moved) return false;
-        Trace.TraceInformation("Đã chuyển phiên Remote Desktop sang console của VPS để MISA tiếp tục nhận phím/chuột.");
-        // tscon returns before the session's desktop is attached to the console.
-        for (var poll = 0; poll < 100 && (Blocker() is not null || IsRemote); poll++) Thread.Sleep(100);
-        // The console usually starts at another resolution than the RDP client. Give MISA its screen size back so its
-        // layout (grid columns in view) and the frames captured before the move stay valid.
-        if (before is { } mode) RestoreDisplayMode(mode);
-        WaitForSteadyDesktop();
-        return Blocker() is null;
     }
 
     // Screen size and input desktop unchanged for a moment: MISA has finished re-laying out after the switch.

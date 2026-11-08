@@ -31,6 +31,8 @@ public partial class App : Application
             Shutdown(2);
             return;
         }
+        // Armed before any run: closing Remote Desktop at any time keeps MISA on a live desktop.
+        MisaManager.Automation.DesktopSession.StartGuard();
         MainWindow = new MainWindow();
         MainWindow.Show();
     }

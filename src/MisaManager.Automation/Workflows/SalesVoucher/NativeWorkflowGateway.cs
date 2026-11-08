@@ -259,10 +259,6 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var checkpointStarted = Stopwatch.GetTimestamp();
         try
         {
-            // VPS: leave Remote Desktop for the console before this invoice sends anything, so hiding or closing
-            // Remote Desktop later never switches desktops in the middle of a step. No-op outside Remote Desktop.
-            if (transition.To == WorkflowStatus.PreflightPassed && transition.Action != "verify_only")
-                await Task.Run(DesktopSession.PrepareUnattended, token);
             Use(context.Invoice);
             var stale = transition.Action == WorkflowRunner.ResolveStaleAction;
             var window = BindTarget(context, activate: transition.Action is not ("verify_only" or WorkflowRunner.ResolveStaleAction),

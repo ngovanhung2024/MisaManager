@@ -1450,8 +1450,8 @@ public partial class MainWindow : Window
         var services = ((App)Application.Current).Services;
         services.AutoConsole = AutoConsoleItem.IsChecked;
         StatusLabel.Text = services.AutoConsole
-            ? "Đã bật: khi bắt đầu nhập trên VPS, tool chuyển phiên sang console của VPS trước (Remote Desktop bị ngắt, kết nối lại bình thường); sau đó thu nhỏ/đóng Remote Desktop không ảnh hưởng tool."
-            : "Đã tắt tự chuyển sang console: thu nhỏ/đóng Remote Desktop thì tool chờ đến khi bạn mở lại.";
+            ? "Đã bật: đóng Remote Desktop lúc nào thì tool cũng tự chuyển phiên sang console của VPS để MISA chạy tiếp. Tool không tự ngắt Remote Desktop đang kết nối."
+            : "Đã tắt tự chuyển sang console: đóng Remote Desktop thì tool chờ đến khi bạn kết nối lại.";
     }
 
     private void CopyClientRegistry_Click(object sender, RoutedEventArgs e)

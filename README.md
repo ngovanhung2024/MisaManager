@@ -305,10 +305,14 @@ thì vẫn dừng ở InputUncertain/SaveUncertain như cũ.
 Thu nhỏ cửa sổ Remote Desktop làm client gửi "suppress output": Windows trên VPS vẫn báo phiên Active nhưng bỏ qua
 SendInput và không cho đổi foreground. Không có API phát hiện trực tiếp; trong phiên Remote Desktop, kích hoạt MISA thất bại
 liên tục (10 lần) được coi là trường hợp này. Cách ẩn VPS mà tool vẫn chạy (menu **••• → VPS / Remote Desktop**):
-- **Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop** (bật mặc định, lưu trong `auto-create.txt` là `console=on|off`):
-  đang chạy mà Remote Desktop bị thu nhỏ/ẩn/đóng thì tool tự chạy `tscon <session> /dest:console` (app chạy quyền
-  Administrator nên không hỏi UAC; tối đa 1 lần/20 giây) rồi chạy tiếp. Remote Desktop trên máy người dùng bị ngắt; kết nối
-  lại bình thường. Console của VPS không khóa; độ phân giải có thể đổi theo console.
+- **Tự giữ MISA chạy khi đóng Remote Desktop** (bật mặc định, lưu trong `auto-create.txt` là `console=on|off`):
+  có hiệu lực ngay khi mở tool (`DesktopSession.StartGuard` trong `App.OnStartup`), không chờ bấm Thêm vào MISA. Khi
+  Remote Desktop bị đóng (nút X, mất mạng; phiên "Disconnected"), tool lập tức chạy `tscon <session> /dest:console` (app
+  chạy quyền Administrator nên không hỏi UAC; 1 lần mỗi lần ngắt, và bước đang chờ thử lại tối đa 1 lần/20 giây) rồi trả
+  lại độ phân giải lúc còn kết nối. Tool **không bao giờ** tự chạy tscon khi Remote Desktop còn kết nối (kể cả đang thu
+  nhỏ hay khóa màn hình), vì tscon ngắt kết nối của người dùng ("another connection was made to the remote computer").
+- Thu nhỏ Remote Desktop: phía VPS không có cách nào giữ input mà không ngắt kết nối; tool chờ (không gửi input) cho đến
+  khi mở lại, trừ khi máy kết nối đã chạy lệnh dưới đây.
 - **Ngắt Remote Desktop ngay, giữ MISA chạy**: như trên nhưng làm ngay, thay cho nút X.
 - **Copy lệnh cho máy tính của bạn**: `reg add` DWORD `RemoteDesktop_SuppressWhenMinimized = 2` vào
   `HKCU\Software\Microsoft\Terminal Server Client` (và nhánh `Wow6432Node`) trên **máy dùng để kết nối**, rồi kết nối lại:

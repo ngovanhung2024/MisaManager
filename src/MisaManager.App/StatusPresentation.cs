@@ -91,7 +91,7 @@ public static partial class ErrorHints
         ["DETACHED_INVOICE_UNCERTAIN"] = "Chính hóa đơn này còn kết quả chưa rõ trong hồ sơ. Kiểm tra và đóng chứng từ trong đúng phiên MISA đã nhập rồi chạy lại; tool chỉ đọc danh sách để xác nhận, không tự gửi lại input.",
         ["EXISTING_EDITOR"] = "Đang có chứng từ bán hàng mở trong MISA. Kiểm tra, Cất hoặc đóng chứng từ đó rồi bấm Thêm vào MISA.",
         ["RECONCILIATION_FAILED"] = "Không đọc/đối chiếu được dữ liệu MISA. Giữ chứng từ đang mở, bấm Đọc lại; nếu vẫn lỗi hãy kiểm tra tay trên MISA.",
-        ["SESSION_NOT_INTERACTIVE"] = "Windows trên VPS đang không nhận phím/chuột (Remote Desktop thu nhỏ/đóng hoặc màn hình bị khóa). Tool tự chờ rồi chạy tiếp, không gửi lại input. Để ẩn VPS: bật ••• → VPS → Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop, hoặc ••• → VPS → Copy lệnh cho máy tính của bạn.",
+        ["SESSION_NOT_INTERACTIVE"] = "Windows trên VPS đang không nhận phím/chuột (Remote Desktop thu nhỏ/đóng hoặc màn hình bị khóa). Tool tự chờ rồi chạy tiếp, không gửi lại input. Đóng Remote Desktop: bật ••• → VPS → Tự giữ MISA chạy khi đóng Remote Desktop. Thu nhỏ Remote Desktop: chạy ••• → VPS → Copy lệnh cho máy tính của bạn một lần trên máy bạn.",
         ["FOCUS_FAILED"] = "Không đưa được MISA lên trước. Đừng bấm vào cửa sổ khác khi tool đang chạy; nếu dùng VPS xem ••• → VPS / Remote Desktop.",
         ["NOT_CONNECTED"] = "Chưa kết nối được MISA. Mở MISA SME 2023 R20 và đăng nhập vào dữ liệu kế toán; tool tự kết nối lại.",
         ["CUSTOMER_CODE_MISSING"] = "Chưa có mã khách hàng. Nạp danh mục khách hàng (menu •••; người mua không có trong danh mục sẽ được tự tạo mới) hoặc ghi mã vào cột Mã khách hàng của Excel, rồi chạy lại.",

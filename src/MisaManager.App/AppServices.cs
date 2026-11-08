@@ -80,7 +80,7 @@ public sealed partial class AppServices : IAsyncDisposable
         set { workflowGateway.AllowPartyCreation = value; SaveCreationSettings(); }
     }
 
-    /// <summary>Menu toggle "Tự giữ MISA chạy khi thu nhỏ/đóng Remote Desktop"; on unless switched off (remembered).</summary>
+    /// <summary>Menu toggle "Tự giữ MISA chạy khi đóng Remote Desktop"; on unless switched off (remembered).</summary>
     public bool AutoConsole
     {
         get => DesktopSession.AutoConsole;
