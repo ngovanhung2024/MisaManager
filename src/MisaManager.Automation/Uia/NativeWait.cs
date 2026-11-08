@@ -61,7 +61,8 @@ internal static class NativeWait
                 throw new AutomationException(code, pending is null ? message : message + " " + pending, false, pendingError);
             }
             await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(delay, remaining)), token);
-            delay = Math.Min(delay * 2, 200);
+            // A low cap keeps each step close to the moment MISA is ready; observe() itself spaces slow reads.
+            delay = Math.Min(delay * 2, 50);
         }
     }
 }

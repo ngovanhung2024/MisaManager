@@ -125,6 +125,11 @@ public sealed record Scenario
     /// thread stops answering UIA in 2.5 s stretches, before it closes (or shows the saved state).
     /// </summary>
     public int SavePostingMilliseconds { get; init; }
+    /// <summary>
+    /// The voucher is already in the register after Cất, but the editor keeps Cất enabled and hides "Bỏ ghi" this long
+    /// before it shows the saved state (or closes): the tool must prove the save without a second Cất.
+    /// </summary>
+    public int SaveProofDelayMilliseconds { get; init; }
     /// <summary>Report 0.2.171, HĐ 125: after the first Số lượng click MISA's UI thread is busy this long (UIA times out).</summary>
     public int BusyAfterQuantityClickMilliseconds { get; init; }
 

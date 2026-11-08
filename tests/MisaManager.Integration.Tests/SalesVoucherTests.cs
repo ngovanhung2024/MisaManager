@@ -594,6 +594,40 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(SaveClosesEditor: false, SaveKeepsCatEnabled: true));
 
     [Fact]
+    public Task EditorClosingLateAfterCatIsTheSavedProof() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // The editor kept Cất enabled for a few seconds, then R20 closed it: the save check kept reading the vanished
+        // editor until it timed out and the saved invoice ended "chưa rõ".
+        var invoice = Invoices.Build(TempDirectory(misa), "1546", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(WorkflowStatus.Saved, result.Context.Snapshot.Status);
+        Assert.Single(misa.State().Vouchers);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (", StringComparison.Ordinal)));
+    }, new FakeScenario(SaveProofDelayMilliseconds: 4000));
+
+    [Fact]
+    public Task SavedStateShownAfterTheSaveCheckIsConfirmedAgainWithoutASecondCat() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        // "Bỏ ghi" appears only after the 15 s save check gave up: the run re-proves the save (editor, then register).
+        var invoice = Invoices.Build(TempDirectory(misa), "1547", Invoices.Consumer,
+            Invoices.Line(0, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal(WorkflowStatus.Saved, result.Context.Snapshot.Status);
+        Assert.Contains("Đã xác minh lại sau Cất", result.Context.Snapshot.LastMessage, StringComparison.Ordinal);
+        Assert.Equal("1547", Assert.Single(misa.State().Vouchers).InvoiceNumber);
+        var log = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.Equal(1, log.Split('\n').Count(entry => entry.Contains(" Cất (", StringComparison.Ordinal)));
+    }, new FakeScenario(SaveClosesEditor: false, SaveProofDelayMilliseconds: 18000));
+
+    [Fact]
     public Task TaxRoundingPromptOfOneDongIsAnsweredYes() => WithFakeAsync(async (misa, harness, token) =>
     {
         var invoice = Invoices.Build(TempDirectory(misa), "1006", Invoices.AV,

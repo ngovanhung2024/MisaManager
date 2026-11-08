@@ -37,6 +37,10 @@ CustomerVerified → DatesVerified → InvoiceVerified → ItemsVerified → Tot
 Mỗi bước gửi input rồi đọc lại từ MISA; input không xác nhận được sẽ chuyển sang `InputUncertain`/`SaveUncertain` và
 không bao giờ được gửi lại tự động.
 
+Bằng chứng đã Cất: nút **Bỏ ghi** bật, nút **Cất** bị khóa, hoặc MISA tự đóng chứng từ. Chưa thấy bằng chứng trong 15 giây
+thì tool xác minh lại một lần (chỉ đọc chứng từ đang mở rồi danh sách chứng từ, bấm Đóng khi đã chứng minh đã Cất), không
+bấm Cất lần hai; vẫn không chứng minh được mới để `SaveUncertain`.
+
 ## Cài đặt & cập nhật (không cần script)
 
 1. Mở GitHub → **Releases** của repo, tải `MisaManager-<version>.msi` bản mới nhất và nhấp đúp để cài (cài cho tài khoản

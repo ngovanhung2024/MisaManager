@@ -434,7 +434,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         {
                             try
                             {
-                                var prompts = await AnswerSavePromptsAsync(editorHandle, attempt == 0 ? 800 : 0, token);
+                                var prompts = await AnswerSavePromptsAsync(editorHandle, attempt == 0 ? 800 : 0, token, stopWhenSaved: true);
                                 taxPromptAnswered |= prompts.TaxAnswered;
                                 duplicate = prompts.Duplicate;
                                 if (duplicate is null)
@@ -448,7 +448,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                                 if (IsTransientRead(error) && Stopwatch.GetTimestamp() < readDeadline)
                                 {
                                     Trace.TraceInformation("Chờ MISA sau Cất (chỉ đọc lại): " + error.Message);
-                                    await Task.Delay(1000, token);
+                                    await Task.Delay(250, token);
                                     continue;
                                 }
                                 // A slow prompt makes the editor modal, so the saved-proof reads fail first
@@ -649,7 +649,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 throw new AutomationException("CUSTOMER_CREATE_UNCERTAIN",
                     $"Đã bấm Cất khách hàng '{code}' nhưng hộp Thêm Khách hàng chưa đóng sau 15 giây. Kiểm tra MISA; "
                     + "lần chạy sau MISA sẽ báo trùng mã nếu khách hàng đã được tạo, không tạo thêm.", true);
-            await Task.Delay(100, token);
+            await Task.Delay(50, token);
         }
     }
 
@@ -787,7 +787,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 throw new AutomationException("ITEM_CREATE_UNCERTAIN",
                     $"Dòng {row + 1}: đã bấm Cất mã '{code}' nhưng hộp Thêm vật tư chưa đóng sau 15 giây. "
                     + "Kiểm tra MISA; lần chạy sau tool sẽ tìm lại mã này trước, không tạo trùng.", true);
-            await Task.Delay(100, token);
+            await Task.Delay(50, token);
         }
     }
 
@@ -1300,7 +1300,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     /// without a prompt.
     /// </summary>
     private async Task<(bool TaxAnswered, string? Duplicate, bool AnyAnswered)> AnswerSavePromptsAsync(nint editorHandle,
-        int waitMilliseconds, CancellationToken token)
+        int waitMilliseconds, CancellationToken token, bool stopWhenSaved = false)
     {
         var taxAnswered = false;
         var statusAnswered = false;
@@ -1323,6 +1323,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             if (await input.AnswerDuplicateInvoicePromptAsync(editorHandle, 0, token) is { } duplicate)
                 return (taxAnswered, duplicate, true);
             if (Stopwatch.GetTimestamp() >= deadline) return (taxAnswered, null, taxAnswered || statusAnswered);
+            // Every save prompt comes before MISA posts, so an enabled "Bỏ ghi" means none can follow; skip the rest of the wait.
+            if (stopWhenSaved && await UnpostShownSafelyAsync(token)) return (taxAnswered, null, taxAnswered || statusAnswered);
             await Task.Delay(50, token);
         }
     }
@@ -1342,6 +1344,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         var savedEditor = await BindEditor(context, token);
         if (!afterSave) await VerifyVoucherIdentity(context, savedEditor, token);
         // Saved proof without reading the sales list: "Bỏ ghi" appears, or the voucher turns read-only (Cất disabled).
+        var editorClosed = false;
         await NativeWait.UntilAsync(async () =>
             {
                 // A late tax-difference or MST-status prompt keeps Cất enabled until it is answered.
@@ -1351,9 +1354,20 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     taxPromptAnswered = true;
                     return false;
                 }
-                return await ShowsSavedAsync(token);
+                try { return await ShowsSavedAsync(token); }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    // R20 can close the editor itself after a slow posting; that close is the saved proof (see above).
+                    if (await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) throw;
+                    return editorClosed = true;
+                }
             }, saved => saved, "SAVE_UNCERTAIN",
             "Chưa thấy nút Bỏ ghi và nút Cất chưa chuyển sang trạng thái đã ghi; không Cất lại.", token, timeoutMilliseconds: 15000);
+        if (editorClosed)
+        {
+            await BindSales(context, token, activate: false);
+            return;
+        }
         if (taxPromptAnswered)
         {
             // "Có" moves a difference of up to 2 đồng into line 1: VAT and grand total stay within 2 đồng, the subtotal is exact.
@@ -1408,6 +1422,14 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         if (profile.UnpostVoucher is not { } unpost) return false;
         try { await input.RequireCommandEnabledAsync(await input.CaptureAsync(token), unpost, true, token); return true; }
         catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
+    }
+
+    // Read-only probe: a busy or modal MISA simply reads as "not yet".
+    private async Task<bool> UnpostShownSafelyAsync(CancellationToken token)
+    {
+        if (profile.UnpostVoucher is not { } unpost) return false;
+        try { return await input.CommandEnabledNowAsync(unpost, token); }
+        catch (Exception error) when (error is not OperationCanceledException) { return false; }
     }
 
     private async Task<bool> ShowsSavedAsync(CancellationToken token)

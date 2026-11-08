@@ -39,7 +39,8 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     bool GridShadowBandOnTaxTab = false, bool GridShadowOverlayOnTaxTab = false,
     bool GridCelllessWhileEditorInactive = false, bool MainActivatedOnFirstTaxAmountRead = false,
     int SessionDisconnectedMilliseconds = 0, bool GhostRowAfterItemCode = false, int BusyAfterQuantityClickMilliseconds = 0,
-    bool R20UnitList = false, int SavePostingMilliseconds = 0, bool QuantityIgnoredInFirstVoucherOnly = false);
+    bool R20UnitList = false, int SavePostingMilliseconds = 0, bool QuantityIgnoredInFirstVoucherOnly = false,
+    int SaveProofDelayMilliseconds = 0);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

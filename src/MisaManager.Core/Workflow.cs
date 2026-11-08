@@ -690,6 +690,8 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
                 if (StopSignal.IsRequested)
                     return await CompletePausedAsync(await PauseForStopAsync(token), startedAt, comparison, token);
                 current = await FinishAsync(save: true, token: token);
+                if (current.Snapshot.Status == WorkflowStatus.SaveUncertain)
+                    current = await ConfirmSavedAsync(current, token);
                 if (current.Snapshot.Status == WorkflowStatus.Saved)
                     return await CompleteLiveRecordAsync(current, startedAt, "saved", true, true, comparison, null, token);
                 if (current.Snapshot.Status == WorkflowStatus.Blocked && current.Snapshot.LastErrorCode == ExistingInvoiceCode)
@@ -797,6 +799,36 @@ public sealed class WorkflowRunner(IWorkflowNativeGateway native, IStateStore st
     /// </summary>
     public static bool RefusedBeforeStart(Exception error)
         => error is AutomationException { Code: "DETACHED_INVOICE_UNCERTAIN", InputMayHaveBeenSent: false };
+
+    /// <summary>
+    /// Cất was sent once but its proof did not show in time (slow posting, the editor closed meanwhile, a stale
+    /// element). Prove the result again from a fresh binding: the saved editor, then the sales register. Only reads,
+    /// tab switches and Đóng of a proven-saved editor are sent; Cất never is. Unproven stays SaveUncertain.
+    /// </summary>
+    private async Task<WorkflowContext> ConfirmSavedAsync(WorkflowContext uncertain, CancellationToken token)
+    {
+        await transitionGate.WaitAsync(token);
+        try
+        {
+            var current = Refreshed(uncertain);
+            if (current.Snapshot.Status != WorkflowStatus.SaveUncertain) return current;
+            var transition = new WorkflowTransition(WorkflowStatus.SaveUncertain, WorkflowStatus.Saved, "confirm_saved",
+                "Voucher saved by the single Cất", "verify_only", "Native saved proof and read-only editor close",
+                TimeSpan.FromSeconds(120));
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(transition.Timeout);
+            WorkflowObservation proof;
+            try { proof = await native.ExecuteAsync(current, transition, (_, _) => Task.CompletedTask, deadline.Token); }
+            catch (Exception) when (!token.IsCancellationRequested) { return current; }
+            if (!proof.Confirmed || proof.Status != WorkflowStatus.Saved) return current;
+            current = Replace(current, WorkflowStatus.Saved, proof.NativeFrame,
+                message: "Đã xác minh lại sau Cất (không Cất lại): " + proof.Message);
+            lock (gate) context = current;
+            await PersistAsync(current, CancellationToken.None);
+            return current;
+        }
+        finally { transitionGate.Release(); }
+    }
 
     /// <summary>
     /// Bỏ the voucher of a failed attempt so the batch can go on with the next invoice. The gateway proves the voucher

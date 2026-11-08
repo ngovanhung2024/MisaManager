@@ -49,6 +49,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly Button save;
     private readonly Button post;
     private readonly List<Button> readOnlyCommands = [];
+    private bool saveProofDelayed;
     private IReadOnlyList<GridColumn> itemLayout = [];
     private IReadOnlyList<GridColumn> taxLayout = [];
     private bool dirty;
@@ -727,6 +728,19 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void FinishSave()
     {
+        if (scenario.SaveProofDelayMilliseconds > 0 && !saveProofDelayed)
+        {
+            saveProofDelayed = true;
+            FakeLog.Write($"Đã lưu, trạng thái đã Cất hiện sau {scenario.SaveProofDelayMilliseconds} ms");
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(scenario.SaveProofDelayMilliseconds) };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                if (IsVisible) FinishSave();
+            };
+            timer.Start();
+            return;
+        }
         if (scenario.SaveClosesEditor) { Close(); return; }
         save.IsEnabled = scenario.SaveKeepsCatEnabled;
         // R20 turns "Ghi sổ" into an enabled "Bỏ ghi" once the voucher is saved and posted.

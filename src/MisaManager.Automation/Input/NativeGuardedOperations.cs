@@ -317,6 +317,20 @@ public sealed partial class NativeInputService
             return true;
         }, token);
 
+    // Non-blocking probe for optional early exits: a disabled scope (modal prompt, posting) reads false at once
+    // instead of settling like GuardWorkflow. Never use it as proof that a command is unavailable.
+    public Task<bool> CommandEnabledNowAsync(NativeSelector selector, CancellationToken token)
+        => dispatcher.RunAsync(() =>
+        {
+            if (!ScopeReady(Capture())) return false;
+            var condition = selector.AutomationId.Length > 0
+                ? automation.ConditionFactory.ByAutomationId(selector.AutomationId)
+                : automation.ConditionFactory.ByName(selector.Name);
+            var commands = Snapshots(root!, Live(condition.And(automation.ConditionFactory.ByControlType(ControlType.Button)),
+                identity!.ProcessId, enabled: false)).ToArray();
+            return commands.Length == 1 && commands[0].Enabled;
+        }, token);
+
     public Task<Readback> ReadCellAsync(NativeFrame frame, NativeCell cell, CancellationToken token, bool waitForCode = false)
         => dispatcher.RunAsync(() =>
         {
