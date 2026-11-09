@@ -94,7 +94,7 @@ public sealed class ItemGroupTests : IDisposable
         var withoutGroups = CatalogAudit.Items(items, groups);
         var ambiguous = Assert.Single(withoutGroups);
         Assert.Contains("HH_03, HH_50", ambiguous, StringComparison.Ordinal);
-        Assert.Contains("tạm hoãn", ambiguous, StringComparison.Ordinal);
+        Assert.Contains("mã số nhỏ nhất HH_03", ambiguous, StringComparison.Ordinal);
         Assert.DoesNotContain("HH_133", ambiguous, StringComparison.Ordinal);
 
         groups.Replace(MisaGroups, "Nhom.xlsx");

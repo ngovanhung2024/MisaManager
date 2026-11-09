@@ -16,6 +16,7 @@ public sealed partial class AppServices : IAsyncDisposable
     /// <summary>Purchase invoices already in MISA ("Mua hàng hóa, dịch vụ" export); kept apart from the sales register.</summary>
     public PostedInvoiceStore PostedPurchases { get; } = LoadPostedInvoices("posted-purchases.json");
     public ItemGroupStore ItemGroups { get; } = LoadItemGroups();
+    public OpeningStockStore OpeningStock { get; } = LoadOpeningStock();
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
     private readonly NativeDispatcher nativeOwner = new();
@@ -204,6 +205,18 @@ public sealed partial class AppServices : IAsyncDisposable
         {
             File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
             return new ItemGroupStore(path);
+        }
+    }
+
+    private static OpeningStockStore LoadOpeningStock()
+    {
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            ProductIdentity.TechnicalName, "opening-stock.json");
+        try { return new OpeningStockStore(path); }
+        catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
+        {
+            File.Move(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), overwrite: true);
+            return new OpeningStockStore(path);
         }
     }
 

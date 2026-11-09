@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.ComponentModel;
 using System.IO;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Windows;
 using System.Windows.Input;
@@ -252,6 +253,12 @@ public partial class MainWindow : Window
                 return;
             }
         }
+        await OpenWorkbookAsync(workbookPath);
+    }
+
+    /// <summary>Reads the workbook, lets the user pick the sheet when there are several, then imports it like any invoice file.</summary>
+    private async Task OpenWorkbookAsync(string workbookPath)
+    {
         var work = BeginImport();
         ResetMapping();
         updatingSheet = true;
@@ -436,6 +443,147 @@ public partial class MainWindow : Window
         var catalog = ((App)Application.Current).Services.ItemCatalog;
         if (PreferredItemPrompt.Edit(this, catalog))
             StatusLabel.Text = $"Đã lưu {catalog.PreferredCodes().Count:N0} mã dùng khi trùng tên.";
+    }
+
+    private async void ChooseOpeningStock_Click(object sender, RoutedEventArgs e) => await ChooseOpeningStockAsync();
+
+    private async Task<bool> ChooseOpeningStockAsync()
+    {
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Chọn báo cáo Tổng hợp tồn kho xuất từ MISA (cột Đầu kỳ, ví dụ từ ngày 01/01/2026)" };
+        if (dialog.ShowDialog(this) != true) return false;
+        var store = ((App)Application.Current).Services.OpeningStock;
+        StatusLabel.Text = "Đang đọc báo cáo tồn kho...";
+        try
+        {
+            var (items, asOf) = await OpeningStockWorkbook.ReadAsync(((App)Application.Current).Services.WorkbookReader, dialog.FileName);
+            var count = await Task.Run(() => store.Replace(items, asOf, dialog.FileName));
+            StatusLabel.Text = $"Đã nạp tồn kho đầu kỳ{(asOf is { } date ? " " + date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "")}: "
+                + $"{count:N0} mã, {store.Snapshot().Count(item => item.Quantity > 0):N0} mã còn tồn ({Path.GetFileName(dialog.FileName)}).";
+            return true;
+        }
+        catch (Exception error)
+        {
+            StatusLabel.Text = "Không nạp được báo cáo tồn kho: " + error.Message;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Balances the loaded sales invoices against opening stock and purchases, writes the sales workbook with "Mã hàng" and a report
+    /// next to the source, and offers to load the balanced workbook for entry.
+    /// </summary>
+    private async void BalanceStock_Click(object sender, RoutedEventArgs e)
+    {
+        var services = ((App)Application.Current).Services;
+        if (Purchase)
+        {
+            StatusLabel.Text = "Cân đối tồn kho áp dụng cho hóa đơn bán ra: chuyển sang chế độ Bán hàng, mở Excel bán ra rồi chạy lại.";
+            return;
+        }
+        if (services.ItemCatalog.Count == 0)
+        {
+            StatusLabel.Text = "Chưa nạp danh mục mã hàng: ••• → Nạp mã hàng… (xuất mới nhất từ MISA, sau khi đã nhập mua vào).";
+            return;
+        }
+        if (importModel.Result is not { Invoices.Count: > 0 } sales)
+        {
+            StatusLabel.Text = "Chưa mở hóa đơn bán ra: ••• → Mở Excel hóa đơn… rồi chạy lại cân đối.";
+            return;
+        }
+        if (services.OpeningStock.Count == 0 && !await ChooseOpeningStockAsync()) return;
+        var (purchases, purchaseSource) = await PurchasesForBalanceAsync(services);
+        if (purchases is null) return;
+        StatusLabel.Text = "Đang cân đối tồn kho...";
+        try
+        {
+            var stock = services.OpeningStock;
+            var plan = await Task.Run(() => StockBalancer.Plan(services.ItemCatalog, stock.Snapshot(), stock.AsOf, purchases.Invoices, sales.Invoices));
+            var source = sales.Source.FilePath;
+            var data = workbook is { } loaded && loaded.Sha256 == sales.Source.Sha256 ? loaded : await services.WorkbookReader.ReadAsync(source);
+            var (balanced, report) = await Task.Run(() => WriteBalance(source, data, sales, plan));
+            var summary = BalanceSummary(plan, purchases, purchaseSource, sales.Invoices.Count(services.IsPosted));
+            StatusLabel.Text = $"Đã cân đối tồn kho: {Path.GetFileName(balanced)} · báo cáo {report}";
+            var answer = MessageBox.Show(this, summary + $"\n\nFile bán ra đã cân đối (có cột Mã hàng):\n{balanced}\nBáo cáo chi tiết:\n{report}"
+                    + "\n\nNạp file bán ra đã cân đối để nhập vào MISA ngay?",
+                "Cân đối tồn kho bán ra", MessageBoxButton.YesNo,
+                plan.NegativeCodes.Count > 0 || plan.Warnings.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            if (answer == MessageBoxResult.Yes) await OpenWorkbookAsync(balanced);
+        }
+        catch (Exception error) { StatusLabel.Text = "Không cân đối được tồn kho: " + error.Message; }
+    }
+
+    /// <summary>Purchases of the last purchase import (Mua hàng mode), or a purchase workbook the user picks.</summary>
+    private async Task<(ImportResult? Result, string Source)> PurchasesForBalanceAsync(AppServices services)
+    {
+        var saved = await services.PurchaseImportSessions.LoadAsync();
+        if (saved is { Result.Invoices.Count: > 0 }) return (saved.Result, saved.FilePath);
+        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
+            Title = "Chọn file Excel hóa đơn mua vào (đã chuyển từ zip HTML) để tính hàng nhập kho" };
+        if (dialog.ShowDialog(this) != true)
+        {
+            StatusLabel.Text = "Cần hóa đơn mua vào để cân đối: chuyển sang Mua hàng và mở hóa đơn mua vào, hoặc chọn file Excel mua vào.";
+            return (null, "");
+        }
+        try { return (await new InvoiceWorkbookImporter(services.WorkbookReader, purchase: true).ImportAsync(dialog.FileName), dialog.FileName); }
+        catch (Exception error)
+        {
+            StatusLabel.Text = "Không đọc được file mua vào: " + error.Message;
+            return (null, "");
+        }
+    }
+
+    // Next to the sales file, or with the app data when that folder is read-only or the file is open in Excel.
+    private static (string Balanced, string Report) WriteBalance(string source, WorkbookData data, ImportResult sales, StockBalancePlan plan)
+    {
+        const string suffix = "_can_doi_kho";
+        var stem = Path.GetFileNameWithoutExtension(source);
+        if (stem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) stem = stem[..^suffix.Length];
+        void Write(string folder, out string balanced, out string report)
+        {
+            Directory.CreateDirectory(folder);
+            balanced = Path.Combine(folder, stem + suffix + ".xlsx");
+            report = Path.Combine(folder, stem + "_bao_cao_ton_kho.xlsx");
+            StockBalanceWorkbook.WriteSales(data, sales, plan, balanced);
+            StockBalanceWorkbook.WriteReport(plan, report);
+        }
+        string balancedPath, reportPath;
+        try { Write(Path.GetDirectoryName(source)!, out balancedPath, out reportPath); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Write(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "sales",
+                DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)), out balancedPath, out reportPath);
+        }
+        return (balancedPath, reportPath);
+    }
+
+    private static string BalanceSummary(StockBalancePlan plan, ImportResult purchases, string purchaseSource, int posted)
+    {
+        int Count(params StockAllocationKind[] kinds) => plan.Sales.Count(line => kinds.Contains(line.Kind));
+        var dates = plan.Sales.Select(line => line.Date).DefaultIfEmpty().ToArray();
+        var lines = new List<string>
+        {
+            $"Đã cân đối {plan.Sales.Count:N0} dòng bán ra ({dates.Min():dd/MM/yyyy} → {dates.Max():dd/MM/yyyy}) với tồn đầu kỳ"
+                + $"{(plan.From is { } from ? " " + from.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "")} và {plan.Purchases:N0} hóa đơn mua vào "
+                + $"({Path.GetFileName(purchaseSource)}, {purchases.Invoices.Count:N0} hóa đơn hàng hóa).",
+            $"• Giữ mã theo tên hàng: {Count(StockAllocationKind.Matched, StockAllocationKind.Fixed):N0} dòng",
+            $"• Chuyển sang mã cùng mặt hàng còn tồn (ưu tiên hết tồn đầu năm): {Count(StockAllocationKind.Family):N0} dòng",
+            $"• Chuyển sang mã tên gần giống: {Count(StockAllocationKind.Similar):N0} dòng; quy đổi ĐVT: {plan.Sales.Count(line => line.Converted):N0} dòng",
+        };
+        if (Count(StockAllocationKind.Borrowed) > 0)
+            lines.Add($"• Âm tạm thời (hàng mua vào sau ngày bán): {Count(StockAllocationKind.Borrowed):N0} dòng");
+        if (Count(StockAllocationKind.Shortage, StockAllocationKind.Unmatched) > 0)
+            lines.Add($"• Thiếu tồn (không mã cùng loại nào đủ hàng): {Count(StockAllocationKind.Shortage, StockAllocationKind.Unmatched):N0} dòng");
+        // Their codes in MISA are unknown here: the plan assumes the codes it chose.
+        if (posted > 0)
+            lines.Add($"• {posted:N0} hóa đơn đã ghi sổ trong MISA vẫn được tính theo mã tool chọn; nếu MISA đã nhập chúng bằng mã khác "
+                + "thì tồn thực tế sẽ khác báo cáo (nên cân đối trước khi nhập bán ra).");
+        var negative = plan.NegativeCodes;
+        lines.Add(negative.Count == 0 ? "Không mã nào bị âm kho."
+            : $"Còn {negative.Count} mã âm kho: " + string.Join(", ", negative.Take(8).Select(code =>
+                $"{code.Code} {code.Lowest.ToString("#,##0.###", CultureInfo.GetCultureInfo("vi-VN"))} {code.Unit}")) + (negative.Count > 8 ? "…" : ""));
+        if (plan.Warnings.Count > 0) lines.Add("Cảnh báo:\n" + string.Join("\n", plan.Warnings.Take(4).Select(warning => "– " + warning)));
+        return string.Join("\n", lines);
     }
 
     private void ShowCatalogAudit(bool onlyWhenFindings)
@@ -1372,6 +1520,7 @@ public partial class MainWindow : Window
                 + "• Toàn bộ danh mục mã hàng (kể cả mã do tool đã tạo)\n"
                 + "• Danh sách mã khách hàng và nhà cung cấp\n"
                 + "• Danh sách nhóm vật tư, hàng hóa\n"
+                + "• Tồn kho đầu kỳ\n"
                 + "• Danh sách hóa đơn đã ghi sổ\n\n"
                 + "Sau khi xóa, hãy nạp lại danh mục mới nhất xuất từ MISA. Lịch sử nhập (chống nhập trùng) và cấu hình cột "
                 + "được giữ lại. Không hoàn tác được.",
@@ -1398,12 +1547,13 @@ public partial class MainWindow : Window
             await Task.Run(services.PostedInvoices.Clear);
             await Task.Run(services.PostedPurchases.Clear);
             await Task.Run(services.ItemGroups.Clear);
+            await Task.Run(services.OpeningStock.Clear);
             RefreshCatalogLabel();
             RefreshPartyLabel();
             presentationInitialized = false;
             RefreshWorkflowPanel();
             RefreshRunSummary();
-            StatusLabel.Text = $"Đã xóa sạch dữ liệu: danh sách hóa đơn, {removedItems:N0} mã hàng, nhóm VTHH, mã khách hàng, nhà cung cấp và hóa đơn đã ghi sổ.";
+            StatusLabel.Text = $"Đã xóa sạch dữ liệu: danh sách hóa đơn, {removedItems:N0} mã hàng, nhóm VTHH, tồn kho đầu kỳ, mã khách hàng, nhà cung cấp và hóa đơn đã ghi sổ.";
         }
         catch (Exception error) { StatusLabel.Text = "Không xóa hết được dữ liệu Excel: " + error.Message; }
     }

@@ -1,8 +1,9 @@
 namespace MisaManager.Core;
 
 /// <summary>
-/// Problems in the loaded item catalog: names shared by several codes (invoices using them are held, see
-/// <see cref="CatalogHold"/>) and codes outside the item-code convention (code prefix = item group code + "_").
+/// Problems in the loaded item catalog: names shared by several codes (lines without a code use the smallest one unless the user
+/// chose another; choosing several holds the invoice, see <see cref="CatalogHold"/>) and codes outside the item-code convention
+/// (code prefix = item group code + "_").
 /// </summary>
 public static class CatalogAudit
 {
@@ -30,16 +31,20 @@ public static class CatalogAudit
                 findings.Add($"{outside.Length} mã không bắt đầu bằng mã nhóm VTHH ({prefixes}): {List(outside)}. "
                     + "Tool vẫn dùng được các mã này; mã mới do tool tạo luôn theo nhóm.");
         }
-        const string hold = "Hóa đơn có mặt hàng này (không ghi mã) được tạm hoãn, không tick nhập được: chọn mã dùng "
-            + "(••• → Chọn mã dùng khi trùng tên), ngừng theo dõi mã thừa trong MISA rồi nạp lại danh mục, hoặc ghi mã vào cột "
-            + "'Mã hàng' của file Excel hóa đơn.";
+        const string hold = "Đang chọn nhiều hơn một mã dùng nên hóa đơn có mặt hàng này (không ghi mã) bị tạm hoãn: chỉ giữ một mã "
+            + "(••• → Chọn mã dùng khi trùng tên), hoặc ghi mã vào cột 'Mã hàng' của file Excel hóa đơn.";
         foreach (var group in DuplicateGroups(items))
         {
-            if (preferred is not null && group.Count(item => preferred.Contains(item.Code)) == 1) continue;
+            var chosen = preferred is null ? 0 : group.Count(item => preferred.Contains(item.Code));
+            if (chosen == 1) continue;
+            var smallest = group.Select(item => item.Code).Order(ItemCatalogStore.CodeOrder).First();
+            var resolution = chosen > 1 ? hold
+                : $"Dòng không ghi mã dùng mã số nhỏ nhất {smallest}; muốn dùng mã khác: ••• → Chọn mã dùng khi trùng tên, hoặc ghi mã vào "
+                    + "cột 'Mã hàng' của file Excel hóa đơn.";
             var sameSpelling = group.Select(item => ItemCatalogStore.NameKey(item.Name)).Distinct(StringComparer.Ordinal).Count() == 1;
             findings.Add(sameSpelling
-                ? $"Trùng tên cùng ĐVT '{group.First().Unit}': '{group.First().Name}' = {List(group.Select(item => item.Code))}. " + hold
-                : $"Tên gần trùng cùng ĐVT '{group.First().Unit}': {List(group.Select(item => $"{item.Code} '{item.Name}'"), 6)}. " + hold);
+                ? $"Trùng tên cùng ĐVT '{group.First().Unit}': '{group.First().Name}' = {List(group.Select(item => item.Code))}. " + resolution
+                : $"Tên gần trùng cùng ĐVT '{group.First().Unit}': {List(group.Select(item => $"{item.Code} '{item.Name}'"), 6)}. " + resolution);
         }
         return findings;
     }

@@ -152,13 +152,13 @@ public sealed class ItemCatalogTests : IDisposable
     }
 
     [Fact]
-    public void TwoExportedPackagingMatchesStayAmbiguous()
+    public void TwoExportedPackagingMatchesUseTheSmallestCode()
     {
         var store = NewStore(Item("HH_340", "Sông Gianh HC-15 bột (25kg)", "kg"));
         store.Merge([Item("HH_177", "Sông Gianh HC-15 bột (bao 25kg)", "Tấn", "kg"),
             Item("HH_178", "Sông Gianh HC-15 bột (25kg)", "kg")], temp.Combine("export.xlsx"));
 
-        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Sông Gianh HC-15 bột (25kg)", "kg")).Code);
+        Assert.Equal("HH_177", store.Find("Sông Gianh HC-15 bột (25kg)", "kg")!.Code);
     }
 
     [Fact]
@@ -261,10 +261,12 @@ public sealed class ItemCatalogTests : IDisposable
     // ---- ambiguity / duplicates ----
 
     [Fact]
-    public void TwoCodesWithTheSameNameAndUnitAreAmbiguous()
+    public void TwoCodesWithTheSameNameAndUnitUseTheSmallestCodeUnlessBothAreChosen()
     {
-        var store = NewStore(Item("HH_10", "Phân kali", "kg"), Item("HH_11", "PHÂN KALI", "kg"));
+        var store = NewStore(Item("HH_11", "PHÂN KALI", "kg"), Item("HH_10", "Phân kali", "kg"), Item("HH_9", "Phân kali", "kg"));
 
+        Assert.Equal("HH_9", store.Find("Phân kali", "kg")!.Code);
+        store.SetPreferred(["HH_10", "HH_11"]);
         var error = Assert.Throws<AutomationException>(() => store.Find("Phân kali", "kg"));
 
         Assert.Equal("ITEM_AMBIGUOUS", error.Code);
@@ -281,23 +283,26 @@ public sealed class ItemCatalogTests : IDisposable
     public void NamesThatDifferOnlyInPunctuationAreDuplicates(string name)
     {
         var store = NewStore();
-        store.Merge([Item("HH_120", "FUJI ONE 40EC 100CC PET", "Chai"), Item("HH_203", "FUJI ONE 40EC-100CC PET", "Chai"),
+        store.Merge([Item("HH_203", "FUJI ONE 40EC-100CC PET", "Chai"), Item("HH_120", "FUJI ONE 40EC 100CC PET", "Chai"),
             Item("HH_204", "FUJI ONE 40EC-100CC PET-M", "Chai")], temp.Combine("export.xlsx"));
 
+        Assert.Equal("HH_120", store.Find(name, "Chai")!.Code);
+        Assert.Empty(store.Duplicates(name, "Chai"));
+        store.SetPreferred(["HH_120", "HH_203"]);
         Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find(name, "Chai")).Code);
-        Assert.Equal(["HH_120", "HH_203"], store.Duplicates(name, "Chai").Select(item => item.Code));
+        Assert.Equal(["HH_203", "HH_120"], store.Duplicates(name, "Chai").Select(item => item.Code));
         Assert.Equal("HH_204", store.Find("FUJI ONE 40EC-100CC PET-M", "Chai")!.Code);
         Assert.Empty(store.Duplicates("FUJI ONE 40EC-100CC PET-M", "Chai"));
     }
 
     [Fact]
-    public void KgToTonFallbackWithTwoCodesIsAmbiguous()
+    public void KgToTonFallbackWithTwoCodesUsesTheSmallest()
     {
-        var store = NewStore(Item("HH_60", "Phân NPK 16-16-8", "Tấn"), Item("HH_61", "Phân NPK 16.16.8", "Tấn"));
+        var store = NewStore(Item("HH_61", "Phân NPK 16.16.8", "Tấn"), Item("HH_60", "Phân NPK 16-16-8", "Tấn"));
 
-        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Phân NPK 16 16 8", "Kg", allowKgToTon: true)).Code);
-        Assert.Equal(2, store.Duplicates("Phân NPK 16.16.8", "Kg", allowKgToTon: true).Count);
-        Assert.Empty(store.Duplicates("Phân NPK 16.16.8", "Kg"));
+        Assert.Equal("HH_60", store.Find("Phân NPK 16 16 8", "Kg", allowKgToTon: true)!.Code);
+        Assert.Empty(store.Duplicates("Phân NPK 16.16.8", "Kg", allowKgToTon: true));
+        Assert.Equal("ITEM_UNIT_CONFLICT", Assert.Throws<AutomationException>(() => store.Find("Phân NPK 16.16.8", "Kg")).Code);
     }
 
     // Spellings seen in DanhSachHoaDon_20261006224706.xlsx against Vat_tu__hang_hoa__dich_vu.xlsx.
@@ -365,12 +370,12 @@ public sealed class ItemCatalogTests : IDisposable
     }
 
     [Fact]
-    public void KilogramToTonConversionIsAmbiguousWhenTwoTonItemsExist()
+    public void KilogramToTonConversionUsesTheSmallestWhenTwoTonItemsExist()
     {
-        var store = NewStore(Item("HH_61", "Phân kali", "Tấn"), Item("HH_62", "Phân kali", "Tấn"));
+        var store = NewStore(Item("HH_62", "Phân kali", "Tấn"), Item("HH_61", "Phân kali", "Tấn"));
 
-        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "Tấn")).Code);
-        Assert.Equal("ITEM_AMBIGUOUS", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "kg", allowKgToTon: true)).Code);
+        Assert.Equal("HH_61", store.Find("Phân kali", "Tấn")!.Code);
+        Assert.Equal("HH_61", store.Find("Phân kali", "kg", allowKgToTon: true)!.Code);
         Assert.Equal("ITEM_UNIT_CONFLICT", Assert.Throws<AutomationException>(() => store.Find("Phân kali", "kg")).Code);
     }
 
@@ -764,6 +769,24 @@ public sealed class ItemCatalogTests : IDisposable
         var store = new ItemCatalogStore(CatalogPath);
 
         Assert.Equal("HH_05", Assert.Single(store.PendingSnapshot()).Code);
+    }
+
+    // Users upgrade with item-catalog.json written before conversion rates existed; a failed load would quarantine it as corrupt.
+    [Fact]
+    public void CatalogSavedBeforeConversionRatesLoadsWithoutThem()
+    {
+        temp.WriteText("state/item-catalog.json", """
+            {"schemaVersion":1,"updatedAt":"2026-10-04T00:00:00+00:00","sourceFile":"Vat_tu.xlsx",
+             "items":[{"code":"HH_97","name":"Phân NPK 16-16-8+13S+TE Phú Mỹ (Bao 50kg)","unit":"Tấn","conversionUnit":"kg","unitListIncomplete":false},
+                      {"code":"HH_03","name":"Phân kali","unit":"kg"},{"code":"HH_50","name":"Phân kali","unit":"kg"}],
+             "importedCodes":["HH_03","HH_50","HH_97"],"verifiedCodes":[],"preferredCodes":["HH_50"]}
+            """);
+
+        var store = new ItemCatalogStore(CatalogPath);
+
+        Assert.Equal(new ItemCatalogEntry("HH_97", "Phân NPK 16-16-8+13S+TE Phú Mỹ (Bao 50kg)", "Tấn", "kg"), store.FindByCode("HH_97"));
+        Assert.Null(StockUnits.RegisteredRate(store.FindByCode("HH_97")!, "kg"));
+        Assert.Equal("HH_50", store.Find("Phân kali", "kg")!.Code);
     }
 
     [Fact]

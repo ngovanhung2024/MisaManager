@@ -78,7 +78,7 @@ public static partial class ErrorHints
         ["SALES_SURFACE_MISSING"] = "MISA chưa ở màn hình danh sách chứng từ: chế độ Bán hàng cần Bán hàng > Chứng từ bán hàng, chế độ Mua hàng cần Mua hàng > Mua hàng hóa, dịch vụ. Mở đúng màn hình rồi chạy lại.",
         ["WINDOW_IDENTITY_CHANGED"] = "Phiên MISA đã đóng/mở lại hoặc đổi dữ liệu. Đăng nhập đúng dữ liệu rồi bấm Thêm vào MISA để chạy lại hóa đơn từ đầu.",
         ["ITEM_CATALOG_MISSING"] = "Chưa nạp danh mục mã hàng. Bấm nút Mã hàng và chọn file danh mục vật tư xuất từ MISA.",
-        ["ITEM_AMBIGUOUS"] = "Tên hàng trùng nhiều mã trong danh mục. Chọn mã dùng ở ••• → Chọn mã dùng khi trùng tên; hoặc thêm cột 'Mã hàng' vào file Excel hóa đơn, ghi đúng mã cho dòng này rồi nạp lại file; hoặc ngừng theo dõi mã thừa trong MISA rồi xuất lại danh mục.",
+        ["ITEM_AMBIGUOUS"] = "Tên hàng trùng nhiều mã trong danh mục và đang chọn nhiều hơn một mã dùng. Chỉ giữ một mã ở ••• → Chọn mã dùng khi trùng tên (mặc định là mã số nhỏ nhất); hoặc thêm cột 'Mã hàng' vào file Excel hóa đơn, ghi đúng mã cho dòng này rồi nạp lại file.",
         ["ITEM_UNIT_CONFLICT"] = "Tên hàng đã có nhưng khác đơn vị tính. Ghi đúng mã hàng theo đơn vị vào cột 'Mã hàng' của file Excel hóa đơn rồi nạp lại; tool không tự tạo mã mới.",
         ["ITEM_CATALOG_STALE"] = "Mã tra từ danh mục cục bộ đang trỏ tới tên khác trong MISA. Xuất lại danh mục vật tư từ MISA và nạp lại file mã hàng; tool không mở Tìm nhanh/kính lúp để tự đổi mã.",
         ["ITEM_CATALOG_SOURCE_UNAVAILABLE"] = "Database cũ chưa phân biệt mã từ Excel và mã đã tạo. Nạp lại file danh mục mã hàng để xác định nguồn mã trước khi nhập.",

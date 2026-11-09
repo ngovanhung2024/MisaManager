@@ -149,12 +149,10 @@ Mọi lần nạp file (hóa đơn, mã hàng, nhóm VTHH, khách hàng, nhà cu
 thay bằng toàn bộ dữ liệu trong file, không chèn thêm; mã hàng/khách hàng tool tạo trước đó cũng bị bỏ nên hãy nạp file xuất
 mới nhất từ MISA. Chỉ mã hàng đang chờ xác nhận Cất bắt đầu sau thời điểm xuất file được giữ lại để không tạo trùng.
 Khi danh mục có nhiều mã cùng ĐVT trùng tên hoặc gần trùng theo quy tắc trên (`Phân kali` = HH_03/HH_50,
-`FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`), hóa đơn có dòng không ghi mã dùng tên đó được đánh dấu
-**Tạm hoãn** ở tab Hóa đơn: không tick được, không nhập, không ghi lỗi; lý do hiện khi chọn hóa đơn. Ngừng theo dõi mã thừa
-trong MISA rồi nạp lại danh mục (hoặc ghi mã vào cột Mã hàng) thì hóa đơn tự mở lại. Không muốn sửa MISA thì dùng
-**••• → Chọn mã dùng khi trùng tên**: mỗi nhóm chọn một mã (ví dụ Phân kali → HH_03, FUJI ONE → HH_203), tool dùng mã đó
-và hóa đơn mở lại ngay. Lựa chọn lưu trong `item-catalog.json` (`preferredCodes`), giữ khi nạp lại hoặc xóa danh mục; chọn
-hai mã trong cùng nhóm thì vẫn tạm hoãn.
+`FUJI ONE 40EC 100CC PET` / `FUJI ONE 40EC-100CC PET`), dòng không ghi mã dùng **mã số nhỏ nhất** (HH_03, HH_120).
+**••• → Chọn mã dùng khi trùng tên**: mỗi nhóm chọn mã khác nếu cần (ví dụ FUJI ONE → HH_203). Lựa chọn lưu trong
+`item-catalog.json` (`preferredCodes`), giữ khi nạp lại hoặc xóa danh mục; chọn hai mã trong cùng nhóm thì hóa đơn có dòng
+dùng tên đó bị **Tạm hoãn** ở tab Hóa đơn (không tick được, lý do hiện khi chọn hóa đơn) cho đến khi chỉ giữ một mã.
 File hóa đơn có thể thêm cột **Mã hàng** (không bắt buộc): dòng có mã dùng thẳng mã đó, không tra theo tên — cách xử lý
 tên trùng nhiều mã (`ITEM_AMBIGUOUS`) hoặc khác ĐVT (`ITEM_UNIT_CONFLICT`).
 Luồng nhập không mở F3/kính lúp; không tìm thấy hàng trong danh mục thì mở F9 để thêm, mã/tên readback lệch thì dừng.
@@ -210,7 +208,38 @@ trong hộp thoại thêm mới của MISA.
 
 **••• → Kiểm tra danh mục mã hàng** (tự hiện sau khi nạp mã hàng/nhóm nếu có vấn đề) báo trước: mã không bắt đầu bằng
 mã nhóm nào (khoảng trắng trước `_` như `HH _CAI` vẫn tính là nhóm HH, không cần sửa), và tên trùng/gần trùng nhiều mã
-cùng ĐVT (hóa đơn dùng tên đó sẽ tạm hoãn).
+cùng ĐVT (tool dùng mã số nhỏ nhất, trừ khi đã chọn mã khác).
+
+## Cân đối tồn kho bán ra
+
+Mục tiêu: sau khi nhập hết bán ra, **không mã hàng nào âm kho** ở bất kỳ ngày nào. Thứ tự dùng:
+
+1. **Mua hàng trước**: nhập hết hóa đơn mua vào (tool tự tạo mã cho hàng chưa có), xuất lại danh mục vật tư từ MISA và
+   **••• → Nạp mã hàng…** (danh mục có cột Đơn vị chuyển đổi, Tỷ lệ chuyển đổi, Phép tính).
+2. **••• → Nạp tồn kho đầu kỳ…**: báo cáo **Tổng hợp tồn kho** xuất từ MISA từ ngày đầu kỳ (ví dụ 01/01/2026); tool lấy cột
+   Đầu kỳ (Số lượng) theo mã và ngày "Từ ngày", lưu tại `opening-stock.json`.
+3. Ở **Bán hàng**, mở Excel bán ra rồi **••• → Cân đối tồn kho bán ra…**: hóa đơn mua vào lấy từ phiên Mua hàng gần nhất
+   (hoặc chọn file Excel mua vào). Tool ghi cạnh file bán ra `<tên>_can_doi_kho.xlsx` (thêm cột **Mã hàng**, các cột "… trên
+   hóa đơn" giữ giá trị gốc khi phải đổi) và `<tên>_bao_cao_ton_kho.xlsx` (tồn theo mã, dòng đổi mã, nhóm cùng mặt hàng,
+   cảnh báo), rồi hỏi nạp ngay file đã cân đối để nhập.
+
+Cách chọn mã cho từng dòng bán (theo ngày; cùng ngày thì hàng mua vào tính trước; không tách dòng):
+
+- **Cùng mặt hàng** = tên giống nhau khi bỏ chữ "Phân (bón)" đầu tên, ghi chú ngắn trong ngoặc không có số (`(ĐN)`,
+  `(Nifit)`, `(ĐN Nicotex)`, `(BM-BV)`), đuôi ngắn (`-TN`, `PET-M`) và, với hàng tính theo kg/tấn/gói có ghi kg, cỡ bao
+  (`(Bao 25kg)` = `(Bao 50kg)`). Ghi chú dài (`(ĐN - chai tím - nhãn tím - nước trong)`), số khác (100ml/450ml) hay ĐVT
+  đếm khác (Chai/Thùng) là hàng khác.
+- **Mã còn tồn đầu kỳ dùng trước cho đến hết** (mã đúng tên của dòng trước, rồi mã nhỏ nhất), sau đó mới đến mã mới (mã của
+  dòng, rồi mã nhỏ nhất). Dòng sang mã có tồn đủ cả dòng đầu tiên.
+- Hết cả nhóm thì mới dùng mã **tên gần giống** (cùng các con số, lệch 1–2 chữ: `Newcat`/`Newcate`, `Fuamy`/`Fu-army`,
+  `PET`/`PEPA`). Vẫn không đủ thì dùng hàng mua sau ngày bán (**âm tạm thời**), hoặc để ở mã của dòng và báo **thiếu tồn**.
+- **Quy đổi ĐVT**: kg ↔ tấn, gói/bao ghi kg trong tên (`Newcate 2.5WP - 1kg` theo Gói = 1 kg); ĐVT chuyển đổi đã khai trong
+  MISA thì MISA tự quy đổi theo tỷ lệ của nó (tỷ lệ kg/tấn khác 1000 bị báo để sửa trong MISA). Dòng chuyển sang mã khác
+  ĐVT được ghi lại ĐVT, số lượng, đơn giá theo mã đó (thành tiền giữ nguyên); Kg sang mã Tấn giữ Kg vì tool tự quy đổi.
+- Dòng đổi sang mã có tên khác hẳn được ghi tên của mã đó (MISA vẫn hiện tên theo danh mục); dòng đã có mã trong Excel giữ
+  nguyên mã.
+- Hóa đơn đã ghi sổ trong MISA vẫn được tính vào cân đối theo mã tool chọn (tool không biết MISA đã dùng mã nào), nên cân
+  đối trước khi nhập bán ra. File bán ra có ô công thức/ô lỗi thì không cân đối được: xuất giá trị tĩnh trước.
 
 ## Hóa đơn đã ghi sổ
 

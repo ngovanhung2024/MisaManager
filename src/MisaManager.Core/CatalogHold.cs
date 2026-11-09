@@ -1,9 +1,9 @@
 namespace MisaManager.Core;
 
 /// <summary>
-/// Invoices kept out of entry because a line without an item code matches several catalog codes with the same unit
-/// (same or near-duplicate names). Derived from the loaded catalog and never stored, so the hold lifts once the extra
-/// code is retired in MISA and the catalog is reloaded, one code is chosen with <see cref="ItemCatalogStore.SetPreferred"/>,
+/// Invoices kept out of entry because a line without an item code matches several catalog codes with the same unit (same or
+/// near-duplicate names) and the user chose more than one of them with <see cref="ItemCatalogStore.SetPreferred"/>; with no choice
+/// the smallest code is used. Derived from the loaded catalog and never stored, so the hold lifts once only one code stays chosen
 /// or the code is written in the invoice's "Mã hàng" column.
 /// </summary>
 public static class CatalogHold
@@ -25,10 +25,9 @@ public static class CatalogHold
                 ? string.Join(", ", duplicates.Select(item => item.Code))
                 : string.Join(", ", duplicates.Select(item => $"{item.Code} '{item.Name.Trim()}'"));
             issues.Add(new(Code, IssueSeverity.Blocking,
-                $"Tạm hoãn: mặt hàng '{line.Name.Trim()}' ({line.Unit.Trim()}) trùng tên nhiều mã cùng ĐVT trong danh mục: {names}.",
+                $"Tạm hoãn: mặt hàng '{line.Name.Trim()}' ({line.Unit.Trim()}) trùng tên nhiều mã cùng ĐVT và đang chọn nhiều mã dùng: {names}.",
                 InvoiceId: invoice.InvoiceId,
-                Resolution: "Chọn mã dùng (••• → Chọn mã dùng khi trùng tên), ngừng theo dõi mã thừa trong MISA rồi nạp lại danh mục "
-                    + "mã hàng, hoặc ghi mã vào cột 'Mã hàng' của file Excel hóa đơn."));
+                Resolution: "Chỉ giữ một mã (••• → Chọn mã dùng khi trùng tên), hoặc ghi mã vào cột 'Mã hàng' của file Excel hóa đơn."));
         }
         return issues;
     }

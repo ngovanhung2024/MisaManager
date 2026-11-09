@@ -23,12 +23,17 @@ public sealed class CatalogHoldTests : IDisposable
     ];
 
     [Fact]
-    public void SameNameSameUnitHoldsTheInvoice()
+    public void SameNameSameUnitUsesTheSmallestCodeAndHoldsOnlyWhenSeveralAreChosen()
     {
         var invoice = new InvoiceBuilder().WithLines(InvoiceBuilder.Line(0, "PHÂN KALI", "Kg", 50, 10_000m),
             InvoiceBuilder.Line(1, "Hesman 60WG 18g", "Gói", 2, 16_000m)).Build();
+        var catalog = Catalog(Duplicated);
 
-        var issue = Assert.Single(CatalogHold.Issues(invoice, Catalog(Duplicated)));
+        Assert.Empty(CatalogHold.Issues(invoice, catalog));
+        Assert.Equal("HH_03", catalog.Find("PHÂN KALI", "Kg")?.Code);
+
+        catalog.SetPreferred(["HH_50", "HH_03"]);
+        var issue = Assert.Single(CatalogHold.Issues(invoice, catalog));
 
         Assert.Equal(CatalogHold.Code, issue.Code);
         Assert.Equal(IssueSeverity.Blocking, issue.Severity);
@@ -36,9 +41,10 @@ public sealed class CatalogHoldTests : IDisposable
     }
 
     [Fact]
-    public void NearDuplicateNamesHoldTheInvoiceWhicheverSpellingIsUsed()
+    public void NearDuplicateNamesHoldTheInvoiceWhicheverSpellingIsUsedWhenBothAreChosen()
     {
         var catalog = Catalog(Duplicated);
+        catalog.SetPreferred(["HH_120", "HH_203"]);
         foreach (var name in new[] { "FUJI ONE 40EC-100CC PET", "FUJI ONE 40EC 100CC PET" })
         {
             var invoice = new InvoiceBuilder().WithLines(InvoiceBuilder.Line(0, name, "Chai", 2, 50_000m)).Build();

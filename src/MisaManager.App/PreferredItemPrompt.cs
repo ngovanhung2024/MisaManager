@@ -32,9 +32,10 @@ public static class PreferredItemPrompt
             });
             var name = "group" + index;
             var chosen = group.Count(item => preferred.Contains(item.Code)) == 1;
+            var smallest = group.Select(item => item.Code).Order(ItemCatalogStore.CodeOrder).First();
             var options = new List<RadioButton>
             {
-                new() { GroupName = name, Content = "Chưa chọn (hóa đơn có mặt hàng này được tạm hoãn)", IsChecked = !chosen,
+                new() { GroupName = name, Content = $"Mặc định: mã số nhỏ nhất ({smallest})", IsChecked = !chosen,
                     Margin = new Thickness(12, 2, 0, 0) }
             };
             options.AddRange(group.Select(item => new RadioButton
@@ -52,8 +53,8 @@ public static class PreferredItemPrompt
         var hint = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10),
-            Text = "Dòng hóa đơn không ghi mã mà tên trùng nhiều mã cùng ĐVT sẽ dùng mã được chọn. Lựa chọn được giữ khi nạp lại danh mục; "
-                + "cột 'Mã hàng' trong file Excel hóa đơn vẫn được ưu tiên hơn."
+            Text = "Dòng hóa đơn không ghi mã mà tên trùng nhiều mã cùng ĐVT dùng mã được chọn, mặc định là mã số nhỏ nhất. Lựa chọn "
+                + "được giữ khi nạp lại danh mục; cột 'Mã hàng' trong file Excel hóa đơn vẫn được ưu tiên hơn."
         };
         var buttons = new StackPanel
         {

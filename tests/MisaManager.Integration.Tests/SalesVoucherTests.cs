@@ -220,10 +220,30 @@ public sealed class SalesVoucherTests : UiTest
         catalog: [new("HH_94", "Phân NPK16.16.8 + 13S HCQN (BM-BV)", "kg")]);
 
     [Fact]
-    public Task MultipleExportedCodesRemainAmbiguousBeforeEnteringItemCode() => WithFakeAsync(async (misa, harness, token) =>
+    public Task MultipleExportedCodesUseTheSmallestCode() => WithFakeAsync(async (misa, harness, token) =>
     {
         const string name = "Phân NPK 16-16-8+13S HCQN (BM-BV)";
         var invoice = Invoices.Build(TempDirectory(misa), "1666", Invoices.Consumer,
+            Invoices.Line(0, "", name, "Kg", 150, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("HH_94", Assert.Single(Assert.Single(misa.State().Vouchers).Lines).Code);
+        Assert.Empty(misa.State().CreatedItems);
+        var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+        Assert.DoesNotContain("code <- 'HH_342'", events, StringComparison.Ordinal);
+        Assert.DoesNotContain("F9 new item", events, StringComparison.Ordinal);
+    }, new FakeScenario(AdditionalItems: [new("HH_94", "Phân NPK16.16.8 + 13S HCQN (BM-BV)", "kg", "5%"),
+            new("HH_342", "Phân NPK 16-16-8+13S HCQN (BM-BV)", "kg", "5%")]),
+        catalog: [new("HH_342", "Phân NPK 16-16-8+13S HCQN (BM-BV)", "kg"), new("HH_94", "Phân NPK16.16.8 + 13S HCQN (BM-BV)", "kg")]);
+
+    [Fact]
+    public Task SeveralChosenCodesRemainAmbiguousBeforeEnteringItemCode() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        const string name = "Phân NPK 16-16-8+13S HCQN (BM-BV)";
+        harness.Catalog.SetPreferred(["HH_94", "HH_342"]);
+        var invoice = Invoices.Build(TempDirectory(misa), "1667", Invoices.Consumer,
             Invoices.Line(0, "", name, "Kg", 150, 10_000, "5%"));
 
         var result = await harness.RunAsync(invoice, misa, token);

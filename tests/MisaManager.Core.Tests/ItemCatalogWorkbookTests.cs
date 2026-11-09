@@ -48,7 +48,7 @@ public sealed class ItemCatalogWorkbookTests : IDisposable
 
     /// <summary>Newer exports add stock, conversion rate, description and sale-price columns around the four used ones.</summary>
     [Fact]
-    public async Task ExtraColumnsOfTheCurrentExportAreIgnored()
+    public async Task CurrentExportReadsTheConversionRatioAndIgnoresOtherColumns()
     {
         var book = new WorkbookBuilder();
         var sheet = book.Sheet("Vat_tu__hang_hoa__dich_vu");
@@ -64,7 +64,7 @@ public sealed class ItemCatalogWorkbookTests : IDisposable
 
         Assert.Equal(
         [
-            new ItemCatalogEntry("CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn", "kg"),
+            new ItemCatalogEntry("CM GOLD 20.10.10", "Phân NPK Cà Mau Gold 20-10-10-25kg", "Tấn", "kg", ConversionRate: 1000, ConversionOperation: "/"),
             new ItemCatalogEntry("CPMH", "Chi phí mua hàng", ""),
             new ItemCatalogEntry("HH_179", "NÓN TAI BÈO", "Cái")
         ], items);

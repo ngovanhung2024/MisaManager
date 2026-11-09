@@ -5,7 +5,10 @@ using System.Text.RegularExpressions;
 
 namespace MisaManager.Core;
 
-public sealed record ItemCatalogEntry(string Code, string Name, string Unit, string ConversionUnit = "", bool UnitListIncomplete = false);
+/// <param name="ConversionRate">MISA's "Tỷ lệ chuyển đổi về đơn vị chính" of a single <paramref name="ConversionUnit"/>; 0 when unknown.</param>
+/// <param name="ConversionOperation">MISA's "Phép tính": "*" (1 conversion unit = rate main units) or "/" (= 1/rate).</param>
+public sealed record ItemCatalogEntry(string Code, string Name, string Unit, string ConversionUnit = "", bool UnitListIncomplete = false,
+    decimal ConversionRate = 0, string ConversionOperation = "");
 
 /// <summary>An item whose MISA "Cất" was (or may have been) clicked but whose creation is not yet proven.</summary>
 public sealed record PendingItemCreation(string Code, string Name, string Unit, DateTimeOffset StartedAt, string? RunId = null);
@@ -88,11 +91,18 @@ public sealed partial class ItemCatalogStore
 
     private static (string[] Numbers, HashSet<string> Words) LooseTokens(string? value)
     {
-        var (numbers, words, _, _) = LooseParts(value);
+        var (numbers, words, _, _, _) = LooseParts(value);
         return (numbers, words);
     }
 
-    private static (string[] Numbers, HashSet<string> Words, string? FirstWord, bool Promotion) LooseParts(string? value)
+    /// <summary>Number tokens and significant words in reading order, as <see cref="LooseNameMatch"/> sees them.</summary>
+    internal static (string[] Numbers, string[] Words) ItemWords(string? value)
+    {
+        var (numbers, _, _, _, ordered) = LooseParts(value);
+        return (numbers, ordered);
+    }
+
+    private static (string[] Numbers, HashSet<string> Words, string? FirstWord, bool Promotion, string[] Ordered) LooseParts(string? value)
     {
         var numbers = new List<string>();
         var ordered = new List<string>();
@@ -107,7 +117,7 @@ public sealed partial class ItemCatalogStore
         var promotion = lead >= 0;
         if (promotion)
             ordered = [.. ordered.Take(lead), .. ordered.Skip(lead).SkipWhile(word => PromotionWords.Contains(word))];
-        return ([.. numbers], new HashSet<string>(ordered, StringComparer.Ordinal), ordered.FirstOrDefault(), promotion);
+        return ([.. numbers], new HashSet<string>(ordered, StringComparer.Ordinal), ordered.FirstOrDefault(), promotion, [.. ordered]);
     }
 
     [GeneratedRegex(@"\p{Nd}+|[\p{L}\p{Mn}]+", RegexOptions.CultureInvariant)]
@@ -166,9 +176,9 @@ public sealed partial class ItemCatalogStore
         if (sameUnit.Length > 1 && Preferred(sameUnit) is { } chosen) return chosen;
         if (sameUnit.Length > 1)
             throw new AutomationException("ITEM_AMBIGUOUS",
-                $"Danh mục có {sameUnit.Length} mã cùng tên '{name}' và ĐVT '{unit}' ({string.Join(", ", sameUnit.Select(item => item.Code))}). "
-                + "Hãy chọn mã dùng khi trùng tên (••• → Chọn mã dùng khi trùng tên), ghi đúng mã vào cột 'Mã hàng' của file Excel "
-                + "hóa đơn, hoặc giữ lại một mã trong danh mục rồi nạp lại.");
+                $"Danh mục có {sameUnit.Length} mã cùng tên '{name}' và ĐVT '{unit}' ({string.Join(", ", sameUnit.Select(item => item.Code))}) "
+                + "và đang chọn nhiều hơn một mã dùng. Hãy chỉ giữ một mã (••• → Chọn mã dùng khi trùng tên), hoặc ghi đúng mã vào cột "
+                + "'Mã hàng' của file Excel hóa đơn.");
         // Old exports may omit the unit column; a single unit-less match is still the same item.
         if (candidates.Length == 1 && candidates[0].Unit.Length == 0 && candidates[0].ConversionUnit.Length == 0)
             return candidates[0];
@@ -180,8 +190,8 @@ public sealed partial class ItemCatalogStore
 
     /// <summary>
     /// Codes that share the name (by <see cref="ItemNameKey"/>, so near-duplicates such as "FUJI ONE 40EC 100CC PET" and
-    /// "FUJI ONE 40EC-100CC PET" count too) and the unit; empty unless there are at least two and the user has not
-    /// chosen exactly one of them (<see cref="SetPreferred"/>).
+    /// "FUJI ONE 40EC-100CC PET" count too) and the unit, when they stay unsettled: several of them were chosen with
+    /// <see cref="SetPreferred"/>. Without a choice the smallest code is used (<see cref="CompareCodes"/>).
     /// </summary>
     public IReadOnlyList<ItemCatalogEntry> Duplicates(string name, string unit, bool allowKgToTon = false)
     {
@@ -209,15 +219,44 @@ public sealed partial class ItemCatalogStore
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    // The user's choice, otherwise the smallest code ("chọn HH_ có số nhỏ nhất"); two chosen codes stay ambiguous.
     private ItemCatalogEntry? Preferred(ItemCatalogEntry[] sameUnit)
     {
         lock (gate)
         {
             var chosen = sameUnit.Where(item => preferredCodes.Contains(item.Code)).DistinctBy(item => item.Code, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            return chosen.Length == 1 ? chosen[0] : null;
+            return chosen.Length switch
+            {
+                1 => chosen[0],
+                0 => sameUnit.OrderBy(item => item.Code, CodeOrder).First(),
+                _ => null
+            };
         }
     }
+
+    /// <summary>Natural order of item codes: "HH_69" before "HH_339"; prefixes compare first.</summary>
+    public static IComparer<string> CodeOrder { get; } = Comparer<string>.Create(CompareCodes);
+
+    public static int CompareCodes(string? left, string? right)
+    {
+        var (leftPrefix, leftNumber) = SplitCode(left);
+        var (rightPrefix, rightNumber) = SplitCode(right);
+        var byPrefix = string.Compare(leftPrefix, rightPrefix, StringComparison.OrdinalIgnoreCase);
+        if (byPrefix != 0) return byPrefix;
+        if (leftNumber is { } l && rightNumber is { } r && l != r) return l.CompareTo(r);
+        if (leftNumber.HasValue != rightNumber.HasValue) return leftNumber.HasValue ? -1 : 1;
+        return string.Compare(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static (string Prefix, long? Number) SplitCode(string? code)
+    {
+        var match = CodeNumberSuffix().Match(code?.Trim() ?? "");
+        return match.Success ? (match.Groups[1].Value, long.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture)) : (code?.Trim() ?? "", null);
+    }
+
+    [GeneratedRegex(@"^(.*?)([0-9]{1,15})$", RegexOptions.CultureInvariant)]
+    private static partial Regex CodeNumberSuffix();
 
     /// <summary>
     /// Only when the exact name is unknown. Among codes with the same unit and the same numbers, one whose words equal the
