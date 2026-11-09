@@ -216,12 +216,13 @@ Mục tiêu: sau khi nhập hết bán ra, **không mã hàng nào âm kho** ở
 
 1. **Mua hàng trước**: nhập hết hóa đơn mua vào (tool tự tạo mã cho hàng chưa có), xuất lại danh mục vật tư từ MISA và
    **••• → Nạp mã hàng…** (danh mục có cột Đơn vị chuyển đổi, Tỷ lệ chuyển đổi, Phép tính).
-2. **••• → Nạp tồn kho đầu kỳ…**: báo cáo **Tổng hợp tồn kho** xuất từ MISA từ ngày đầu kỳ (ví dụ 01/01/2026); tool lấy cột
+2. **••• → Nạp tồn kho đầu kỳ…** (một lần): báo cáo **Tổng hợp tồn kho** xuất từ MISA từ ngày đầu kỳ (ví dụ 01/01/2026); tool lấy cột
    Đầu kỳ (Số lượng) theo mã và ngày "Từ ngày", lưu tại `opening-stock.json`.
-3. Ở **Bán hàng**, mở Excel bán ra rồi **••• → Cân đối tồn kho bán ra…**: hóa đơn mua vào lấy từ phiên Mua hàng gần nhất
-   (hoặc chọn file Excel mua vào). Tool ghi cạnh file bán ra `<tên>_can_doi_kho.xlsx` (thêm cột **Mã hàng**, các cột "… trên
-   hóa đơn" giữ giá trị gốc khi phải đổi) và `<tên>_bao_cao_ton_kho.xlsx` (tồn theo mã, dòng đổi mã, nhóm cùng mặt hàng,
-   cảnh báo), rồi hỏi nạp ngay file đã cân đối để nhập.
+3. Ở **Bán hàng**, mở Excel bán ra như bình thường: tool **tự cân đối** (không cần chọn menu) với hóa đơn mua vào của phiên Mua
+   hàng gần nhất, ghi cạnh file bán ra `<tên>_can_doi_kho.xlsx` (thêm cột **Mã hàng**, các cột "… trên hóa đơn" giữ giá trị
+   gốc khi phải đổi) và `<tên>_bao_cao_ton_kho.xlsx` (tồn theo mã, dòng đổi mã, nhóm cùng mặt hàng, cảnh báo), rồi nạp luôn
+   file đã cân đối vào danh sách. Dòng trạng thái báo số mã còn âm; rê chuột lên đó để xem tóm tắt. Thiếu danh mục, tồn đầu kỳ
+   hoặc hóa đơn mua vào thì tool nạp file gốc và ghi rõ lý do chưa cân đối.
 
 Cách chọn mã cho từng dòng bán (theo ngày; cùng ngày thì hàng mua vào tính trước; không tách dòng):
 

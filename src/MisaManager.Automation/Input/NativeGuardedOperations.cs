@@ -60,7 +60,7 @@ public sealed partial class NativeInputService
         {
             if (identity is null || identity.ProcessId != window.ProcessId || identity.WindowHandle != window.WindowHandle) return null;
             try { ThrowIfBlockingDialogOnce(); return null; }
-            catch (AutomationException error) when (error.Code == "DIALOG_REQUIRES_ATTENTION") { return error.Message; }
+            catch (AutomationException error) when (error.Code is "DIALOG_REQUIRES_ATTENTION" or "MISA_OUT_OF_MEMORY") { return error.Message; }
         }, token);
 
     // R20 can show the voucher as a window owned by MISA's main window. Its grid must be read while that window is active:
@@ -1247,7 +1247,11 @@ public sealed partial class NativeInputService
                 .Distinct(StringComparer.Ordinal)
                 .Take(8);
             return $"{dialog.Properties.Name.ValueOrDefault}: {string.Join(" | ", labels)}";
-        });
+        }).ToArray();
+        // MISA's own crash dialog: the process is out of memory and keeps failing until it is restarted.
+        if (details.Any(detail => detail.Contains("OutOfMemoryException", StringComparison.OrdinalIgnoreCase)))
+            throw new AutomationException("MISA_OUT_OF_MEMORY",
+                "MISA báo hết bộ nhớ (OutOfMemoryException) khi vẽ danh sách chứng từ: " + string.Join("; ", details), true);
         throw new AutomationException("DIALOG_REQUIRES_ATTENTION",
             "MISA dialog đang chặn editor. Hãy xử lý dialog trước khi tiếp tục: " + string.Join("; ", details), true);
     }
@@ -1298,8 +1302,9 @@ public sealed partial class NativeInputService
                     .Distinct(StringComparer.Ordinal)
                     .Take(8);
                 return $"{dialog.Name}: {string.Join(" | ", labels)}";
-            });
-            throw new AutomationException("DIALOG_REQUIRES_ATTENTION",
+            }).ToArray();
+            throw new AutomationException(details.Any(detail => detail.Contains("OutOfMemoryException", StringComparison.OrdinalIgnoreCase))
+                    ? "MISA_OUT_OF_MEMORY" : "DIALOG_REQUIRES_ATTENTION",
                 "MISA modal dialog requires attention. Dialog: " + string.Join("; ", details));
         }
     }

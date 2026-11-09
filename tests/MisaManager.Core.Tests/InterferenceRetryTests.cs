@@ -68,6 +68,7 @@ public sealed class InterferenceRetryTests
     [InlineData("ITEM_CODE_MISSING")]
     [InlineData("INVOICE_ALREADY_EXISTS")]
     [InlineData("WINDOW_IDENTITY_CHANGED")]
+    [InlineData("MISA_OUT_OF_MEMORY")]
     [InlineData("PROFILE_REVISION_CHANGED")]
     public void InvoicesFailingOnDataAreNotRerun(string? code) => Assert.False(InterferenceRetry.InvoiceRerunAllowed(code));
 

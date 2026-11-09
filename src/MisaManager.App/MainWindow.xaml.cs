@@ -460,6 +460,7 @@ public partial class MainWindow : Window
             var count = await Task.Run(() => store.Replace(items, asOf, dialog.FileName));
             StatusLabel.Text = $"Đã nạp tồn kho đầu kỳ{(asOf is { } date ? " " + date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "")}: "
                 + $"{count:N0} mã, {store.Snapshot().Count(item => item.Quantity > 0):N0} mã còn tồn ({Path.GetFileName(dialog.FileName)}).";
+            if (importModel.Result is { } sales && await AutoBalanceStockAsync(sales) is { } note) StatusLabel.Text += " · " + note;
             return true;
         }
         catch (Exception error)
@@ -470,73 +471,49 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Balances the loaded sales invoices against opening stock and purchases, writes the sales workbook with "Mã hàng" and a report
-    /// next to the source, and offers to load the balanced workbook for entry.
+    /// Runs after every sales import: balances the invoices against opening stock and the last purchase import, writes the sales
+    /// workbook with "Mã hàng" and a report next to the source, and loads the balanced workbook in place of the source.
+    /// Returns a status note when balancing was skipped or done.
     /// </summary>
-    private async void BalanceStock_Click(object sender, RoutedEventArgs e)
+    private async Task<string?> AutoBalanceStockAsync(ImportResult sales)
     {
         var services = ((App)Application.Current).Services;
-        if (Purchase)
-        {
-            StatusLabel.Text = "Cân đối tồn kho áp dụng cho hóa đơn bán ra: chuyển sang chế độ Bán hàng, mở Excel bán ra rồi chạy lại.";
-            return;
-        }
-        if (services.ItemCatalog.Count == 0)
-        {
-            StatusLabel.Text = "Chưa nạp danh mục mã hàng: ••• → Nạp mã hàng… (xuất mới nhất từ MISA, sau khi đã nhập mua vào).";
-            return;
-        }
-        if (importModel.Result is not { Invoices.Count: > 0 } sales)
-        {
-            StatusLabel.Text = "Chưa mở hóa đơn bán ra: ••• → Mở Excel hóa đơn… rồi chạy lại cân đối.";
-            return;
-        }
-        if (services.OpeningStock.Count == 0 && !await ChooseOpeningStockAsync()) return;
-        var (purchases, purchaseSource) = await PurchasesForBalanceAsync(services);
-        if (purchases is null) return;
+        if (Purchase || sales.Invoices.Count == 0 || IsBalancedWorkbook(sales.Source.FilePath)) return null;
+        StatusLabel.ToolTip = null;
+        if (services.ItemCatalog.Count == 0) return "chưa tự cân đối tồn kho: chưa nạp danh mục mã hàng";
+        if (services.OpeningStock.Count == 0) return "chưa tự cân đối tồn kho: chưa nạp tồn kho đầu kỳ (••• → Nạp tồn kho đầu kỳ…, chỉ cần một lần)";
+        var saved = await services.PurchaseImportSessions.LoadAsync();
+        if (saved is not { Result.Invoices.Count: > 0 } purchases)
+            return "chưa tự cân đối tồn kho: chưa có hóa đơn mua vào (chuyển sang Mua hàng và mở hóa đơn mua vào trước)";
         StatusLabel.Text = "Đang cân đối tồn kho...";
         try
         {
             var stock = services.OpeningStock;
-            var plan = await Task.Run(() => StockBalancer.Plan(services.ItemCatalog, stock.Snapshot(), stock.AsOf, purchases.Invoices, sales.Invoices));
+            var plan = await Task.Run(() => StockBalancer.Plan(services.ItemCatalog, stock.Snapshot(), stock.AsOf, purchases.Result.Invoices, sales.Invoices));
             var source = sales.Source.FilePath;
             var data = workbook is { } loaded && loaded.Sha256 == sales.Source.Sha256 ? loaded : await services.WorkbookReader.ReadAsync(source);
             var (balanced, report) = await Task.Run(() => WriteBalance(source, data, sales, plan));
-            var summary = BalanceSummary(plan, purchases, purchaseSource, sales.Invoices.Count(services.IsPosted));
-            StatusLabel.Text = $"Đã cân đối tồn kho: {Path.GetFileName(balanced)} · báo cáo {report}";
-            var answer = MessageBox.Show(this, summary + $"\n\nFile bán ra đã cân đối (có cột Mã hàng):\n{balanced}\nBáo cáo chi tiết:\n{report}"
-                    + "\n\nNạp file bán ra đã cân đối để nhập vào MISA ngay?",
-                "Cân đối tồn kho bán ra", MessageBoxButton.YesNo,
-                plan.NegativeCodes.Count > 0 || plan.Warnings.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
-            if (answer == MessageBoxResult.Yes) await OpenWorkbookAsync(balanced);
+            var summary = BalanceSummary(plan, purchases.Result, purchases.FilePath, sales.Invoices.Count(services.IsPosted));
+            await OpenWorkbookAsync(balanced);
+            StatusLabel.ToolTip = summary + $"\n\nFile bán ra đã cân đối: {balanced}\nBáo cáo chi tiết: {report}";
+            var negative = plan.NegativeCodes;
+            return $"đã tự cân đối tồn kho ({Path.GetFileName(balanced)}): "
+                + (negative.Count == 0 ? "không mã nào âm kho" : $"còn {negative.Count} mã âm kho ({string.Join(", ", negative.Take(5).Select(code => code.Code))}"
+                    + (negative.Count > 5 ? "…" : "") + ")")
+                + $" · báo cáo {Path.GetFileName(report)} (rê chuột để xem chi tiết)";
         }
-        catch (Exception error) { StatusLabel.Text = "Không cân đối được tồn kho: " + error.Message; }
+        catch (Exception error) { return "không cân đối được tồn kho: " + error.Message; }
     }
 
-    /// <summary>Purchases of the last purchase import (Mua hàng mode), or a purchase workbook the user picks.</summary>
-    private async Task<(ImportResult? Result, string Source)> PurchasesForBalanceAsync(AppServices services)
-    {
-        var saved = await services.PurchaseImportSessions.LoadAsync();
-        if (saved is { Result.Invoices.Count: > 0 }) return (saved.Result, saved.FilePath);
-        var dialog = new OpenFileDialog { Filter = "Excel workbook (*.xlsx)|*.xlsx", CheckFileExists = true, Multiselect = false,
-            Title = "Chọn file Excel hóa đơn mua vào (đã chuyển từ zip HTML) để tính hàng nhập kho" };
-        if (dialog.ShowDialog(this) != true)
-        {
-            StatusLabel.Text = "Cần hóa đơn mua vào để cân đối: chuyển sang Mua hàng và mở hóa đơn mua vào, hoặc chọn file Excel mua vào.";
-            return (null, "");
-        }
-        try { return (await new InvoiceWorkbookImporter(services.WorkbookReader, purchase: true).ImportAsync(dialog.FileName), dialog.FileName); }
-        catch (Exception error)
-        {
-            StatusLabel.Text = "Không đọc được file mua vào: " + error.Message;
-            return (null, "");
-        }
-    }
+    private static bool IsBalancedWorkbook(string path)
+        => Path.GetFileNameWithoutExtension(path).EndsWith(BalancedSuffix, StringComparison.OrdinalIgnoreCase);
+
+    private const string BalancedSuffix = "_can_doi_kho";
 
     // Next to the sales file, or with the app data when that folder is read-only or the file is open in Excel.
     private static (string Balanced, string Report) WriteBalance(string source, WorkbookData data, ImportResult sales, StockBalancePlan plan)
     {
-        const string suffix = "_can_doi_kho";
+        const string suffix = BalancedSuffix;
         var stem = Path.GetFileNameWithoutExtension(source);
         if (stem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) stem = stem[..^suffix.Length];
         void Write(string folder, out string balanced, out string report)
@@ -931,6 +908,7 @@ public partial class MainWindow : Window
         var source = workbook;
         var work = BeginImport();
         StatusLabel.Text = "Đang đọc dữ liệu... Nhấn Esc để dừng.";
+        ImportResult? toBalance = null;
         try
         {
             var schema = mappingSchema ?? throw new InvalidOperationException("Chưa có cấu hình cột.");
@@ -965,11 +943,14 @@ public partial class MainWindow : Window
                 MappingExpander.IsExpanded = true;
                 OpenSourceSettings();
             }
+            else toBalance = imported;
             StatusLabel.Text = summary;
         }
         catch (OperationCanceledException) when (work.IsCancellationRequested) { }
         catch (Exception error) { if (IsCurrent(work)) ShowImportError(error); }
         finally { EndImport(work); }
+        // Sales are balanced against stock right away; the balanced workbook replaces the source in the list.
+        if (toBalance is not null && await AutoBalanceStockAsync(toBalance) is { } note) StatusLabel.Text += " · " + note;
     }
 
     /// <summary>Lists the invoices not yet posted in MISA and returns a status line saying what was left out.</summary>

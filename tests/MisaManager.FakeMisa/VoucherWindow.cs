@@ -661,6 +661,13 @@ public sealed class VoucherWindow : Window, IGridSource
             MessageBox.Show(this, purchase ? "Chưa có nhà cung cấp hoặc dòng hàng." : "Chưa có khách hàng hoặc dòng hàng.", Prompt, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+        if (scenario.OutOfMemoryOnSave)
+        {
+            MessageBox.Show(this, "Có một số lỗi xảy ra khi thực hiện chương trình. Vui lòng liên hệ với MISA để được giúp đỡ. Chi tiết: "
+                + "System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.", "MISA SME 2023",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         if (scenario.TaxpayerStatusPrompt)
         {
             var warning = new TaxpayerStatusWindow(header["customer_tax"]) { Owner = this };

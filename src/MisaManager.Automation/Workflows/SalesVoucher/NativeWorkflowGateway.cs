@@ -443,6 +443,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                             }
                             catch (Exception error) when (error is not OperationCanceledException && !token.IsCancellationRequested)
                             {
+                                // MISA's out-of-memory crash dialog never clears by waiting: report it as the cause.
+                                if (await OutOfMemoryDialogAsync(context, token) is { } crash)
+                                    throw new AutomationException("MISA_OUT_OF_MEMORY",
+                                        "MISA báo hết bộ nhớ ngay sau khi bấm Cất; chưa rõ chứng từ đã Cất chưa, không Cất lại. " + crash, true, error);
                                 // MISA can stop answering UIA for a moment while it posts the voucher. Only reads
                                 // are repeated (prompt check, saved proof); Cất itself is never sent again.
                                 if (IsTransientRead(error) && Stopwatch.GetTimestamp() < readDeadline)
@@ -1329,6 +1333,17 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         }
     }
 
+    // Read-only probe; null when no dialog or any other dialog.
+    private async Task<string?> OutOfMemoryDialogAsync(WorkflowContext context, CancellationToken token)
+    {
+        try
+        {
+            return await input.BlockingDialogAsync(BindTarget(context, activate: false), token) is { } dialog
+                && dialog.Contains("OutOfMemoryException", StringComparison.OrdinalIgnoreCase) ? dialog : null;
+        }
+        catch (Exception error) when (error is not OperationCanceledException) { return null; }
+    }
+
     private async Task VerifySavedAndCloseEditor(WorkflowContext context, CancellationToken token, bool afterSave,
         bool taxPromptAnswered = false, nint editorHandle = 0)
     {
@@ -1665,7 +1680,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             timeoutMilliseconds: Math.Max(absentMilliseconds, lockedMilliseconds), returnLastMismatch: true);
         if (state.Frame is not null) return state.Frame;
         if (state.Dialog is not null)
-            throw new AutomationException("DIALOG_REQUIRES_ATTENTION",
+            throw new AutomationException(state.Dialog.Contains("OutOfMemoryException", StringComparison.OrdinalIgnoreCase)
+                    ? "MISA_OUT_OF_MEMORY" : "DIALOG_REQUIRES_ATTENTION",
                 "Form chứng từ đã mở nhưng bị hộp thoại MISA chặn; tool không tự trả lời. " + state.Dialog);
         if (state.Locked)
             throw new AutomationException("SCOPE_DISABLED",
