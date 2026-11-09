@@ -71,6 +71,8 @@ public static partial class ErrorHints
     private static readonly Dictionary<string, string> Hints = new(StringComparer.Ordinal)
     {
         ["DIALOG_REQUIRES_ATTENTION"] = "MISA đang hiện hộp thoại cảnh báo. Đọc và đóng hộp thoại đó trong MISA, kiểm tra chứng từ rồi mới chạy lại.",
+        ["MISA_OUT_OF_MEMORY"] = "MISA hết bộ nhớ (lỗi của MISA, không phải dữ liệu hóa đơn). Bấm OK, kiểm tra chứng từ đang dở đã Cất chưa, rồi TẮT HẲN và mở lại MISA. "
+            + "Ở danh sách Bán hàng đặt Kỳ = Tháng này (hoặc khoảng ngày ngắn) thay vì Năm nay để MISA không phải vẽ cả năm chứng từ sau mỗi lần Cất, rồi bấm Thêm vào MISA.",
         ["SCOPE_IDENTITY_CHANGED"] = "Tab hoặc dialog của MISA đã đổi giữa chừng (ví dụ dialog Thêm vật tư mở chậm). Giữ nguyên tab Bán hàng, đóng dialog đang mở rồi chạy lại.",
         ["STALE_NATIVE_FRAME"] = "Màn hình MISA vừa thay đổi nên dữ liệu đọc đã cũ. Chờ MISA ổn định, không thao tác thêm, rồi bấm Đọc lại.",
         ["EDITOR_NOT_FOUND"] = "Không thấy form chứng từ bán hàng. Mở lại chứng từ 'Bán hàng hóa, dịch vụ trong nước' trong MISA rồi chạy lại.",

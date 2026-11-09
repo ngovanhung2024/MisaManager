@@ -180,9 +180,7 @@
           <MenuItem Header="Chọn mã dùng khi trùng tên…" Click="PreferredItems_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Tên hàng trùng nhiều mã cùng ĐVT (ví dụ Phân kali = HH_03, HH_50): mặc định tool dùng mã số nhỏ nhất; chọn mã khác ở đây nếu cần"/>
           <MenuItem x:Name="OpeningStockMenuItem" Header="Nạp tồn kho đầu kỳ…" Click="ChooseOpeningStock_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Nạp báo cáo Tổng hợp tồn kho xuất từ MISA (ví dụ từ ngày 01/01/2026): cột Đầu kỳ là tồn cuối năm trước, dùng để cân đối tồn kho bán ra"/>
-          <MenuItem x:Name="BalanceStockMenuItem" Header="Cân đối tồn kho bán ra…" Click="BalanceStock_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Chọn mã hàng cho từng dòng bán ra để không mã nào âm kho: dùng hết tồn đầu năm của mã cũ trước, rồi đến mã mua vào mới cùng mặt hàng (quy đổi kg/tấn/gói). Ghi file Excel bán ra có cột Mã hàng và file báo cáo tồn kho. Nhập hóa đơn mua vào trước khi cân đối."/>
+                    ToolTip="Nạp báo cáo Tổng hợp tồn kho xuất từ MISA (ví dụ từ ngày 01/01/2026), chỉ cần một lần: cột Đầu kỳ là tồn cuối năm trước. Từ đó mỗi lần mở Excel bán ra tool tự cân đối tồn kho (chọn mã để không mã nào âm kho) và nạp file đã cân đối"/>
           <MenuItem x:Name="AllowItemCreationItem" Header="Tự thêm mã hàng mới vào MISA" IsCheckable="True" Click="AllowItemCreation_Click"
                     IsEnabled="{Binding CanEditSource}"
                     ToolTip="Bật: mặt hàng chưa có trong danh mục được tool tạo mã mới (F9) trong MISA. Tắt: hóa đơn đó dừng trước khi nhập, ghi Chưa hoàn thành."/>

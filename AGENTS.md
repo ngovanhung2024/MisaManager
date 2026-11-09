@@ -40,7 +40,7 @@
 | Mã khách hàng/nhà cung cấp (danh mục, tìm theo tên) | `src/MisaManager.Core/PartyCatalog.cs`, `src/MisaManager.Import/PartyCatalogWorkbook.cs` |
 | Tạo khách hàng mới (hộp Thêm Khách hàng, quy tắc mã) | `Automation/Screens/Dialogs/NativeCustomerCatalog.cs`, `CreateCustomerAsync` trong `NativeWorkflowGateway.cs`, `PartyCatalogStore.NewCustomerCode` |
 | Nhóm VTHH, tiền tố mã hàng mới, kiểm tra danh mục | `src/MisaManager.Core/ItemGroups.cs`, `Core/CatalogAudit.cs`, `src/MisaManager.Import/ItemGroupWorkbook.cs` |
-| Cân đối tồn kho bán ra (tồn đầu kỳ, nhóm cùng mặt hàng, quy đổi ĐVT, file Excel cân đối/báo cáo) | `src/MisaManager.Core/StockBalance.cs`, `Core/OpeningStock.cs`, `src/MisaManager.Import/OpeningStockWorkbook.cs`, `Import/StockBalanceWorkbook.cs`, `BalanceStock_Click` trong `MainWindow.xaml.cs` |
+| Cân đối tồn kho bán ra (tồn đầu kỳ, nhóm cùng mặt hàng, quy đổi ĐVT, file Excel cân đối/báo cáo) | `src/MisaManager.Core/StockBalance.cs`, `Core/OpeningStock.cs`, `src/MisaManager.Import/OpeningStockWorkbook.cs`, `Import/StockBalanceWorkbook.cs`, `AutoBalanceStockAsync` trong `MainWindow.xaml.cs` |
 | Hóa đơn đã ghi sổ (bỏ khỏi lượt nhập) | `src/MisaManager.Core/PostedInvoices.cs`, `src/MisaManager.Import/PostedInvoiceWorkbook.cs` |
 | Bán hàng: zip HTML → Excel (cột như Excel cũ) | `src/MisaManager.Import/SalesInvoiceArchive.cs` (đọc HTML qua `PurchaseInvoiceArchive.Read`), `ConvertArchiveAsync` trong `MainWindow.xaml.cs` |
 | Mua hàng: zip HTML → Excel, hàng hóa/dịch vụ, chế độ Mua hàng | `src/MisaManager.Import/PurchaseInvoiceArchive.cs`, `src/MisaManager.Core/PurchaseInvoices.cs`, `InvoiceWorkbookImporter(reader, purchase: true)`, nhánh `profile.IsPurchase` trong `NativeWorkflowGateway.cs` |

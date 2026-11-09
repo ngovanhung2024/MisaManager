@@ -748,6 +748,21 @@ public sealed class SalesVoucherTests : UiTest
         Assert.Contains("Hộp tình trạng MST: bấm Có", File.ReadAllText(Path.Combine(misa.Root, "fake-events.log")), StringComparison.Ordinal);
     }, new FakeScenario(TaxpayerStatusPrompt: true));
 
+    // 0.2.182, HĐ 19: MISA's list grid ran out of memory while saving; the tool must stop with that cause and never answer it.
+    [Fact]
+    public Task MisaOutOfMemoryDialogStopsTheInvoiceWithItsOwnCode() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1019", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.NotEqual("saved", result.Outcome);
+        Assert.Equal("MISA_OUT_OF_MEMORY", result.Context.Snapshot.LastErrorCode);
+        Assert.False(InterferenceRetry.InvoiceRerunAllowed(result.Context.Snapshot.LastErrorCode));
+        Assert.Empty(misa.State().Vouchers);
+    }, new FakeScenario(OutOfMemoryOnSave: true));
+
     // HĐ 82 (0.2.159): after the switch to "Thuế" R20's grid answered "element not available" longer than one table
     // settle (10 s), which used the whole reconcile wait: RECONCILIATION_PENDING and Bỏ. A failed read is not a
     // mismatch, so reconcile re-reads freshly (tab, frame, grid) and saves once MISA answers again.
