@@ -33,9 +33,14 @@ public static partial class StockUnits
     public static decimal? Factor(string? unit, string? name, ItemCatalogEntry item)
     {
         if (ItemCatalogStore.NameKey(unit) == ItemCatalogStore.NameKey(item.Unit)) return 1;
-        if (RegisteredRate(item, unit) is { } rate) return rate;
+        if (!WrongWeightRate(item) && RegisteredRate(item, unit) is { } rate) return rate;
         return KilogramsPer(unit, name) is { } from && KilogramsPer(item.Unit, item.Name) is { } to ? from / to : null;
     }
+
+    /// <summary>MISA registers kg on a tấn item (or the reverse) with a ratio other than 1000, e.g. "1 kg = 1 tấn".</summary>
+    public static bool WrongWeightRate(ItemCatalogEntry item)
+        => (IsTon(item.Unit) && IsKilogram(item.ConversionUnit) || IsKilogram(item.Unit) && IsTon(item.ConversionUnit))
+            && RegisteredRate(item, item.ConversionUnit) is { } rate && rate != KilogramsPer(item.ConversionUnit, null) / KilogramsPer(item.Unit, null);
 
     /// <summary>Main units per one <paramref name="unit"/> when MISA registers it as the item's conversion unit with a ratio.</summary>
     public static decimal? RegisteredRate(ItemCatalogEntry item, string? unit)
@@ -170,9 +175,14 @@ public enum StockAllocationKind
 /// <param name="Name">Name, unit, quantity and unit price to enter for <paramref name="Code"/>; converted when its unit differs.</param>
 /// <param name="StockQuantity">Quantity in the main unit of <paramref name="Code"/>.</param>
 /// <param name="Missing">Stock the code lacked at the sale date (Borrowed/Shortage).</param>
+/// <param name="NewItem">
+/// <paramref name="Code"/> is a provisional "(mới n)" for goods bought without a catalog code: the sales file leaves the code empty
+/// and carries the purchase name so MISA gets the code the purchase import creates.
+/// </param>
 public sealed record StockLineAssignment(string InvoiceId, string LineId, string InvoiceNumber, DateOnly Date,
     string SourceName, string SourceUnit, decimal SourceQuantity, decimal? SourceUnitPrice, string? MatchedCode, string? Code,
-    string Name, string Unit, decimal Quantity, decimal? UnitPrice, decimal StockQuantity, StockAllocationKind Kind, decimal Missing = 0)
+    string Name, string Unit, decimal Quantity, decimal? UnitPrice, decimal StockQuantity, StockAllocationKind Kind, decimal Missing = 0,
+    bool NewItem = false)
 {
     public bool CodeChanged => !string.Equals(Code, MatchedCode, StringComparison.OrdinalIgnoreCase);
     public bool Converted => Unit != SourceUnit || Quantity != SourceQuantity;
@@ -225,30 +235,18 @@ public static class StockBalancer
         if (missingOpening.Count > 0)
             warnings.Add($"{missingOpening.Count} mã có tồn đầu kỳ nhưng không có trong danh mục mã hàng đã nạp ({List(missingOpening)}): "
                 + "xuất lại danh mục từ MISA và nạp lại.");
-        foreach (var item in items)
-        {
-            var weightPair = StockUnits.IsTon(item.Unit) && StockUnits.IsKilogram(item.ConversionUnit)
-                || StockUnits.IsKilogram(item.Unit) && StockUnits.IsTon(item.ConversionUnit);
-            if (weightPair && item.ConversionRate > 0 && item.ConversionRate != 1000)
-                warnings.Add($"Mã {item.Code} '{item.Name}': MISA quy đổi 1 {item.ConversionUnit} = "
-                    + $"{(item.ConversionOperation.Trim() == "*" ? item.ConversionRate : 1m / item.ConversionRate).ToString("0.######", CultureInfo.InvariantCulture)} "
-                    + $"{item.Unit} (tỷ lệ {item.ConversionRate.ToString(CultureInfo.InvariantCulture)}, đúng phải là 1000). "
-                    + "Sửa tỷ lệ chuyển đổi của mã này trong MISA, xuất lại danh mục rồi cân đối lại.");
-        }
-        bool Original(ItemCatalogEntry item) => openingQuantity.GetValueOrDefault(item.Code) > 0;
-        var profiles = items.ToDictionary(item => item.Code, item => ItemFamilies.Profile(item.Name, item.Unit), StringComparer.OrdinalIgnoreCase);
-        var families = items.GroupBy(item => profiles[item.Code].Key, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.ToArray(),
-            StringComparer.Ordinal);
-
-        ItemCatalogEntry? Match(InvoiceLine line)
-        {
-            try { return catalog.Find(line.Name, line.Unit, allowKgToTon: true) is { } found ? byCode.GetValueOrDefault(found.Code) ?? found : null; }
-            catch (AutomationException) { return null; }
-        }
+        foreach (var item in items.Where(StockUnits.WrongWeightRate))
+            warnings.Add($"Mã {item.Code} '{item.Name}': MISA quy đổi 1 {item.ConversionUnit} = "
+                + $"{(item.ConversionOperation.Trim() == "*" ? item.ConversionRate : 1m / item.ConversionRate).ToString("0.######", CultureInfo.InvariantCulture)} "
+                + $"{item.Unit} (tỷ lệ {item.ConversionRate.ToString(CultureInfo.InvariantCulture)}, đúng phải là 1000). "
+                + $"Tool đã đổi các dòng bán {item.ConversionUnit} của mã này sang {item.Unit} (chia/nhân 1000) để MISA không quy đổi sai; "
+                + "nên sửa tỷ lệ trong MISA vì hóa đơn nhập thẳng bằng " + item.ConversionUnit + " vẫn bị tính sai.");
 
         // ---- purchases: stock arrives on the code the tool enters it under ----
+        // Goods without a catalog code get the code the purchase import will create; until then they are tracked as "(mới n)".
         var receipts = new List<(DateOnly Date, string Code, decimal Quantity)>();
         var unresolved = new List<string>();
+        var newItems = new Dictionary<string, ItemCatalogEntry>(StringComparer.Ordinal);
         var before = 0;
         var purchaseCount = 0;
         foreach (var invoice in purchases)
@@ -260,6 +258,18 @@ public static class StockBalancer
             {
                 var code = line.ItemCode.Trim();
                 var item = code.Length > 0 ? byCode.GetValueOrDefault(code) : Match(line);
+                if (item is null && code.Length == 0 && line.Name.Trim().Length > 0)
+                {
+                    unresolved.Add($"{line.Name.Trim()} ({line.Unit.Trim()})");
+                    var key = ItemCatalogStore.NameKey(line.Name) + "\u0001" + ItemCatalogStore.NameKey(line.Unit);
+                    if (!newItems.TryGetValue(key, out item))
+                    {
+                        item = new ItemCatalogEntry($"(mới {newItems.Count + 1})", line.Name.Trim(), line.Unit.Trim());
+                        newItems[key] = item;
+                        byCode[item.Code] = item;
+                        items.Add(item);
+                    }
+                }
                 if (item is null) { unresolved.Add($"{line.Name.Trim()} ({line.Unit.Trim()})"); continue; }
                 if (StockUnits.Factor(line.Unit, line.Name, item) is not { } factor)
                 {
@@ -270,8 +280,20 @@ public static class StockBalancer
             }
         }
         if (unresolved.Count > 0)
-            warnings.Add($"{unresolved.Count} dòng mua vào chưa có mã trong danh mục, chưa tính vào tồn ({List(unresolved.Distinct(StringComparer.Ordinal))}). "
-                + "Nhập hóa đơn mua vào trước (tool tạo mã mới), nạp lại danh mục mã hàng rồi cân đối lại.");
+            warnings.Add($"{unresolved.Count} dòng mua vào chưa có mã trong danh mục ({List(unresolved.Distinct(StringComparer.Ordinal))}): "
+                + "đã tính tồn dưới mã mới tạm \"(mới n)\"; dòng bán dùng hàng này để trống mã và ghi tên theo hóa đơn mua để MISA dùng đúng mã "
+                + "tool tạo khi nhập mua vào. Nên nhập hóa đơn mua vào trước rồi nạp lại danh mục mã hàng.");
+        bool IsNew(ItemCatalogEntry item) => newItems.ContainsValue(item);
+        bool Original(ItemCatalogEntry item) => openingQuantity.GetValueOrDefault(item.Code) > 0;
+        var profiles = items.ToDictionary(item => item.Code, item => ItemFamilies.Profile(item.Name, item.Unit), StringComparer.OrdinalIgnoreCase);
+        var families = items.GroupBy(item => profiles[item.Code].Key, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.ToArray(),
+            StringComparer.Ordinal);
+
+        ItemCatalogEntry? Match(InvoiceLine line)
+        {
+            try { return catalog.Find(line.Name, line.Unit, allowKgToTon: true) is { } found ? byCode.GetValueOrDefault(found.Code) ?? found : null; }
+            catch (AutomationException) { return null; }
+        }
 
         var received = receipts.GroupBy(receipt => receipt.Code, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(receipt => receipt.Quantity), StringComparer.OrdinalIgnoreCase);
@@ -311,7 +333,7 @@ public static class StockBalancer
                     || ItemCatalogStore.SameItemName(line.Name, item.Name) ? line.Name : item.Name;
                 return new(invoice.InvoiceId, line.LineId, invoice.Identity.Number, date, line.Name, line.Unit, quantity, line.UnitPrice,
                     matched?.Code, item.Code, name, entry.Unit, entry.Quantity, entry.UnitPrice, entry.StockQuantity, kind,
-                    missing > Tolerance ? missing : 0);
+                    missing > Tolerance ? missing : 0, IsNew(item));
             }
             if (line.ItemCode.Trim() is { Length: > 0 } fixedCode)
             {
@@ -376,7 +398,9 @@ public static class StockBalancer
         if (StockUnits.Factor(line.Unit, line.Name, item) is not { } factor || factor <= 0) return null;
         var quantity = line.Quantity!.Value;
         var stock = quantity * factor;
-        if (StockUnits.Registered(item, line.Unit) || StockUnits.IsKilogram(line.Unit) && StockUnits.IsTon(item.Unit))
+        // A wrong kg/tấn ratio in MISA would convert the registered unit wrongly: enter the main unit instead.
+        if (!StockUnits.WrongWeightRate(item)
+            && (StockUnits.Registered(item, line.Unit) || StockUnits.IsKilogram(line.Unit) && StockUnits.IsTon(item.Unit)))
             return new(line.Unit, quantity, line.UnitPrice, stock);
         if (decimal.Round(stock, 3) != stock) return null;
         var price = line.UnitPrice is { } unitPrice ? unitPrice / factor : (decimal?)null;

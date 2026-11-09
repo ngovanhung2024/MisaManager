@@ -61,8 +61,8 @@ public static class StockBalanceWorkbook
             else if (lines.TryGetValue(row.Number, out var entry))
             {
                 var (line, assignment) = entry;
-                cells[codeColumn] = assignment.Code ?? "";
-                if (assignment.Code is not null) written++;
+                cells[codeColumn] = assignment.NewItem ? "" : assignment.Code ?? "";
+                if (assignment.Code is not null && !assignment.NewItem) written++;
                 if (assignment.Name != assignment.SourceName && name is { } nameColumn)
                 {
                     cells[nameColumn] = assignment.Name;
@@ -113,7 +113,9 @@ public static class StockBalanceWorkbook
         ]);
     }
 
-    public static string Note(StockLineAssignment line) => line.Kind switch
+    public static string Note(StockLineAssignment line) => line.NewItem && line.Kind is not StockAllocationKind.Shortage
+        ? $"Hàng mua vào chưa có mã: dùng tồn {line.Code} '{line.Name}' (mã tool tạo khi nhập mua vào)"
+        : line.Kind switch
     {
         StockAllocationKind.Matched => "Giữ mã theo tên",
         StockAllocationKind.Fixed => "Mã ghi sẵn trong Excel",

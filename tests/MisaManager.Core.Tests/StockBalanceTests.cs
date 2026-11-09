@@ -154,7 +154,27 @@ public sealed class StockBalanceTests : IDisposable
         Assert.Contains(plan.Warnings, warning => warning.Contains("Bia Huda lon 24 x 330ml", StringComparison.Ordinal));
         Assert.Contains(plan.Warnings, warning => warning.Contains("HH_312", StringComparison.Ordinal) && warning.Contains("1000", StringComparison.Ordinal));
         Assert.Contains(plan.Warnings, warning => warning.Contains("Bỏ qua 1 hóa đơn trước ngày", StringComparison.Ordinal));
-        // MISA's own ratio (1 kg = 1 tấn) is what its stock will show: 500 tấn out of 2.
-        Assert.Equal(-498m, plan.Codes.Single(row => row.Code == "HH_312").Closing);
+        // MISA's ratio (1 kg = 1 tấn) is wrong, so the line is entered as 0.5 tấn instead of 500 kg that MISA would count as 500 tấn.
+        var npk = plan.Sales[1];
+        Assert.Equal(("HH_312", "Tấn", 0.5m, 10_000_000m, 0.5m), (npk.Code, npk.Unit, npk.Quantity, npk.UnitPrice, npk.StockQuantity));
+        Assert.Equal(1.5m, plan.Codes.Single(row => row.Code == "HH_312").Closing);
+        Assert.Empty(plan.NegativeCodes);
+    }
+
+    [Fact]
+    public void PurchasesWithoutACatalogCodeCountUnderTheirNewCode()
+    {
+        var catalog = Catalog(new ItemCatalogEntry("HH_88", "Fuamy 40EC - 450ml (ĐN)", "Chai"));
+        var purchases = new[] { Invoice("P1", 0, ("Fu-army 40EC 450ml (ĐN)", "Chai", 80)), Invoice("P2", 2, ("Fu-army 40EC 450ml (ĐN)", "Chai", 80)) };
+        var sales = new[] { Invoice("1", 3, ("Fu-amy 40EC 450ml (ĐN)", "Chai", 132)) };
+
+        var plan = StockBalancer.Plan(catalog, [], null, purchases, sales);
+
+        var line = Assert.Single(plan.Sales);
+        Assert.Equal(("HH_88", "(mới 1)", "Fu-army 40EC 450ml (ĐN)", StockAllocationKind.Similar, true),
+            (line.MatchedCode, line.Code, line.Name, line.Kind, line.NewItem));
+        Assert.Equal(2, plan.UnresolvedPurchases);
+        Assert.Equal(28m, plan.Codes.Single(row => row.Code == "(mới 1)").Closing);
+        Assert.Empty(plan.NegativeCodes);
     }
 }
