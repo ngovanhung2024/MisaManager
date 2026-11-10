@@ -34,8 +34,16 @@ public static class DesktopSession
     /// <summary>Moves this session to the console; true when it was attempted successfully. Replaced by integration tests.</summary>
     public static Func<bool> ConsoleMover { get; set; } = TryMoveToConsole;
 
-    /// <summary>True while no client is connected to this session (Remote Desktop closed). Replaced by integration tests.</summary>
-    public static Func<bool> DisconnectedProbe { get; set; } = () => OperatingSystem.IsWindows() && ConnectState() is { } state && state != WtsActive;
+    /// <summary>
+    /// True while no client is connected to this session (Remote Desktop closed). Replaced by integration tests.
+    /// Only WTSDisconnected counts: a reconnecting client passes through Connected/ConnectQuery, and tscon then would
+    /// kick that client ("another connection was made to the remote computer").
+    /// </summary>
+    public static Func<bool> DisconnectedProbe { get; set; } = () => OperatingSystem.IsWindows() && ConnectState() == WtsDisconnected;
+
+    // A reconnect also leaves the session Disconnected for a moment (e.g. taken over from the console); only a session
+    // that stays without a client this long is moved.
+    private static readonly TimeSpan DisconnectSettle = TimeSpan.FromSeconds(3);
 
     private static readonly TimeSpan ConsoleRetryInterval = TimeSpan.FromSeconds(20);
     private static long lastConsoleMove;
@@ -131,12 +139,23 @@ public static class DesktopSession
 
     private static readonly Lock MoveGate = new();
 
+    private static bool SteadilyDisconnected()
+    {
+        var started = Stopwatch.GetTimestamp();
+        do
+        {
+            if (!DisconnectedProbe()) return false;
+            Thread.Sleep(250);
+        } while (Stopwatch.GetElapsedTime(started) < DisconnectSettle);
+        return DisconnectedProbe();
+    }
+
     private static bool MoveToConsoleKeepingDisplay()
     {
         lock (MoveGate)
         {
             // The guard and a blocked step can both ask; the second finds the session already on the console.
-            if (!DisconnectedProbe()) return Blocker() is null;
+            if (!SteadilyDisconnected()) return Blocker() is null;
             DevMode? before;
             lock (GuardGate) before = connectedDisplay;
             before ??= CurrentDisplayMode();
@@ -207,6 +226,8 @@ public static class DesktopSession
     {
         if (!OperatingSystem.IsWindows() || !Environment.IsPrivilegedProcess) return false;
         if (WTSGetActiveConsoleSessionId() == (uint)SessionId) return false;
+        // Last check right before tscon: a client may have started connecting during the settle wait.
+        if (ConnectState() != WtsDisconnected) return false;
         return RunTscon(elevate: false);
     }
 
@@ -281,6 +302,7 @@ public static class DesktopSession
     }
 
     private const int WtsActive = 0;
+    private const int WtsDisconnected = 4;
     private const int WtsConnectStateClass = 8;
     private const int WtsCurrentSession = -1;
     private const uint DesktopReadObjects = 0x0001;
