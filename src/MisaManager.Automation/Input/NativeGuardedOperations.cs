@@ -112,7 +112,7 @@ public sealed partial class NativeInputService
         RecordQuery(false);
         Interlocked.Increment(ref scopeSearches);
         RequireWindow(window);
-        return Snapshots(automation.FromHandle(window.WindowHandle),
+        return ProcessSnapshots(window.WindowHandle, window.ProcessId,
                 Live(automation.ConditionFactory.ByAutomationId(scopeId), window.ProcessId, enabled: false))
             .Select(item => item.Element).ToArray();
     }

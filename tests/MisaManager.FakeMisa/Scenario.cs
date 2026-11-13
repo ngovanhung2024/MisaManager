@@ -65,6 +65,11 @@ public sealed record Scenario
     public string PurchaseItemStockAccount { get; init; } = "";
     /// <summary>TK chi phí MISA proposes for an item on "không qua kho" purchase lines (real R20 shows the item's 632).</summary>
     public string ExpenseItemAccount { get; init; } = "632";
+    /// <summary>
+    /// Report 0.2.187, HĐ 205: R20 opened the voucher form as a top-level window without owner, so UIA lists it under the
+    /// desktop instead of under MISA's main window.
+    /// </summary>
+    public bool EditorUnowned { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>

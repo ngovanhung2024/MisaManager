@@ -308,6 +308,40 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.DoesNotContain(Events(misa), entry => entry.Contains(" stock <-") || entry.Contains(" debit_account <-"));
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", PurchaseItemStockAccount = "152" });
 
+    // Report 0.2.187, HĐ 205: the voucher form opened as a top-level window without owner; the tool searched only under
+    // MISA's main window, waited 60 s for "Editor chưa sẵn sàng" and Bỏ the voucher.
+    [Fact]
+    public Task VoucherFormOpenedWithoutOwnerIsStillFoundAndSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 20, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal("expense", voucher.VoucherType);
+        Assert.Equal(("", "154", "331"), (voucher.Lines[0].Stock, voucher.Lines[0].DebitAccount, voucher.Lines[0].CreditAccount));
+        // MISA's "Khoản mục chi phí" prompt is owned by the unowned form: it must still be seen (and answered as before).
+        Assert.Contains(Events(misa), line => line.Contains("prompt: Khoản mục chi phí → Yes"));
+    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true });
+
+    [Fact]
+    public Task DialogOverAnUnownedVoucherFormIsReportedNotTypedThrough() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2105", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 3, 16_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        // Same outcome as with an owned form: stop with the voucher left open, nothing typed after the dialog.
+        Assert.True(result.Outcome == "failed", Describe(result));
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Single(Events(misa), line => line.Contains(" code <- 'HH_07'"));
+    }, Purchase with { LineErrorRow = 1, EditorUnowned = true });
+
     // Report 0.2.186, HĐ 392: MISA lists THANH LƯƠNG and TL with the same MST 3300482529.
     private static readonly Party ThanhLuong = new("CÔNG TY CỔ PHẦN XĂNG DẦU THANH LƯƠNG", "3300482529",
         "51 Nguyễn Gia Thiều, Phường Phú Xuân, Thành Phố Huế", "", ValuePresence.Provided);

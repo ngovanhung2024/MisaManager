@@ -91,8 +91,34 @@ public sealed partial class NativeInputService
 
     // Enabled, onscreen Window elements under the MISA host.
     private ElementSnapshot[] HostWindows(int? processId)
-        => Snapshots(automation.FromHandle(identity!.WindowHandle),
+        => ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
             Live(automation.ConditionFactory.ByControlType(ControlType.Window), processId));
+
+    /// <summary>
+    /// Matches under MISA's main window and under the other top-level windows of the same process. R20 can open the
+    /// voucher form as a top-level window without owner (report 0.2.187, HĐ 205): UIA then lists it, and the dialogs it
+    /// owns, under the desktop rather than under the main window.
+    /// </summary>
+    private ElementSnapshot[] ProcessSnapshots(nint windowHandle, int processId, ConditionBase condition)
+    {
+        var found = Snapshots(automation.FromHandle(windowHandle), condition).ToList();
+        AutomationElement[] tops;
+        try { tops = automation.GetDesktop().FindAllChildren(automation.ConditionFactory.ByProcessId(processId)); }
+        catch (COMException) { return [.. found]; }
+        foreach (var top in tops)
+        {
+            try
+            {
+                if (top.Properties.NativeWindowHandle.ValueOrDefault == windowHandle) continue;
+                using (SnapshotRequest.Activate())
+                    found.AddRange(top.FindAll(TreeScope.Subtree, condition).Select(ToSnapshot));
+            }
+            catch (Exception error) when (error is COMException or ElementNotAvailableException) { /* closed meanwhile */ }
+        }
+        // An owned window is listed once (under its owner); keep one entry per HWND in case UIA shows it twice.
+        return found.Where((item, index) => item.NativeWindowHandle == nint.Zero
+            || found.FindIndex(other => other.NativeWindowHandle == item.NativeWindowHandle) == index).ToArray();
+    }
 
     private ConditionBase AnyControlType(params ControlType[] types)
         => types.Length == 1 ? automation.ConditionFactory.ByControlType(types[0])

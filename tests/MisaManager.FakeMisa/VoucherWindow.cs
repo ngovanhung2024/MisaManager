@@ -72,7 +72,7 @@ public sealed class VoucherWindow : Window, IGridSource
         this.store = store;
         this.main = main;
         this.company = company;
-        Owner = main;
+        if (!scenario.EditorUnowned) Owner = main;
         Ui.Id(this, profile.ScopeId(screen));
         Title = VoucherTitle();
         var area = SystemParameters.WorkArea;
