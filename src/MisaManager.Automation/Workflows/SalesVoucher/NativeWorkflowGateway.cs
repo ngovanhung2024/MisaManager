@@ -330,7 +330,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 sent = true;
                 workflowTabs.Clear();
                 await WaitEditor(context, true, token);
-                if (profile.IsExpense) await SelectExpenseVoucherAsync(token);
+                if (profile.IsPurchase && profile.VoucherType is not null) await SelectVoucherTypeAsync(token);
                 await Tab(profile.ReceiptTab, token);
                 var voucher = await Field("voucher_number", token);
                 if (string.IsNullOrWhiteSpace(voucher.Value)) throw new AutomationException("VOUCHER_ID_MISSING", "Chưa đọc được số chứng từ mới.", true);
@@ -1075,14 +1075,16 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
 
     /// <summary>
-    /// "Thêm" opens "1. Mua hàng trong nước nhập kho"; xăng/nhớt go to "2. Mua hàng trong nước không qua kho", which
-    /// gives the voucher its own number (MH…), so this runs before the number is read.
+    /// "Thêm" opens the voucher type used last (report 0.2.188: "2. … không qua kho" after a xăng invoice), so every
+    /// purchase makes sure of its own: "1. … nhập kho" or, for xăng/nhớt, "2. … không qua kho", which gives the voucher its
+    /// own number (MH…). Runs before the number is read; nothing is sent when MISA already shows the type.
     /// </summary>
-    private async Task SelectExpenseVoucherAsync(CancellationToken token)
+    private async Task SelectVoucherTypeAsync(CancellationToken token)
     {
         Entering("voucher_type");
-        await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.VoucherType!,
-            profile.ExpenseVoucherType, profile.ExpenseVoucherType, NativeValueKind.Text, profile.Culture, "Enter", token), token);
+        var type = profile.IsExpense ? profile.ExpenseVoucherType : profile.StockVoucherType;
+        await Steady(async () => await input.SelectFieldOptionAsync(await input.CaptureAsync(token), profile.VoucherType!,
+            type, profile.Culture, token), token);
         workflowTabs.Clear();
     }
 

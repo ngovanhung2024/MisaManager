@@ -150,6 +150,20 @@ public sealed partial class NativeInputService
     private static bool OutsideGrid(nint hit, nint gridWindow)
         => hit != nint.Zero && hit != gridWindow && !PInvoke.IsChild((HWND)gridWindow, (HWND)hit);
 
+    // A combo's open list is its own top-level popup; a point in the combo's own window means the list has closed.
+    private static bool InOwnPopup(nint hit, nint comboWindow)
+        => hit != nint.Zero && PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT)
+            != PInvoke.GetAncestor((HWND)comboWindow, GET_ANCESTOR_FLAGS.GA_ROOT);
+
+    // Open list items named like the option, anywhere in MISA's windows (the popup is a separate top-level window).
+    private AutomationElement[] OpenOptions(string expectedName, nint comboWindow)
+        => ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
+                Live(automation.ConditionFactory.ByControlType(ControlType.ListItem), identity.ProcessId))
+            .Where(item => item.HasArea && TextKey.Canonical(item.Name) == expectedName
+                && InOwnPopup(NativeKeyboard.WindowAt(item.Bounds.X + item.Bounds.Width / 2, item.Bounds.Y + item.Bounds.Height / 2), comboWindow))
+            .Select(item => item.Element)
+            .ToArray();
+
     private WindowIdentity RefreshWindow(WindowIdentity expected) => windowTracker.Refresh(expected);
 
     private WorkflowProfile? profile;

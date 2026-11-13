@@ -243,6 +243,68 @@ public sealed partial class NativeInputService
                 || NativeComparison.Matches(expected, actual.Value, kind, CultureInfo.GetCultureInfo(cultureName)) : null);
     }
 
+    /// <summary>
+    /// Chooses an option of a drop-down-only combo as a user does: click its arrow, then the option in the open list.
+    /// R20's "Chứng từ mua hàng" takes no focus or typing (report 0.2.188, HĐ 205: "Ô đích chưa nhận focus"). Sends
+    /// nothing when the combo already shows the option (R20 reopens the voucher type used last).
+    /// </summary>
+    public async Task<Readback> SelectFieldOptionAsync(NativeFrame frame, NativeSelector selector, string expected,
+        string cultureName, CancellationToken token)
+    {
+        var current = await ReadFieldAsync(frame, selector, token);
+        if (NativeComparison.Matches(expected, current.Value, NativeValueKind.Text, CultureInfo.GetCultureInfo(cultureName)))
+            return current;
+        var expectedName = NormalizeOptionName(expected);
+        var sentFrame = await dispatcher.RunAsync(() =>
+        {
+            RecordInput();
+            GuardWorkflow(frame, forInput: true);
+            var combo = Resolve(selector);
+            var bounds = combo.BoundingRectangle;
+            if (bounds.Width <= 0 || bounds.Height <= 0 || combo.Properties.IsOffscreen.ValueOrDefault)
+                throw new AutomationException("FIELD_OFFSCREEN", "Ô danh sách không hiển thị trên màn hình.");
+            var comboWindow = KeyboardHandle(combo);
+            ThrowIfBlockingDialog();
+            try
+            {
+                MarkWorkflowInput();
+                // The arrow is the right end of the combo.
+                NativeKeyboard.Click(bounds.Right - Math.Min(8, bounds.Width / 4), bounds.Y + bounds.Height / 2,
+                    identity!.WindowHandle, identity.ProcessId, comboWindow);
+                epoch++;
+            }
+            catch (Exception error)
+            {
+                throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở danh sách '" + expected + "'.", true, error);
+            }
+            AutomationElement[] options = [];
+            for (var attempt = 0; attempt < 40 && options.Length == 0; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                options = OpenOptions(expectedName, comboWindow);
+                if (options.Length == 0) Thread.Sleep(50);
+            }
+            var option = options.FirstOrDefault(ShowsAt) ?? (options.Length == 1 ? options[0] : null)
+                ?? throw new AutomationException("INPUT_UNCERTAIN", $"Danh sách không mở hoặc không có mục '{expected}'; không chọn.", true);
+            try
+            {
+                MarkWorkflowInput();
+                var optionBounds = option.BoundingRectangle;
+                // The list can close between the search and the click; never click through it onto the form.
+                NativeKeyboard.ClickOpenList(optionBounds.X + optionBounds.Width / 2, optionBounds.Y + optionBounds.Height / 2,
+                    identity!.ProcessId, hit => InOwnPopup(hit, comboWindow));
+                epoch++;
+            }
+            catch (Exception error)
+            {
+                throw new AutomationException("INPUT_UNCERTAIN", $"Không xác nhận được chọn '{expected}'.", true, error);
+            }
+            return Capture();
+        }, token, maySendInput: true);
+        return await VerifyWrittenAsync(() => ReadFieldAsync(sentFrame, selector, token), expected, NativeValueKind.Text,
+            cultureName, token);
+    }
+
     public async Task<Readback> SelectTabAsync(NativeFrame frame, string caption, CancellationToken token)
     {
         var selector = new NativeSelector(Name: caption, ControlType: "TabItem");

@@ -70,6 +70,8 @@ public sealed record Scenario
     /// desktop instead of under MISA's main window.
     /// </summary>
     public bool EditorUnowned { get; init; }
+    /// <summary>Purchase voucher type R20 reopens "Thêm" with (the one chosen last), e.g. "2. Mua hàng trong nước không qua kho".</summary>
+    public string VoucherTypeRemembered { get; init; } = "";
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>

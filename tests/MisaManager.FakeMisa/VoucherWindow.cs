@@ -73,6 +73,7 @@ public sealed class VoucherWindow : Window, IGridSource
         this.main = main;
         this.company = company;
         if (!scenario.EditorUnowned) Owner = main;
+        Loaded += (_, _) => RememberVoucherType();
         Ui.Id(this, profile.ScopeId(screen));
         Title = VoucherTitle();
         var area = SystemParameters.WorkArea;
@@ -379,28 +380,47 @@ public sealed class VoucherWindow : Window, IGridSource
         : "Bán hàng hóa, dịch vụ trong nước - Tiền mặt - " + company;
 
     /// <summary>
-    /// Purchase "Chứng từ mua hàng" list: 1 (nhập kho) and 2 (không qua kho). Like the invoice template combo its text box
-    /// takes no UIA focus; the tool types the option and accepts it with Enter. Choosing 2 re-lays the form out in place.
+    /// Purchase "Chứng từ mua hàng" list. As in R20 (report 0.2.188, HĐ 205) it takes no focus and no typing: only its
+    /// arrow opens the list and a click picks the type. Choosing 2 re-lays the form out in place.
     /// </summary>
     private ComboBox VoucherTypeCombo()
     {
-        var combo = Ui.Combo("", ["1. Mua hàng trong nước nhập kho", "2. Mua hàng trong nước không qua kho"], 210,
-            "1. Mua hàng trong nước nhập kho");
+        var combo = Ui.Combo("", VoucherTypes, 210, VoucherTypes[0]);
+        combo.Focusable = false;
         combo.Loaded += (_, _) =>
         {
             if (combo.Template.FindName("PART_EditableTextBox", combo) is not TextBox editor) return;
             editor.Focusable = false;
+            editor.IsReadOnly = true;
             System.Windows.Automation.AutomationProperties.SetAutomationId(editor, "cboVoucherType_EmbeddableTextBox");
         };
-        combo.PreviewKeyDown += (_, e) =>
+        combo.SelectionChanged += (_, _) =>
         {
-            if (e.Key != Key.Enter) return;
-            CommitField("voucher_type", combo.Text);
-            e.Handled = true;
-            combo.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            if (combo.IsLoaded && !rememberingVoucherType && combo.SelectedItem is string text) CommitField("voucher_type", text);
         };
-        combo.LostKeyboardFocus += (_, _) => { if (!combo.IsKeyboardFocusWithin) CommitField("voucher_type", combo.Text); };
+        voucherTypeCombo = combo;
         return combo;
+    }
+
+    private static readonly string[] VoucherTypes =
+    [
+        "1. Mua hàng trong nước nhập kho", "2. Mua hàng trong nước không qua kho",
+        "3. Mua hàng nhập khẩu nhập kho", "4. Mua hàng nhập khẩu không qua kho"
+    ];
+    private ComboBox? voucherTypeCombo;
+    private bool rememberingVoucherType;
+
+    // R20 opens "Thêm" with the voucher type chosen last.
+    private void RememberVoucherType()
+    {
+        if (!purchase || voucherTypeCombo is null || scenario.VoucherTypeRemembered is not { Length: > 0 } remembered) return;
+        rememberingVoucherType = true;
+        try
+        {
+            voucherTypeCombo.SelectedItem = remembered;
+            SetVoucherType(remembered);
+        }
+        finally { rememberingVoucherType = false; }
     }
 
     private Grid BuildReceiptTab()

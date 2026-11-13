@@ -308,6 +308,71 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.DoesNotContain(Events(misa), entry => entry.Contains(" stock <-") || entry.Contains(" debit_account <-"));
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", PurchaseItemStockAccount = "152" });
 
+    // Report 0.2.188, HĐ 205: R20's "Chứng từ mua hàng" is a drop-down list that takes no focus; typing the type stopped
+    // with "Ô đích chưa nhận focus". The arrow is clicked and the option picked from the list, as the user does.
+    [Fact]
+    public Task VoucherTypeIsPickedFromTheDropDownList() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 20, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("expense", Assert.Single(misa.State().Vouchers).VoucherType);
+        Assert.Single(Events(misa), line => line.Contains("field voucher_type <-"));
+    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true });
+
+    [Fact]
+    public Task RememberedExpenseTypeIsKeptWithoutInput() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "206", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 20, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal("expense", voucher.VoucherType);
+        Assert.StartsWith("MH0", voucher.VoucherNumber);
+        Assert.DoesNotContain(Events(misa), line => line.Contains("field voucher_type <-"));
+    }, Purchase with { AdditionalItems = FuelItems, VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
+
+    // After a xăng invoice R20 reopens "Thêm" as "không qua kho": diesel must go back to "1. … nhập kho" (Kho CTY, TK 152).
+    [Fact]
+    public Task DieselAfterARememberedExpenseTypeGoesBackToStock() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "207", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 10, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal("stock", voucher.VoucherType);
+        Assert.Equal(("CTY", "152"), (voucher.Lines[0].Stock, voucher.Lines[0].DebitAccount));
+        var events = Events(misa);
+        Assert.Contains(events, line => line.Contains("field voucher_type <- '1. Mua hàng trong nước nhập kho'"));
+        Assert.True(Array.FindIndex(events, line => line.Contains("field voucher_type <-"))
+            < Array.FindIndex(events, line => line.Contains("field customer <-")), "Loại chứng từ phải đổi trước khi nhập nhà cung cấp.");
+    }, Purchase with { AdditionalItems = FuelItems, VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
+
+    [Fact]
+    public Task OrdinaryPurchaseOnStockTypeSendsNoVoucherTypeInput() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "2208", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 2, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("stock", Assert.Single(misa.State().Vouchers).VoucherType);
+        Assert.DoesNotContain(Events(misa), line => line.Contains("field voucher_type <-"));
+    }, Purchase);
+
     // Report 0.2.187, HĐ 205: the voucher form opened as a top-level window without owner; the tool searched only under
     // MISA's main window, waited 60 s for "Editor chưa sẵn sàng" and Bỏ the voucher.
     [Fact]
