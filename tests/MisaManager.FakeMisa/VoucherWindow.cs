@@ -375,24 +375,22 @@ public sealed class VoucherWindow : Window, IGridSource
             ("Ngày chứng từ", Field("voucher_date", FieldId("voucher_date"))),
             ("Số phiếu thu", Field("voucher_number", FieldId("voucher_number"))))));
 
+    // R20 titles the purchase form after its voucher type ("Mua hàng trong nước không qua kho chưa thanh toán - …").
     private string VoucherTitle() => purchase
-        ? "Mua hàng hóa, dịch vụ trong nước - " + (expense ? "Không qua kho" : "Nhập kho") + " - Chưa thanh toán - " + company
+        ? "Mua hàng trong nước " + (expense ? "không qua kho" : "nhập kho") + " chưa thanh toán - " + company
         : "Bán hàng hóa, dịch vụ trong nước - Tiền mặt - " + company;
 
     /// <summary>
-    /// Purchase "Chứng từ mua hàng" list. As in R20 (report 0.2.188, HĐ 205) it takes no focus and no typing: only its
-    /// arrow opens the list and a click picks the type. Choosing 2 re-lays the form out in place.
+    /// Purchase "Chứng từ mua hàng" list. As in R20 (reports 0.2.188/0.2.189, HĐ 205) it takes no focus and no typing:
+    /// only its arrow opens the list and a click picks the type; UIA reports the item key, not the text shown.
+    /// Choosing 2 re-lays the form out in place.
     /// </summary>
     private ComboBox VoucherTypeCombo()
     {
-        var combo = Ui.Combo("", VoucherTypes, 210, VoucherTypes[0]);
-        combo.Focusable = false;
-        combo.Loaded += (_, _) =>
+        var combo = new KeyedComboBox
         {
-            if (combo.Template.FindName("PART_EditableTextBox", combo) is not TextBox editor) return;
-            editor.Focusable = false;
-            editor.IsReadOnly = true;
-            System.Windows.Automation.AutomationProperties.SetAutomationId(editor, "cboVoucherType_EmbeddableTextBox");
+            IsEditable = false, Focusable = false, ItemsSource = VoucherTypes, SelectedIndex = 0, Width = 210, Height = 22,
+            Margin = new Thickness(2)
         };
         combo.SelectionChanged += (_, _) =>
         {

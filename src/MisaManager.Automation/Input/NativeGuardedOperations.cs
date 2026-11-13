@@ -251,9 +251,10 @@ public sealed partial class NativeInputService
     public async Task<Readback> SelectFieldOptionAsync(NativeFrame frame, NativeSelector selector, string expected,
         string cultureName, CancellationToken token)
     {
-        var current = await ReadFieldAsync(frame, selector, token);
-        if (NativeComparison.Matches(expected, current.Value, NativeValueKind.Text, CultureInfo.GetCultureInfo(cultureName)))
-            return current;
+        var culture = CultureInfo.GetCultureInfo(cultureName);
+        bool Shown(Readback read) => NativeComparison.Matches(expected, read.Value, NativeValueKind.Text, culture);
+        var current = await ReadFieldOptionAsync(frame, selector, expected, token);
+        if (Shown(current)) return current;
         var expectedName = NormalizeOptionName(expected);
         var sentFrame = await dispatcher.RunAsync(() =>
         {
@@ -301,8 +302,69 @@ public sealed partial class NativeInputService
             }
             return Capture();
         }, token, maySendInput: true);
-        return await VerifyWrittenAsync(() => ReadFieldAsync(sentFrame, selector, token), expected, NativeValueKind.Text,
-            cultureName, token);
+        Readback last;
+        try
+        {
+            last = await NativeWait.UntilAsync(() => ReadFieldOptionAsync(sentFrame, selector, expected, token), Shown,
+                "READBACK_MISMATCH", "Native readback chưa khớp giá trị vừa chọn.", token, returnLastMismatch: true);
+        }
+        catch (Exception error) { throw new AutomationException("INPUT_UNCERTAIN", error.Message, true, error); }
+        if (!Shown(last))
+            throw new AutomationException("INPUT_UNCERTAIN", $"Đã chọn '{expected}' nhưng MISA chưa hiện mục này. {last.Reason}", true);
+        return last;
+    }
+
+    /// <summary>
+    /// The option a combo shows. R20's ValuePattern gives the item key ("1" while "2. Mua hàng trong nước không qua kho" is
+    /// shown, report 0.2.189, HĐ 205), so the window text, the inner edit, the selected item and the editor title (R20
+    /// titles a purchase form after its type) are read too; the value is the one naming <paramref name="expected"/>, if any.
+    /// </summary>
+    private Task<Readback> ReadFieldOptionAsync(NativeFrame frame, NativeSelector selector, string expected, CancellationToken token)
+        => dispatcher.RunAsync(() =>
+        {
+            RecordQuery();
+            GuardWorkflow(frame);
+            var combo = Resolve(selector);
+            var seen = new List<(string Value, string Source)>();
+            void Read(Func<(string? Value, string Source)> read)
+            {
+                try { if (read() is { Value: { } value } item) seen.Add((value, item.Source)); }
+                catch (Exception error) when (error is AutomationException or COMException || Vanished(error)) { }
+            }
+            Read(() => ReadNativeText(combo));
+            Read(() => (ControlText(combo.Properties.NativeWindowHandle.ValueOrDefault), "Win32.WM_GETTEXT"));
+            Read(() => WidestEditor(combo) is { } editor ? ReadNativeText(editor) : (null, ""));
+            Read(() => ReadDisplayText(combo));
+            Read(() => (TitleNames(root!.Properties.Name.ValueOrDefault, expected) ? expected : null, "UIA3.EditorTitle"));
+            var key = TextKey.Canonical(expected);
+            var shown = seen.FirstOrDefault(item => TextKey.Canonical(item.Value) == key);
+            var fresh = Capture();
+            return shown.Value is not null
+                ? new Readback("supported", shown.Value, shown.Source, fresh.ObservedAt, null, fresh)
+                : new Readback("supported", seen.FirstOrDefault().Value, seen.FirstOrDefault().Source ?? "none", fresh.ObservedAt,
+                    "Đọc được: " + string.Join("; ", seen.Select(item => $"{item.Source}='{item.Value}'"))
+                    + $"; tiêu đề '{root!.Properties.Name.ValueOrDefault}'.", fresh);
+        }, token);
+
+    // "2. Mua hàng trong nước không qua kho" → the form is titled "Mua hàng trong nước không qua kho chưa thanh toán - …".
+    private static bool TitleNames(string? title, string option)
+    {
+        var label = TextKey.Canonical(OptionNumber().Replace(option, ""));
+        var text = TextKey.Canonical(title);
+        return label.Length > 0 && (text == label || text.StartsWith(label + " ", StringComparison.Ordinal));
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\d+\.\s*")]
+    private static partial System.Text.RegularExpressions.Regex OptionNumber();
+
+    // WM_GETTEXT: GetWindowText does not read a control of another process.
+    private static string? ControlText(nint handle)
+    {
+        if (handle == nint.Zero || SendMessageTimeout(handle, 0x000E, 0, nint.Zero, 2, 500, out var length) == nint.Zero
+            || length > 32768) return null;
+        var buffer = new StringBuilder(checked((int)length + 1));
+        return SendMessageTimeoutText(handle, 0x000D, (nuint)buffer.Capacity, buffer, 2, 500, out _) == nint.Zero
+            ? null : buffer.ToString();
     }
 
     public async Task<Readback> SelectTabAsync(NativeFrame frame, string caption, CancellationToken token)
@@ -1186,7 +1248,13 @@ public sealed partial class NativeInputService
         token.ThrowIfCancellationRequested();
         var inputTarget = ResolveKeyboardTarget(target);
         if (target.ControlType == ControlType.ComboBox)
+        {
+            // R20 "Mẫu số HĐ"/loại chứng từ: the inner editor refuses focus (UIA SetFocus throws), so the combo keeps
+            // keyboard focus and takes the commit key itself.
+            if (!inputTarget.Equals(target) && !inputTarget.Properties.IsKeyboardFocusable.ValueOrDefault)
+                inputTarget = target;
             FocusTarget(inputTarget, activateGridCell: true, token: token, verifyFocus: !allowUnverifiedFocus);
+        }
         var inputHandle = KeyboardHandle(inputTarget);
         if (!allowUnverifiedFocus && !IsFocusedTarget(inputTarget, inputHandle))
             throw new AutomationException("FOCUS_LOST", "The native editor lost focus before commit.");
