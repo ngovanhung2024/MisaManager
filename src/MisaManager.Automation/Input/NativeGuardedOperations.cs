@@ -759,7 +759,7 @@ public sealed partial class NativeInputService
                 absentOptions = System.Text.Json.JsonSerializer.Serialize(registered.Select(item => item.Name.Trim()).ToArray());
                 token.ThrowIfCancellationRequested();
                 MarkWorkflowInput();
-                NativeKeyboard.PressFocused(identity.WindowHandle, identity.ProcessId, "Escape", token);
+                NativeKeyboard.PressFocused(identity.WindowHandle, identity.ProcessId, "Escape", token, gridWindow);
                 epoch++;
                 var toggleCloseSent = false;
                 for (var attempt = 0; attempt < 24; attempt++)
@@ -1260,7 +1260,7 @@ public sealed partial class NativeInputService
             throw new AutomationException("FOCUS_LOST", "The native editor lost focus before commit.");
         MarkWorkflowInput();
         if (allowUnverifiedFocus)
-            NativeKeyboard.PressFocused(identity!.WindowHandle, identity.ProcessId, key, token);
+            NativeKeyboard.PressFocused(identity!.WindowHandle, identity.ProcessId, key, token, inputHandle);
         else
             NativeKeyboard.Press(inputHandle, identity!.WindowHandle, identity.ProcessId, key, token);
     }

@@ -131,13 +131,14 @@ internal static class NativeKeyboard
         }
     }
 
-    internal static void PressFocused(nint windowHandle, int processId, string key, CancellationToken token = default)
+    internal static void PressFocused(nint windowHandle, int processId, string key, CancellationToken token = default,
+        nint scopeHandle = default)
     {
         var code = key switch { "Enter" => 0x0D, "Tab" => 0x09, "F3" => 0x72, "Escape" => 0x1B, "ArrowDown" => 0x28, "Delete" => 0x2E, "F9" => 0x78,
             _ => throw new AutomationException("KEY_UNSUPPORTED", "Chỉ hỗ trợ Enter, Tab, F3, F9, Escape, ArrowDown hoặc Delete.") };
         var foreground = (nint)PInvoke.GetForegroundWindow();
         PInvoke.GetWindowThreadProcessId((HWND)foreground, out var pid);
-        if (!IsWindowInScope(foreground, windowHandle) || pid != processId || !PInvoke.IsWindowEnabled((HWND)foreground))
+        if (!IsWindowInScope(foreground, windowHandle) && !InSameRoot(foreground, scopeHandle) || pid != processId || !PInvoke.IsWindowEnabled((HWND)foreground))
             throw new AutomationException("FOCUS_LOST", "Foreground không phải editor MISA đã chọn.");
         token.ThrowIfCancellationRequested();
         DesktopSession.ThrowIfUnavailable();
@@ -247,6 +248,12 @@ internal static class NativeKeyboard
         return thread != 0 && GetGUIThreadInfo(thread, ref info)
             && (info.Focus == targetHandle || PInvoke.IsChild((HWND)targetHandle, (HWND)info.Focus));
     }
+    // Report 0.2.191, invoice 205: the voucher form can be a top-level window without owner; the key may go to that form
+    // (the window holding the target), never to another one.
+    private static bool InSameRoot(nint foreground, nint scopeHandle)
+        => scopeHandle != nint.Zero && foreground != nint.Zero
+            && PInvoke.GetAncestor((HWND)foreground, GET_ANCESTOR_FLAGS.GA_ROOT) == PInvoke.GetAncestor((HWND)scopeHandle, GET_ANCESTOR_FLAGS.GA_ROOT);
+
     private static bool IsWindowInScope(nint foreground, nint windowHandle)
     {
         if (foreground == windowHandle) return true;
