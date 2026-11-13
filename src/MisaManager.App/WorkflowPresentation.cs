@@ -412,8 +412,11 @@ public partial class MainWindow
 
     private static string? ResolvedBuyerCode(InvoiceDocument invoice)
     {
-        if (invoice.IsPurchase()) return Parties.FindByTax(invoice.Seller.TaxCode).FirstOrDefault()?.Code;
-        try { return BuyerCodes.Resolve(invoice.Buyer, Parties)?.Code; }
+        try
+        {
+            return invoice.IsPurchase() ? Parties.FindSupplier(invoice.Seller.TaxCode, invoice.Identity.Number)?.Code
+                : BuyerCodes.Resolve(invoice.Buyer, Parties)?.Code;
+        }
         catch (AutomationException) { return null; }
     }
 
@@ -423,8 +426,13 @@ public partial class MainWindow
         if (invoice.IsPurchase())
         {
             // The tool types the listed supplier code; without a list entry it types the MST and MISA picks the supplier.
-            var found = Parties.FindByTax(invoice.Seller.TaxCode);
-            return found.Count > 0 ? $"{found[0].Code} · danh sách (MST {invoice.Seller.TaxCode})"
+            PartyCatalogEntry? found;
+            try { found = Parties.FindSupplier(invoice.Seller.TaxCode, invoice.Identity.Number); }
+            catch (AutomationException)
+            {
+                return $"MST {invoice.Seller.TaxCode} thuộc nhiều mã – chọn ở ••• → Chọn mã khách hàng/nhà cung cấp trùng MST";
+            }
+            return found is not null ? $"{found.Code} · danh sách (MST {invoice.Seller.TaxCode})"
                 : Parties.SupplierCount == 0 ? $"MST {invoice.Seller.TaxCode} (MISA tìm theo MST)"
                 : $"MST {invoice.Seller.TaxCode} – chưa có trong danh sách nhà cung cấp";
         }

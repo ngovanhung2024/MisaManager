@@ -9,10 +9,17 @@ public enum PartyRole { Customer, Supplier }
 
 public sealed record PartyCatalogEntry(string Code, string Name, string TaxCode = "", string Address = "");
 
+/// <summary>The code the user chose for an MST that several codes of one list carry (e.g. THANH LƯƠNG and TL).</summary>
+public sealed record PartyPreference(PartyRole Role, string TaxCode, string Code);
+
+/// <summary>Codes of one list sharing an MST: the user picks which one the tool types.</summary>
+public sealed record SharedTaxGroup(PartyRole Role, string TaxCode, IReadOnlyList<PartyCatalogEntry> Entries);
+
 /// <param name="Created">Customers the tool created in MISA ("Thêm Khách hàng") since the customer list was last loaded.</param>
+/// <param name="Preferred">Choices for MSTs shared by several codes; kept when a list is loaded again.</param>
 public sealed record PartyCatalogFile(int SchemaVersion, DateTimeOffset UpdatedAt, string? CustomerSource, string? SupplierSource,
     IReadOnlyList<PartyCatalogEntry> Customers, IReadOnlyList<PartyCatalogEntry> Suppliers,
-    IReadOnlyList<PartyCatalogEntry>? Created = null);
+    IReadOnlyList<PartyCatalogEntry>? Created = null, IReadOnlyList<PartyPreference>? Preferred = null);
 
 /// <summary>A catalog code found for a name; <paramref name="Method"/> says how (shown to the user).</summary>
 public sealed record PartyMatch(string Code, string Name, PartyRole Role, string Method);
@@ -43,7 +50,68 @@ public sealed partial class PartyCatalogStore
         customers = new(file.Customers ?? []);
         suppliers = new(file.Suppliers ?? []);
         created = (file.Created ?? []).Where(entry => !string.IsNullOrWhiteSpace(entry.Code)).ToArray();
+        preferred = Clean(file.Preferred ?? []);
         RebuildLookup();
+    }
+
+    private IReadOnlyList<PartyPreference> preferred = [];
+    public const string SupplierAmbiguousCode = "SUPPLIER_AMBIGUOUS";
+
+    public IReadOnlyList<PartyPreference> PreferredSnapshot() { lock (gate) return preferred.ToArray(); }
+
+    /// <summary>Replaces the codes chosen for shared MSTs (one per role and MST; the last one wins).</summary>
+    public void SetPreferred(IEnumerable<PartyPreference> choices)
+    {
+        var clean = Clean(choices);
+        lock (gate)
+        {
+            var old = preferred;
+            preferred = clean;
+            try { SaveLocked(); }
+            catch { preferred = old; throw; }
+        }
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static PartyPreference[] Clean(IEnumerable<PartyPreference> choices)
+        => choices.Select(choice => choice with { TaxCode = (choice.TaxCode ?? "").Trim(), Code = (choice.Code ?? "").Trim() })
+            .Where(choice => TaxKey(choice.TaxCode).Length > 0 && choice.Code.Length > 0)
+            .GroupBy(choice => (choice.Role, TaxKey(choice.TaxCode))).Select(group => group.Last()).ToArray();
+
+    // The chosen code among the candidates of this role and MST; a choice whose code left the list no longer counts.
+    private PartyCatalogEntry? ChosenLocked(PartyRole role, string taxKey, IReadOnlyList<PartyCatalogEntry> candidates)
+        => preferred.FirstOrDefault(choice => choice.Role == role && TaxKey(choice.TaxCode) == taxKey) is { } choice
+            ? candidates.FirstOrDefault(entry => string.Equals(entry.Code, choice.Code, StringComparison.OrdinalIgnoreCase)) : null;
+
+    /// <summary>MSTs carried by more than one code of the same list (customer list includes created customers).</summary>
+    public IReadOnlyList<SharedTaxGroup> SharedTaxGroups()
+    {
+        Index[] lists;
+        lock (gate) lists = [customerLookup, suppliers];
+        return lists.SelectMany((list, role) => list.ByTax
+                .Where(pair => pair.Value.Select(entry => entry.Code).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+                .Select(pair => new SharedTaxGroup((PartyRole)role, pair.Value[0].TaxCode.Trim(), pair.Value)))
+            .OrderBy(group => group.Role).ThenBy(group => group.TaxCode, StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>
+    /// The purchase supplier for an MST: the supplier list, else the customer list. When several codes carry it, the one
+    /// chosen with <see cref="SetPreferred"/>; without a choice throws <see cref="SupplierAmbiguousCode"/> so the tool never guesses.
+    /// </summary>
+    public PartyCatalogEntry? FindSupplier(string? taxCode, string invoiceNumber)
+    {
+        var key = TaxKey(taxCode);
+        if (key.Length == 0) return null;
+        lock (gate)
+        {
+            var (role, found) = suppliers.ByTax.GetValueOrDefault(key) is { Length: > 0 } listed
+                ? (PartyRole.Supplier, listed) : (PartyRole.Customer, customerLookup.ByTax.GetValueOrDefault(key) ?? []);
+            var codes = found.Select(entry => entry.Code).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (codes.Length <= 1) return found.FirstOrDefault();
+            return ChosenLocked(role, key, found) ?? throw new AutomationException(SupplierAmbiguousCode,
+                $"Hóa đơn {invoiceNumber}: MST {taxCode} thuộc nhiều {Label(role)} ({string.Join(", ", codes)}); "
+                + "chọn mã dùng ở ••• → Chọn mã khách hàng/nhà cung cấp trùng MST, rồi chạy lại.");
+        }
     }
 
     public string FilePath { get; }
@@ -294,10 +362,18 @@ public sealed partial class PartyCatalogStore
                 if (found.Length == 0) continue;
                 if (found.Length > 1 && tax.Length > 0 && found.Where(entry => TaxKey(entry.TaxCode) == tax).ToArray() is { Length: 1 } narrowed)
                     found = narrowed;
+                if (found.Length > 1 && tax.Length > 0)
+                {
+                    PartyCatalogEntry? chosen;
+                    lock (gate) chosen = ChosenLocked((PartyRole)role, tax, found);
+                    if (chosen is not null) found = [chosen];
+                }
                 if (found.Length > 1)
                     throw new AutomationException("CUSTOMER_AMBIGUOUS",
                         $"Danh mục {Label((PartyRole)role)} có {found.Length} mã cùng tên '{name}' ({string.Join(", ", found.Select(entry => entry.Code))}). "
-                        + "Hãy ghi đúng mã vào cột Mã khách hàng của file Excel.");
+                        + "Hãy ghi đúng mã vào cột Mã khách hàng của file Excel"
+                        + (tax.Length > 0 && found.All(entry => TaxKey(entry.TaxCode) == tax)
+                            ? ", hoặc chọn mã dùng ở ••• → Chọn mã khách hàng/nhà cung cấp trùng MST." : "."));
                 return new(found[0].Code, found[0].Name, (PartyRole)role, method);
             }
         return null;
@@ -314,7 +390,7 @@ public sealed partial class PartyCatalogStore
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 JsonSerializer.Serialize(stream, new PartyCatalogFile(1, DateTimeOffset.UtcNow, CustomerSource, SupplierSource,
-                    customers.Entries, suppliers.Entries, created.Count == 0 ? null : created), Json);
+                    customers.Entries, suppliers.Entries, created.Count == 0 ? null : created, preferred.Count == 0 ? null : preferred), Json);
                 stream.Flush(flushToDisk: true);
             }
             StateFiles.Commit(temporary, FilePath);

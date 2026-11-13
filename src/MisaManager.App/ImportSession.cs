@@ -10,6 +10,9 @@ public sealed class ImportSession(WorkbookReader reader, WorkbookProfileStore pr
     /// <summary>Purchase invoices (Mua hàng): supplier on the voucher, services left out.</summary>
     public bool Purchase { get; set; }
 
+    /// <summary>Fuel-only rule of the selected company (Lộc Thủy): its non-fuel purchases go to the Dịch vụ tab.</summary>
+    public FuelPurchaseCompany? Fuel { get; init; }
+
     public async Task<WorkbookData> ReadAsync(string path, CancellationToken token)
     {
         var workbook = await reader.ReadAsync(path, token);
@@ -18,7 +21,7 @@ public sealed class ImportSession(WorkbookReader reader, WorkbookProfileStore pr
     }
 
     public WorkbookMappingSchema Describe(WorkbookData workbook, string sheet)
-        => new InvoiceWorkbookImporter(reader, Purchase).DescribeMapping(workbook, sheet);
+        => new InvoiceWorkbookImporter(reader, Purchase, Fuel).DescribeMapping(workbook, sheet);
 
     public Task<WorkbookProfile?> ReadProfileAsync(WorkbookData workbook, string sheet, WorkbookMappingSchema mapping, CancellationToken token)
         => profiles.ReadAsync(workbook, sheet, mapping, token);
@@ -29,7 +32,7 @@ public sealed class ImportSession(WorkbookReader reader, WorkbookProfileStore pr
         if (columnMap is not null && columnMap.Values.Distinct().Count() != columnMap.Count)
             throw new WorkbookImportException("MAPPING_INVALID", "Each source column may be selected only once.");
         var profile = await profiles.SaveAsync(workbook, sheet, mapping, columnMap, token, confirmation, locale);
-        var imported = await Task.Run(() => new InvoiceWorkbookImporter(reader, Purchase).Import(workbook,
+        var imported = await Task.Run(() => new InvoiceWorkbookImporter(reader, Purchase, Fuel).Import(workbook,
             new WorkbookImportOptions(sheet, locale, ColumnMap: columnMap, ImportRevision: profile.Revision, Confirmation: confirmation), token), token);
         token.ThrowIfCancellationRequested();
         var invoices = new List<InvoiceDocument>();

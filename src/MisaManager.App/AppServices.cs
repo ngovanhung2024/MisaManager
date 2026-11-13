@@ -10,13 +10,18 @@ namespace MisaManager.App;
 public sealed partial class AppServices : IAsyncDisposable
 {
     public WorkbookReader WorkbookReader { get; } = new();
-    public ItemCatalogStore ItemCatalog { get; } = LoadItemCatalog();
-    public PartyCatalogStore PartyCatalog { get; } = LoadPartyCatalog();
-    public PostedInvoiceStore PostedInvoices { get; } = LoadPostedInvoices("posted-invoices.json");
+    /// <summary>Lá Việt, Lộc Thủy…: the selected company's catalogs, invoice lists and rules are the ones loaded below.</summary>
+    public CompanyProfileStore Companies { get; }
+    public CompanyProfile Company => Companies.Active;
+    // Folder of the selected company; switching company restarts the app so every store reloads.
+    private readonly string companyFolder;
+    public ItemCatalogStore ItemCatalog { get; }
+    public PartyCatalogStore PartyCatalog { get; }
+    public PostedInvoiceStore PostedInvoices { get; }
     /// <summary>Purchase invoices already in MISA ("Mua hàng hóa, dịch vụ" export); kept apart from the sales register.</summary>
-    public PostedInvoiceStore PostedPurchases { get; } = LoadPostedInvoices("posted-purchases.json");
-    public ItemGroupStore ItemGroups { get; } = LoadItemGroups();
-    public OpeningStockStore OpeningStock { get; } = LoadOpeningStock();
+    public PostedInvoiceStore PostedPurchases { get; }
+    public ItemGroupStore ItemGroups { get; }
+    public OpeningStockStore OpeningStock { get; }
     public JsonStateStore State { get; }
     public MisaWindowDiscovery Windows { get; } = new();
     private readonly NativeDispatcher nativeOwner = new();
@@ -34,17 +39,16 @@ public sealed partial class AppServices : IAsyncDisposable
     public WorkbookProfileStore Profiles { get; }
     public UpdateService Updates { get; }
     // Outside generation folders so an update or restart keeps the imported invoice list.
-    public ImportSessionStore ImportSessions { get; } = new(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "import"));
-    public ImportSessionStore PurchaseImportSessions { get; } = new(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "import-purchase"));
+    public ImportSessionStore ImportSessions { get; }
+    public ImportSessionStore PurchaseImportSessions { get; }
 
     public PostedInvoiceStore PostedFor(InvoiceDocument invoice) => invoice.IsPurchase() ? PostedPurchases : PostedInvoices;
     public bool IsPosted(InvoiceDocument invoice) => PostedFor(invoice).Contains(invoice);
     public WorkflowProfile ProfileFor(InvoiceDocument? invoice) => invoice?.IsPurchase() == true ? PurchaseProfile : WorkflowProfile;
 
-    private static string ModePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        ProductIdentity.TechnicalName, "mode.txt");
+    private static string DataRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        ProductIdentity.TechnicalName);
+    private string ModePath => Path.Combine(companyFolder, "mode.txt");
 
     /// <summary>Bán hàng or Mua hàng, as last chosen in the tool.</summary>
     public VoucherKind Mode
@@ -130,6 +134,16 @@ public sealed partial class AppServices : IAsyncDisposable
 
     public AppServices()
     {
+        Companies = new CompanyProfileStore(DataRoot);
+        companyFolder = Companies.ActiveFolder;
+        ItemCatalog = LoadItemCatalog(companyFolder);
+        PartyCatalog = LoadPartyCatalog(companyFolder);
+        PostedInvoices = LoadPostedInvoices(companyFolder, "posted-invoices.json");
+        PostedPurchases = LoadPostedInvoices(companyFolder, "posted-purchases.json");
+        ItemGroups = LoadItemGroups(companyFolder);
+        OpeningStock = LoadOpeningStock(companyFolder);
+        ImportSessions = new(Path.Combine(companyFolder, "import"));
+        PurchaseImportSessions = new(Path.Combine(companyFolder, "import-purchase"));
         Generations = new GenerationStore();
         var appVersion = typeof(AppServices).Assembly.GetName().Version?.ToString() ?? "0.0.0";
         var active = Generations.EnsureActive(appVersion);
@@ -144,6 +158,7 @@ public sealed partial class AppServices : IAsyncDisposable
         workflowGateway.ItemCatalog = ItemCatalog;
         workflowGateway.PartyCatalog = PartyCatalog;
         workflowGateway.ItemGroups = ItemGroups;
+        workflowGateway.Companies = Companies;
         LoadCreationSettings();
         Workflow = new WorkflowRunner(workflowGateway, State, eventStore);
         workflowGateway.StopSignal = Workflow.StopSignal;
@@ -154,10 +169,9 @@ public sealed partial class AppServices : IAsyncDisposable
     }
 
     // Kept outside generation folders so rebuilds and "Xóa lịch sử" never drop created item codes.
-    private static ItemCatalogStore LoadItemCatalog()
+    private static ItemCatalogStore LoadItemCatalog(string folder)
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            ProductIdentity.TechnicalName, "item-catalog.json");
+        var path = Path.Combine(folder, "item-catalog.json");
         try { return new ItemCatalogStore(path); }
         catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
         {
@@ -172,10 +186,9 @@ public sealed partial class AppServices : IAsyncDisposable
         }
     }
 
-    private static PartyCatalogStore LoadPartyCatalog()
+    private static PartyCatalogStore LoadPartyCatalog(string folder)
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            ProductIdentity.TechnicalName, "party-catalog.json");
+        var path = Path.Combine(folder, "party-catalog.json");
         try { return new PartyCatalogStore(path); }
         catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
         {
@@ -184,10 +197,9 @@ public sealed partial class AppServices : IAsyncDisposable
         }
     }
 
-    private static PostedInvoiceStore LoadPostedInvoices(string fileName)
+    private static PostedInvoiceStore LoadPostedInvoices(string folder, string fileName)
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            ProductIdentity.TechnicalName, fileName);
+        var path = Path.Combine(folder, fileName);
         try { return new PostedInvoiceStore(path); }
         catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
         {
@@ -196,10 +208,9 @@ public sealed partial class AppServices : IAsyncDisposable
         }
     }
 
-    private static ItemGroupStore LoadItemGroups()
+    private static ItemGroupStore LoadItemGroups(string folder)
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            ProductIdentity.TechnicalName, "item-groups.json");
+        var path = Path.Combine(folder, "item-groups.json");
         try { return new ItemGroupStore(path); }
         catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
         {
@@ -208,10 +219,9 @@ public sealed partial class AppServices : IAsyncDisposable
         }
     }
 
-    private static OpeningStockStore LoadOpeningStock()
+    private static OpeningStockStore LoadOpeningStock(string folder)
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            ProductIdentity.TechnicalName, "opening-stock.json");
+        var path = Path.Combine(folder, "opening-stock.json");
         try { return new OpeningStockStore(path); }
         catch (Exception error) when (error is JsonException or InvalidDataException or NotSupportedException)
         {

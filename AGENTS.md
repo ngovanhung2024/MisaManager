@@ -37,7 +37,8 @@
 | State machine, checkpoint, chống trùng | `src/MisaManager.Core/Workflow.cs` |
 | Kiểm tra dữ liệu hóa đơn | `src/MisaManager.Core/Validation.cs` |
 | Đọc Excel | `src/MisaManager.Import/InvoiceWorkbookImporter.cs` |
-| Mã khách hàng/nhà cung cấp (danh mục, tìm theo tên) | `src/MisaManager.Core/PartyCatalog.cs`, `src/MisaManager.Import/PartyCatalogWorkbook.cs` |
+| Mã khách hàng/nhà cung cấp (danh mục, tìm theo tên, chọn mã khi trùng MST) | `src/MisaManager.Core/PartyCatalog.cs`, `src/MisaManager.Import/PartyCatalogWorkbook.cs`, `App/PartyPreferencePrompt.cs` |
+| Công ty (Lá Việt, Lộc Thủy…): thư mục dữ liệu riêng, MST, quy tắc xăng dầu, chặn hóa đơn công ty khác | `src/MisaManager.Core/CompanyProfiles.cs`, `Core/FuelPurchases.cs`, `AppServices` (constructor), `App/CompanyPrompt.cs` |
 | Tạo khách hàng mới (hộp Thêm Khách hàng, quy tắc mã) | `Automation/Screens/Dialogs/NativeCustomerCatalog.cs`, `CreateCustomerAsync` trong `NativeWorkflowGateway.cs`, `PartyCatalogStore.NewCustomerCode` |
 | Nhóm VTHH, tiền tố mã hàng mới, kiểm tra danh mục | `src/MisaManager.Core/ItemGroups.cs`, `Core/CatalogAudit.cs`, `src/MisaManager.Import/ItemGroupWorkbook.cs` |
 | Cân đối tồn kho bán ra (tồn đầu kỳ, nhóm cùng mặt hàng, quy đổi ĐVT, file Excel cân đối/báo cáo) | `src/MisaManager.Core/StockBalance.cs`, `Core/OpeningStock.cs`, `src/MisaManager.Import/OpeningStockWorkbook.cs`, `Import/StockBalanceWorkbook.cs`, `AutoBalanceStockAsync` trong `MainWindow.xaml.cs` |

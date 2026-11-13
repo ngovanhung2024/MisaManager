@@ -135,7 +135,20 @@ Khi MISA đổi phiên bản:
 3. Cập nhật app giả lập nếu giao diện thay đổi cấu trúc (control đọc tên từ profile nên đổi ID là tự khớp), chạy test, phát hành.
 4. `versionTitle` phải khớp đầu tiêu đề cửa sổ MISA (`MISA SME 2023 R20 Enterprise - …`).
 
+## Công ty (Lá Việt, Lộc Thủy…)
+
+Ô **Công ty** ở góc trên chọn công ty đang nhập liệu. Mỗi công ty có thư mục riêng `%LOCALAPPDATA%\MisaManager\companies\<id>`
+(danh mục mã hàng, khách hàng/nhà cung cấp, nhóm VTHH, tồn đầu kỳ, hóa đơn đã ghi sổ, danh sách hóa đơn đã nạp, chế độ
+Bán/Mua) và cài đặt riêng (MST, quy tắc chỉ nhập xăng dầu) trong `companies.json`. Đổi công ty thì tool mở lại để nạp dữ
+liệu của công ty đó. Lần đầu, Lá Việt và Lộc Thủy cùng được chép từ dữ liệu cũ (file gốc giữ nguyên), nên nạp lại danh mục
+cho từng công ty; công ty thêm sau bắt đầu trống. Lịch sử chống nhập trùng dùng chung. Hóa đơn có MST người mua (mua vào)
+hoặc người bán (bán ra) là công ty khác với công ty đang chọn dừng trước khi nhập với lỗi `COMPANY_MISMATCH`.
+
 ## Mã khách hàng / nhà cung cấp
+
+Khi nhiều mã trong danh sách có cùng một MST (ví dụ THANH LƯƠNG và TL), hóa đơn dừng trước khi nhập (`SUPPLIER_AMBIGUOUS`
+khi mua, `CUSTOMER_AMBIGUOUS` khi bán) cho đến khi chọn mã ở **••• → Chọn mã khách hàng/nhà cung cấp trùng MST…**. Lựa chọn
+được giữ khi nạp lại danh sách; mã đã chọn không còn trong danh sách thì phải chọn lại.
 
 Danh mục mã hàng ưu tiên mã từ file Excel đã nạp hơn mã phát sinh còn giữ trong database cục bộ. Khi đã có bằng chứng
 nguồn từ file Excel, dòng không có mã chỉ được tra bằng các mã hiện có trong lần xuất đó; mã cache cũ không được tự chọn
@@ -282,8 +295,9 @@ và không đọc các cột này) → tiền thuế từng dòng đúng nguồn
 dừng trước khi nhập. Selector màn hình mua hàng (`purchase_list`, `purchase_voucher` trong profile) theo quy ước ID của bán
 hàng; nếu **Kiểm tra giao diện** báo lệch, **Copy lỗi** gửi lại để cập nhật profile.
 
-**Công ty chỉ nhập xăng dầu** (`FuelPurchases.Companies` trong `src/MisaManager.Core/FuelPurchases.cs`, nhận theo MST
-người mua; hiện có Lộc Thủy 3301661802): chỉ hóa đơn toàn xăng dầu được nhập, mọi hóa đơn khác (bia, sửa chữa, điện…) và
+**Công ty chỉ nhập xăng dầu** (cài ở **••• → Cài đặt công ty đang chọn…**, mặc định công ty Lộc Thủy MST 3301661802;
+`CompanyProfile.Fuel` trong `src/MisaManager.Core/CompanyProfiles.cs`): khi công ty đó đang được chọn, chỉ hóa đơn toàn xăng
+dầu có người mua là công ty đó được nhập, mọi hóa đơn khác (bia, sửa chữa, điện…) và
 hóa đơn có cả dầu diesel lẫn xăng/nhớt vào tab **Dịch vụ**.
 - Dầu diesel (Dầu Điêzen/Diesel/DO…) → **1. Mua hàng trong nước nhập kho**, Kho **CTY**, TK kho **152** (tool sửa nếu MISA
   đề xuất khác).

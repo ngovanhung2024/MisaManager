@@ -242,6 +242,7 @@ public sealed class PurchaseVoucherTests : UiTest
     [Fact]
     public Task LocThuyPetrolAndOilGoToVoucherWithoutStockAndAccount154() => WithFakeAsync(async (misa, harness, token) =>
     {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3100", Invoices.Supplier, Invoices.LocThuy,
             Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 20, 20_000, "10%"),
             Invoices.Line(1, "NHOT_CX", "Nhớt Caltex super", "Lít", 5, 90_000, "10%"));
@@ -272,6 +273,7 @@ public sealed class PurchaseVoucherTests : UiTest
     [Fact]
     public Task LocThuyDieselGoesToStockCtyWithAccount152() => WithFakeAsync(async (misa, harness, token) =>
     {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3101", Invoices.Supplier, Invoices.LocThuy,
             Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 100, 19_000, "10%"));
 
@@ -294,6 +296,7 @@ public sealed class PurchaseVoucherTests : UiTest
     [Fact]
     public Task LocThuyDieselAlreadyOnCtyAnd152IsNotRetyped() => WithFakeAsync(async (misa, harness, token) =>
     {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3102", Invoices.Supplier, Invoices.LocThuy,
             Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 50, 19_000, "10%"));
 
@@ -304,4 +307,69 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Equal(("CTY", "152"), (line.Stock, line.DebitAccount));
         Assert.DoesNotContain(Events(misa), entry => entry.Contains(" stock <-") || entry.Contains(" debit_account <-"));
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", PurchaseItemStockAccount = "152" });
+
+    // Report 0.2.186, HĐ 392: MISA lists THANH LƯƠNG and TL with the same MST 3300482529.
+    private static readonly Party ThanhLuong = new("CÔNG TY CỔ PHẦN XĂNG DẦU THANH LƯƠNG", "3300482529",
+        "51 Nguyễn Gia Thiều, Phường Phú Xuân, Thành Phố Huế", "", ValuePresence.Provided);
+    private static readonly FakeCustomer[] ThanhLuongCodes =
+    [
+        new("THANH LƯƠNG", ThanhLuong.Name, ThanhLuong.Address, ThanhLuong.TaxCode),
+        new("TL", "Công ty CP xăng dầu Thanh Lương", ThanhLuong.Address, ThanhLuong.TaxCode)
+    ];
+
+    private static void LoadThanhLuongSuppliers(AutomationHarness harness, FakeMisa misa)
+        => harness.Parties.Replace(PartyRole.Supplier, [.. ThanhLuongCodes.Select(code => new PartyCatalogEntry(code.Code, code.Name, code.TaxCode)),
+            new PartyCatalogEntry("NCC_PBH", Invoices.Supplier.Name, Invoices.Supplier.TaxCode)], Path.Combine(misa.Root, "Nha_cung_cap.xlsx"));
+
+    [Fact]
+    public Task SupplierMstSharedByTwoCodesStopsBeforeInputUntilACodeIsChosen() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        LoadThanhLuongSuppliers(harness, misa);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "392", ThanhLuong, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 10, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "failed", Describe(result));
+        Assert.Equal("SUPPLIER_AMBIGUOUS", result.Context.Snapshot.LastErrorCode);
+        Assert.False(result.Context.Snapshot.InputMayHaveBeenSent);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.DoesNotContain(Events(misa), line => line.Contains("field customer <-"));
+    }, Purchase with { AdditionalItems = FuelItems, AdditionalSuppliers = ThanhLuongCodes });
+
+    [Fact]
+    public Task ChosenSupplierCodeIsTypedForTheSharedMst() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        LoadThanhLuongSuppliers(harness, misa);
+        harness.Parties.SetPreferred([new PartyPreference(PartyRole.Supplier, ThanhLuong.TaxCode, "TL")]);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "392", ThanhLuong, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 10, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal(("TL", ThanhLuong.TaxCode), (voucher.CustomerCode, voucher.CustomerTaxCode));
+        Assert.Contains(Events(misa), line => line.Contains("field customer <- 'TL'"));
+        Assert.DoesNotContain(Events(misa), line => line.Contains("field customer <- 'THANH LƯƠNG'"));
+    }, Purchase with { AdditionalItems = FuelItems, AdditionalSuppliers = ThanhLuongCodes });
+
+    [Fact]
+    public Task LocThuyInvoiceWhileLaVietIsSelectedStopsBeforeInput() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        Assert.Equal(CompanyProfileStore.LaVietId, harness.Companies.Active.Id);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3103", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 10, 20_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        // Lá Việt has no fuel rule: entering it would post diesel to KHH/1561 instead of CTY/152.
+        Assert.True(result.Outcome == "failed", Describe(result));
+        Assert.Equal(CompanyProfileStore.MismatchCode, result.Context.Snapshot.LastErrorCode);
+        Assert.False(result.Context.Snapshot.InputMayHaveBeenSent);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.DoesNotContain(Events(misa), line => line.Contains("field customer <-"));
+    }, Purchase with { AdditionalItems = FuelItems });
 }

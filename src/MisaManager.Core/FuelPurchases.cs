@@ -21,21 +21,18 @@ public sealed record FuelPurchaseCompany(string TaxCode, string Name, string Sto
 
 public static partial class FuelPurchases
 {
-    public static IReadOnlyList<FuelPurchaseCompany> Companies { get; } =
-    [
-        new("3301661802", "CÔNG TY TNHH THƯƠNG MẠI VÀ DỊCH VỤ LỘC THỦY", "CTY", "152", "154")
-    ];
-
     public const string NotFuelReason = "không phải xăng, dầu diesel, nhớt";
     public const string BothRoutesReason = "có cả dầu diesel (nhập kho) và xăng/nhớt (không qua kho) – tách thành 2 chứng từ, nhập tay";
 
-    /// <summary>The fuel-only rule of the purchase invoice's buyer (our company), or null for the ordinary purchase flow.</summary>
-    public static FuelPurchaseCompany? Company(InvoiceDocument invoice)
+    /// <summary>
+    /// The selected company's fuel-only rule (<see cref="CompanyProfile.FuelRule"/>) when the purchase invoice's buyer is
+    /// that company; null for the ordinary purchase flow.
+    /// </summary>
+    public static FuelPurchaseCompany? Company(InvoiceDocument invoice, FuelPurchaseCompany? rule)
     {
-        if (!invoice.IsPurchase()) return null;
+        if (rule is null || !invoice.IsPurchase()) return null;
         var buyer = PartyCatalogStore.TaxKey(invoice.Buyer.TaxCode);
-        return buyer.Length == 0 ? null
-            : Companies.FirstOrDefault(company => PartyCatalogStore.TaxKey(company.TaxCode) == buyer);
+        return buyer.Length > 0 && buyer == PartyCatalogStore.TaxKey(rule.TaxCode) ? rule : null;
     }
 
     /// <summary>
@@ -58,9 +55,9 @@ public static partial class FuelPurchases
     /// Posting of an invoice of a fuel-only buyer: all lines diesel → Stock, all lines xăng/nhớt → Expense. Null when the
     /// buyer has no fuel rule or the invoice is not entirely fuel of one route (discount lines aside).
     /// </summary>
-    public static PurchasePosting? Posting(InvoiceDocument invoice)
+    public static PurchasePosting? Posting(InvoiceDocument invoice, FuelPurchaseCompany? rule)
     {
-        if (Company(invoice) is not { } company) return null;
+        if (Company(invoice, rule) is not { } company) return null;
         var kinds = invoice.Lines.Where(line => !ItemNatures.IsDiscount(line)).Select(line => Kind(line.Name)).Distinct().ToArray();
         return kinds switch
         {
@@ -71,9 +68,9 @@ public static partial class FuelPurchases
     }
 
     /// <summary>Lines as the "Dịch vụ" tab lists a fuel-only buyer's invoice that is left out (null when it is entered).</summary>
-    public static IReadOnlyList<ServiceLine>? Skipped(InvoiceDocument invoice)
+    public static IReadOnlyList<ServiceLine>? Skipped(InvoiceDocument invoice, FuelPurchaseCompany? rule)
     {
-        if (Company(invoice) is null || Posting(invoice) is not null) return null;
+        if (Company(invoice, rule) is null || Posting(invoice, rule) is not null) return null;
         var lines = invoice.Lines.Where(line => !ItemNatures.IsDiscount(line)).ToArray();
         var bothRoutes = lines.All(line => Kind(line.Name) is not null);
         return lines.Select(line => new ServiceLine(line.Name, line.Unit, line.AmountBeforeTax, bothRoutes || Kind(line.Name) is null,

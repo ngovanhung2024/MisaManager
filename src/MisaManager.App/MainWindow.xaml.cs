@@ -88,7 +88,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         var services = ((App)Application.Current).Services;
-        importModel = new(new ImportSession(services.WorkbookReader, services.Profiles, services.Drafts));
+        importModel = new(new ImportSession(services.WorkbookReader, services.Profiles, services.Drafts) { Fuel = services.Company.FuelRule() });
         workflow = new(((App)Application.Current).Services);
         DataContext = workflow;
         workflow.PropertyChanged += (_, args) =>
@@ -140,6 +140,7 @@ public partial class MainWindow : Window
             var workArea = SystemParameters.WorkArea;
             PositionRail(workArea);
             mode = ((App)Application.Current).Services.Mode;
+            ShowCompanies();
             ApplyMode();
             RefreshCatalogLabel();
             RefreshPartyLabel();
@@ -385,7 +386,10 @@ public partial class MainWindow : Window
         }
         finally { switchingMode = false; }
         importModel.Purchase = Purchase;
-        ModeHint.Text = Purchase ? "Hóa đơn mua vào → Mua hàng nhập kho (KHH · 1561 · 331); Lộc Thủy: dầu diesel → CTY · 152, xăng/nhớt → không qua kho · 154" : "Hóa đơn bán ra → Chứng từ bán hàng";
+        var fuel = ((App)Application.Current).Services.Company.FuelRule();
+        ModeHint.Text = !Purchase ? "Hóa đơn bán ra → Chứng từ bán hàng"
+            : fuel is null ? "Hóa đơn mua vào → Mua hàng nhập kho (KHH · 1561 · 331)"
+            : $"Chỉ nhập xăng dầu: dầu diesel → {fuel.Stock} · {fuel.StockAccount}, xăng/nhớt → không qua kho · {fuel.ExpenseAccount}";
         OpenInvoicesItem.Header = Purchase ? "Mở hóa đơn mua vào (zip HTML)…" : "Mở Excel hóa đơn…";
         OpenInvoicesItem.ToolTip = Purchase
             ? "Chọn file zip các hóa đơn HTML tải từ cổng thuế (tool chuyển sang Excel, sắp xếp từ đầu năm), rồi file Mua hàng hóa, dịch vụ đã ghi sổ xuất từ MISA"
@@ -443,6 +447,106 @@ public partial class MainWindow : Window
         var catalog = ((App)Application.Current).Services.ItemCatalog;
         if (PreferredItemPrompt.Edit(this, catalog))
             StatusLabel.Text = $"Đã lưu {catalog.PreferredCodes().Count:N0} mã dùng khi trùng tên.";
+    }
+
+    private void PreferredParties_Click(object sender, RoutedEventArgs e)
+    {
+        var parties = ((App)Application.Current).Services.PartyCatalog;
+        var focus = workflow.SelectedInvoice is { } invoice ? invoice.IsPurchase() ? invoice.Seller.TaxCode : invoice.Buyer.TaxCode : null;
+        if (PartyPreferencePrompt.Edit(this, parties, focus))
+        {
+            StatusLabel.Text = $"Đã lưu {parties.PreferredSnapshot().Count:N0} mã dùng cho MST trùng nhiều mã.";
+            RefreshPartyLabel();
+        }
+    }
+
+    private bool showingCompanies;
+
+    private void ShowCompanies()
+    {
+        var companies = ((App)Application.Current).Services.Companies;
+        showingCompanies = true;
+        try
+        {
+            CompanyChoice.ItemsSource = companies.Companies;
+            CompanyChoice.SelectedItem = companies.Companies.First(company => company.Id == companies.Active.Id);
+            CompanyChoice.ToolTip = $"Công ty đang nhập liệu: {companies.Active.Display}. Mỗi công ty có danh mục mã hàng, khách hàng/nhà cung cấp, "
+                + "hóa đơn đã nạp và quy tắc riêng; đổi công ty thì tool mở lại.";
+        }
+        finally { showingCompanies = false; }
+    }
+
+    private void CompanyChoice_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (showingCompanies || !IsLoaded || CompanyChoice.SelectedItem is not CompanyProfile next) return;
+        var companies = ((App)Application.Current).Services.Companies;
+        if (next.Id == companies.Active.Id) return;
+        if (!workflow.CanEditSource
+            || MessageBox.Show(this, $"Chuyển sang công ty {next.Name}? Tool mở lại với danh mục, hóa đơn đã nạp và cài đặt của công ty này.",
+                "Đổi công ty", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+        {
+            ShowCompanies();
+            return;
+        }
+        try
+        {
+            companies.Select(next.Id);
+            Restart();
+        }
+        catch (Exception error)
+        {
+            StatusLabel.Text = "Không đổi được công ty: " + error.Message;
+            ShowCompanies();
+        }
+    }
+
+    private void EditCompany_Click(object sender, RoutedEventArgs e)
+    {
+        var companies = ((App)Application.Current).Services.Companies;
+        var active = companies.Active;
+        if (CompanyPrompt.Edit(this, active, "Cài đặt công ty " + active.Name) is not { } edited || edited == active) return;
+        try
+        {
+            companies.Upsert(edited);
+            // Rules are read when the tool starts (import filter, hints): reopen so all of them follow the new settings.
+            if (MessageBox.Show(this, "Đã lưu. Mở lại tool ngay để áp dụng cài đặt mới?", "Cài đặt công ty",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                Restart();
+            else ShowCompanies();
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "Không lưu được: " + error.Message, "Cài đặt công ty", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void AddCompany_Click(object sender, RoutedEventArgs e)
+    {
+        var companies = ((App)Application.Current).Services.Companies;
+        if (CompanyPrompt.Edit(this, new CompanyProfile("", ""), "Thêm công ty") is not { } created) return;
+        try
+        {
+            var saved = companies.Upsert(created);
+            ShowCompanies();
+            if (MessageBox.Show(this, $"Đã thêm công ty {saved.Name} (danh mục trống: nạp mã hàng, khách hàng, nhà cung cấp của công ty này sau khi chuyển). "
+                    + "Chuyển sang công ty này ngay?", "Thêm công ty", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                companies.Select(saved.Id);
+                Restart();
+            }
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "Không lưu được: " + error.Message, "Thêm công ty", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    // A new process loads every store from the selected company's folder; it waits for this one to release the instance mutex.
+    private static void Restart()
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!,
+            $"--wait-for-pid {Environment.ProcessId}") { UseShellExecute = false });
+        Application.Current.Shutdown();
     }
 
     private async void ChooseOpeningStock_Click(object sender, RoutedEventArgs e) => await ChooseOpeningStockAsync();

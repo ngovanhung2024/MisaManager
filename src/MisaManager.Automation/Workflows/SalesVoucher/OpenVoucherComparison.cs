@@ -29,15 +29,12 @@ public sealed partial class NativeWorkflowGateway
             : CreatedCustomer(context) ?? BuyerCodes.Resolve(context.Invoice.Buyer, PartyCatalog)?.Code
             ?? throw MissingCustomer(context);
 
-    /// <summary>The entry with the invoice's MST in the loaded supplier list, else customer list; null when none has it.</summary>
+    /// <summary>
+    /// The entry with the invoice's MST in the loaded supplier list, else customer list; null when none has it. Several codes
+    /// with that MST need the user's choice (••• → Chọn mã khách hàng/nhà cung cấp trùng MST), else SUPPLIER_AMBIGUOUS.
+    /// </summary>
     private PartyCatalogEntry? Supplier(InvoiceDocument invoice)
-    {
-        var found = PartyCatalog?.FindByTax(invoice.Seller.TaxCode) ?? [];
-        if (found.Select(entry => entry.Code).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
-            throw new AutomationException("SUPPLIER_AMBIGUOUS", $"Hóa đơn {invoice.Identity.Number}: MST {invoice.Seller.TaxCode} thuộc nhiều nhà cung cấp "
-                + $"({string.Join(", ", found.Select(entry => entry.Code).Distinct())}); sửa danh mục trong MISA rồi nạp lại danh sách nhà cung cấp.");
-        return found.FirstOrDefault();
-    }
+        => PartyCatalog?.FindSupplier(invoice.Seller.TaxCode, invoice.Identity.Number);
 
     /// <summary>
     /// Supplier readback: MISA shows the code it found for the MST (any code is accepted when no list was loaded) and its
@@ -64,6 +61,9 @@ public sealed partial class NativeWorkflowGateway
     /// <summary>Before any input: the buyer has a code, or the tool can create it in MISA during the customer step.</summary>
     private void RequireCustomer(WorkflowContext context)
     {
+        if (Companies is { } companies
+            && CompanyProfileStore.Mismatch(context.Invoice, companies.Active, companies.Companies) is { } mismatch)
+            throw new AutomationException(CompanyProfileStore.MismatchCode, mismatch);
         if (context.Invoice.IsPurchase())
         {
             // A loaded supplier list that lacks the MST means MISA would not find it either: stop before any input.

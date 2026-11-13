@@ -14,6 +14,27 @@ public sealed class FuelPurchaseTests : IDisposable
             .WithLines([.. names.Select((name, index) => InvoiceBuilder.Line(index, name, "lít", 20, 20_000m))])
             .Build() with { InvoiceType = InvoiceKinds.Purchase };
 
+    // The rule of the selected company: Lộc Thủy's default profile.
+    private static readonly FuelPurchaseCompany? Rule =
+        CompanyProfileStore.Defaults.Single(company => company.Id == CompanyProfileStore.LocThuyId).FuelRule();
+    private static PurchasePosting? Posting(InvoiceDocument invoice) => FuelPurchases.Posting(invoice, Rule);
+    private static IReadOnlyList<ServiceLine>? Skipped(InvoiceDocument invoice) => FuelPurchases.Skipped(invoice, Rule);
+    private static FuelPurchaseCompany? Company(InvoiceDocument invoice) => FuelPurchases.Company(invoice, Rule);
+
+    [Fact]
+    public void FuelRuleAppliesOnlyWhenTheSelectedCompanyHasIt()
+    {
+        var diesel = Purchase(LocThuy, "Dầu Điêzen 0,05S Mức 2");
+        var laViet = CompanyProfileStore.Defaults.Single(company => company.Id == CompanyProfileStore.LaVietId);
+
+        Assert.Null(laViet.FuelRule());
+        Assert.Null(FuelPurchases.Posting(diesel, laViet.FuelRule()));
+        Assert.Null(FuelPurchases.Skipped(Purchase(LocThuy, "Bia heineken bạc 250ml"), laViet.FuelRule()));
+        // A fuel rule without the company's MST would apply to any buyer: it is not a rule.
+        Assert.Null(new CompanyProfile("x", "X", "", new FuelPurchaseRule("CTY", "152", "154")).FuelRule());
+        Assert.Equal(new FuelPurchaseCompany("3301661802", "Lộc Thủy", "CTY", "152", "154"), Rule);
+    }
+
     [Theory]
     [InlineData("Dầu Điêzen 0,05S Mức 2", FuelKind.Diesel)]
     [InlineData("Dầu Điêzen 0,001S Mức 5", FuelKind.Diesel)]
@@ -34,35 +55,35 @@ public sealed class FuelPurchaseTests : IDisposable
     public void DieselIsStockedInCtyOn152AndGasolineIsExpensedOn154()
     {
         Assert.Equal(new PurchasePosting(PurchaseRoute.Stock, "CTY", "152"),
-            FuelPurchases.Posting(Purchase(LocThuy, "Dầu Điêzen 0,05S Mức 2")));
+            Posting(Purchase(LocThuy, "Dầu Điêzen 0,05S Mức 2")));
         Assert.Equal(new PurchasePosting(PurchaseRoute.Expense, "CTY", "154"),
-            FuelPurchases.Posting(Purchase(LocThuy, "Xăng E10 RON 95 Mức 3", "Nhớt Caltex super")));
-        Assert.Null(FuelPurchases.Skipped(Purchase(LocThuy, "Xăng RON 95 Mức 3")));
+            Posting(Purchase(LocThuy, "Xăng E10 RON 95 Mức 3", "Nhớt Caltex super")));
+        Assert.Null(Skipped(Purchase(LocThuy, "Xăng RON 95 Mức 3")));
     }
 
     [Fact]
     public void NonFuelAndMixedRouteInvoicesOfTheFuelBuyerAreSkipped()
     {
         var beer = Purchase(LocThuy, "Bia heineken bạc 250ml");
-        Assert.Null(FuelPurchases.Posting(beer));
-        Assert.Equal(FuelPurchases.NotFuelReason, Assert.Single(FuelPurchases.Skipped(beer)!).Reason);
+        Assert.Null(Posting(beer));
+        Assert.Equal(FuelPurchases.NotFuelReason, Assert.Single(Skipped(beer)!).Reason);
 
         var repair = Purchase(LocThuy, "Dịch vụ sửa chữa xe ô tô", "Dầu 5W30");
-        Assert.Null(FuelPurchases.Posting(repair));
-        Assert.Equal([true, false], FuelPurchases.Skipped(repair)!.Select(line => line.IsService));
+        Assert.Null(Posting(repair));
+        Assert.Equal([true, false], Skipped(repair)!.Select(line => line.IsService));
 
         var both = Purchase(LocThuy, "Dầu Điêzen 0,05S Mức 2", "Xăng RON 95 Mức 3");
-        Assert.Null(FuelPurchases.Posting(both));
-        Assert.All(FuelPurchases.Skipped(both)!, line => Assert.Equal(FuelPurchases.BothRoutesReason, line.Reason));
+        Assert.Null(Posting(both));
+        Assert.All(Skipped(both)!, line => Assert.Equal(FuelPurchases.BothRoutesReason, line.Reason));
     }
 
     [Fact]
     public void OtherBuyersAndSalesKeepTheOrdinaryFlow()
     {
-        Assert.Null(FuelPurchases.Company(Purchase(InvoiceBuilder.Organization, "Xăng RON 95 Mức 3")));
-        Assert.Null(FuelPurchases.Skipped(Purchase(InvoiceBuilder.Organization, "Xăng RON 95 Mức 3")));
+        Assert.Null(Company(Purchase(InvoiceBuilder.Organization, "Xăng RON 95 Mức 3")));
+        Assert.Null(Skipped(Purchase(InvoiceBuilder.Organization, "Xăng RON 95 Mức 3")));
         var sale = Purchase(LocThuy, "Dầu Điêzen 0,05S Mức 2") with { InvoiceType = InvoiceKinds.Sales };
-        Assert.Null(FuelPurchases.Posting(sale));
+        Assert.Null(Posting(sale));
     }
 
     [Theory]

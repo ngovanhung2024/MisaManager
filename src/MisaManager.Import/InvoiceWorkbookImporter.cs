@@ -23,7 +23,7 @@ public sealed record WorkbookMappingSchema(int HeaderRow, IReadOnlyList<Workbook
 /// Purchase invoices ("Mua hàng"): the seller is the supplier on the voucher, invoices are told apart by supplier MST,
 /// series and number (suppliers reuse numbers), and services/expenses are left out (<see cref="ImportResult.Services"/>).
 /// </param>
-public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase = false)
+public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase = false, FuelPurchaseCompany? fuel = null)
 {
     private static readonly IReadOnlyDictionary<string, string[]> Aliases = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
@@ -180,9 +180,9 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase
             foreach (var invoice in built)
             {
                 // A fuel-only buyer (Lộc Thủy) enters xăng/nhớt too (không qua kho) and leaves out everything that is not fuel.
-                if (FuelPurchases.Company(invoice) is not null)
+                if (FuelPurchases.Company(invoice, fuel) is not null)
                 {
-                    if (FuelPurchases.Skipped(invoice) is { } skipped)
+                    if (FuelPurchases.Skipped(invoice, fuel) is { } skipped)
                         services.Add(new(invoice.InvoiceId, invoice.Identity.Number, invoice.Issued, invoice.Seller.Name, invoice.Seller.TaxCode,
                             invoice.Subtotal, invoice.GrandTotal, InvoiceNature.Service, skipped));
                     continue;

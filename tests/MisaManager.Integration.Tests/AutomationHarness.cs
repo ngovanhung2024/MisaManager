@@ -20,7 +20,10 @@ public sealed class AutomationHarness : IAsyncDisposable
         Parties = new PartyCatalogStore(Path.Combine(root, "party-catalog.json"));
         if (customers is not null) Parties.Replace(PartyRole.Customer, customers, Path.Combine(root, "Khach_hang.xlsx"));
         Groups = new ItemGroupStore(Path.Combine(root, "item-groups.json"));
-        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile, PurchaseProfile) { ItemCatalog = Catalog, PartyCatalog = Parties, ItemGroups = Groups };
+        // Lá Việt (no fuel rule) is selected unless a test selects another company.
+        Companies = new CompanyProfileStore(Path.Combine(root, "app"));
+        Gateway = new NativeWorkflowGateway(new MisaWindowDiscovery(), Input, Profile, PurchaseProfile)
+            { ItemCatalog = Catalog, PartyCatalog = Parties, ItemGroups = Groups, Companies = Companies };
         Runner = new WorkflowRunner(Gateway, new JsonStateStore(Path.Combine(root, "state")), new RunEventStore(Path.Combine(root, "logs")));
     }
 
@@ -30,6 +33,7 @@ public sealed class AutomationHarness : IAsyncDisposable
     public ItemCatalogStore Catalog { get; }
     public PartyCatalogStore Parties { get; }
     public ItemGroupStore Groups { get; }
+    public CompanyProfileStore Companies { get; }
     public NativeWorkflowGateway Gateway { get; }
     public WorkflowRunner Runner { get; }
 

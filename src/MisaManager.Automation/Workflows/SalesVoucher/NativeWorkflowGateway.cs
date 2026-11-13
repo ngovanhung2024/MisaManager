@@ -38,7 +38,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     /// <summary>Switches to the sales or purchase screens for this invoice before anything is read or typed.</summary>
     private void Use(InvoiceDocument invoice)
     {
-        posting = FuelPurchases.Posting(invoice);
+        posting = FuelPurchases.Posting(invoice, Companies?.Active.FuelRule());
         if (!invoice.IsPurchase())
         {
             Use(salesProfile);
@@ -49,7 +49,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         Use(posting?.Route == PurchaseRoute.Expense ? purchase.ForExpense() : purchase);
     }
 
-    // Fuel-only buyer (Lộc Thủy): Kho/TK kho or TK chi phí the lines must carry; null for the ordinary flow.
+    // Fuel-only company (Lộc Thủy, chosen in the tool): Kho/TK kho or TK chi phí the lines must carry; null for the ordinary flow.
     private PurchasePosting? posting;
 
     private void Use(WorkflowProfile next)
@@ -129,6 +129,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     public PartyCatalogStore? PartyCatalog { get; set; }
     /// <summary>Item groups from MISA; the group code (HH/DV/NVL…) is the prefix of a created item code.</summary>
     public ItemGroupStore? ItemGroups { get; set; }
+    /// <summary>Companies and the selected one: its rules (fuel-only purchases) apply, another company's invoice stops before input.</summary>
+    public CompanyProfileStore? Companies { get; set; }
     /// <summary>Dừng ngay; shared with <see cref="WorkflowRunner.StopSignal"/>.</summary>
     public WorkflowStopSignal? StopSignal { get; set; }
     /// <summary>Menu "Tự thêm mã hàng mới": off means a line without a catalog code stops the invoice before any input.</summary>
