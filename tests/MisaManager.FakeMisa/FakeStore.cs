@@ -55,8 +55,8 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
         .. scenario.AdditionalItems
     ];
 
-    public IReadOnlyList<string> Units { get; } = ["Bao", "Cái", "Chai", "Cốc", "Gói", "kg", "Lần", "Tấn", "Thùng"];
-    public IReadOnlyList<string> Stocks { get; } = ["KHH", "KVT"];
+    public IReadOnlyList<string> Units { get; } = ["Bao", "Cái", "Chai", "Cốc", "Gói", "kg", "Lần", "Lít", "Tấn", "Thùng"];
+    public IReadOnlyList<string> Stocks { get; } = ["CTY", "KHH", "KVT"];
     public IReadOnlyList<string> TaxRates { get; } = ["0%", "5%", "8%", "10%", "KCT", "KKKNT"];
     public bool IncompleteItemLookup => scenario.IncompleteItemLookup;
     public bool ItemLookupUsesVoucherColumns => scenario.ItemLookupUsesVoucherColumns;

@@ -36,9 +36,21 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     }
 
     /// <summary>Switches to the sales or purchase screens for this invoice before anything is read or typed.</summary>
-    private void Use(InvoiceDocument invoice) => Use(invoice.IsPurchase()
-        ? purchaseProfile ?? throw new AutomationException("PURCHASE_PROFILE_MISSING", "Profile MISA chưa có màn hình Mua hàng hóa, dịch vụ.")
-        : salesProfile);
+    private void Use(InvoiceDocument invoice)
+    {
+        posting = FuelPurchases.Posting(invoice);
+        if (!invoice.IsPurchase())
+        {
+            Use(salesProfile);
+            return;
+        }
+        var purchase = purchaseProfile
+            ?? throw new AutomationException("PURCHASE_PROFILE_MISSING", "Profile MISA chưa có màn hình Mua hàng hóa, dịch vụ.");
+        Use(posting?.Route == PurchaseRoute.Expense ? purchase.ForExpense() : purchase);
+    }
+
+    // Fuel-only buyer (Lộc Thủy): Kho/TK kho or TK chi phí the lines must carry; null for the ordinary flow.
+    private PurchasePosting? posting;
 
     private void Use(WorkflowProfile next)
     {
@@ -316,6 +328,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 sent = true;
                 workflowTabs.Clear();
                 await WaitEditor(context, true, token);
+                if (profile.IsExpense) await SelectExpenseVoucherAsync(token);
                 await Tab(profile.ReceiptTab, token);
                 var voucher = await Field("voucher_number", token);
                 if (string.IsNullOrWhiteSpace(voucher.Value)) throw new AutomationException("VOUCHER_ID_MISSING", "Chưa đọc được số chứng từ mới.", true);
@@ -707,7 +720,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             ?? throw new AutomationException("ITEM_TAX_NOT_SET", $"Dòng {row + 1}: thiếu thuế suất để tạo mã hàng '{line.Name}'.");
         // "5", "5%" and "5,0000" all select MISA's "5%" option; KCT/KKKNT stay textual.
         var tax = taxKey.All(character => char.IsDigit(character) || character == '.') ? taxKey + "%" : line.TaxRate.Trim();
-        var stock = profile.DefaultItemStock;
+        var stock = posting?.Stock ?? profile.DefaultItemStock;
         Entering("line:" + line.LineId + ":new_item");
         await input.OpenNewItemAsync(await input.CaptureAsync(token), codeCell, token);
         var newItem = await input.BindNewItemAsync(profile.ItemNewCode, profile.ItemNewName, profile.ItemNewSave, token);
@@ -959,6 +972,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             var expectedAccount = profile.IsPurchase ? null : metadata.Values[profile.Columns["debit_account"]].Value;
             if (!profile.IsPurchase && (string.IsNullOrWhiteSpace(expectedAccount) || !expectedAccount.All(char.IsDigit)))
                 throw new AutomationException("ACCOUNT_READBACK_INVALID", $"Row {row + 1}: native account is invalid.");
+            await EnterPostingAsync(row, code, line, token);
             var converted = !string.IsNullOrWhiteSpace(context.NativeValues?.GetValueOrDefault("conversion:" + line.LineId));
             var expected = ExpectedLine(context, line);
             var nativeUnit = metadata.Values[profile.Columns["unit"]].Value;
@@ -1035,6 +1049,39 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 tax, tax, NativeValueKind.TaxRate, profile.Culture, token), token);
         }
         if (profile.IsPurchase) await EnterPurchaseTaxAmountsAsync(context, codes, token);
+    }
+
+    // Fuel lines: MISA proposes Kho/TK kho/TK chi phí from the item (e.g. TK chi phí 632); the buyer's rule decides them.
+    private (string Key, string Value)[] PostingCells() => posting switch
+    {
+        { Route: PurchaseRoute.Stock } stock => [("stock", stock.Stock), ("debit_account", stock.Account)],
+        { Route: PurchaseRoute.Expense } expense => [("debit_account", expense.Account)],
+        _ => []
+    };
+
+    private async Task EnterPostingAsync(int row, string code, InvoiceLine line, CancellationToken token)
+    {
+        foreach (var (key, value) in PostingCells())
+        {
+            var native = await Steady(async () => await Cell(row, code, key, token), token);
+            if (Match(value, native.Value, NativeValueKind.Exact)) continue;
+            StopPoint();
+            Entering("line:" + line.LineId + ":" + key);
+            await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, code, key),
+                value, value, NativeValueKind.Exact, profile.Culture, token), token);
+        }
+    }
+
+    /// <summary>
+    /// "Thêm" opens "1. Mua hàng trong nước nhập kho"; xăng/nhớt go to "2. Mua hàng trong nước không qua kho", which
+    /// gives the voucher its own number (MH…), so this runs before the number is read.
+    /// </summary>
+    private async Task SelectExpenseVoucherAsync(CancellationToken token)
+    {
+        Entering("voucher_type");
+        await Steady(async () => await input.WriteFieldAsync(await input.CaptureAsync(token), profile.VoucherType!,
+            profile.ExpenseVoucherType, profile.ExpenseVoucherType, NativeValueKind.Text, profile.Culture, "Enter", token), token);
+        workflowTabs.Clear();
     }
 
     private string[] MetadataColumns() => profile.IsPurchase
@@ -1135,7 +1182,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             StopPoint();
             await Tab(taxTab ? profile.TaxTab : profile.ItemTab, token);
             var keys = taxTab ? new[] { "code", "name", "tax_rate", "tax_amount" }
-                : profile.IsPurchase ? new[] { "code", "name", "unit", "quantity", "amount", "unit_price" }
+                : profile.IsPurchase ? [.. new[] { "code", "name", "unit", "quantity", "amount", "unit_price" }, .. PostingCells().Select(cell => cell.Key)]
                 : new[] { "code", "name", "unit", "debit_account", "quantity", "amount", "unit_price" };
             NativeTable table;
             try
@@ -1172,8 +1219,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                         ("debit_account", context.NativeValues?.GetValueOrDefault("account:" + line.LineId) ?? "<missing verified account>", NativeValueKind.Exact),
                         ("quantity", Decimal(expectedLine.Quantity), NativeValueKind.Decimal), ("amount", Decimal(line.AmountBeforeTax), NativeValueKind.Decimal),
                         ("unit_price", Decimal(decimal.Round(line.AmountBeforeTax!.Value / expectedLine.Quantity, 2, MidpointRounding.AwayFromZero)), NativeValueKind.Decimal) };
-                // Purchases leave Kho/TK Kho/TK công nợ to MISA and do not compare them.
-                if (!taxTab && profile.IsPurchase) expected = [.. expected.Where(item => item.Item1 != "debit_account")];
+                // Purchases leave Kho/TK Kho/TK công nợ to MISA and do not compare them, except where a fuel rule set them.
+                if (!taxTab && profile.IsPurchase)
+                    expected = [.. expected.Where(item => item.Item1 != "debit_account"),
+                        .. PostingCells().Select(cell => (cell.Key, cell.Value, NativeValueKind.Exact))];
                 foreach (var (key, wanted, kind) in expected)
                 {
                     var actual = native.Row?.GetValueOrDefault(profile.Columns[key]);
@@ -1315,6 +1364,12 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             {
                 statusAnswered = true;
                 Trace.TraceInformation("Taxpayer status prompt answered Có: " + status.Text);
+                deadline = Math.Max(deadline, Stopwatch.GetTimestamp() + Stopwatch.Frequency * 800 / 1000);
+            }
+            if (await input.AnswerCostItemPromptAsync(editorHandle, token) is { } costItem)
+            {
+                statusAnswered = true;
+                Trace.TraceInformation("Cost item prompt answered Có: " + costItem.Text);
                 deadline = Math.Max(deadline, Stopwatch.GetTimestamp() + Stopwatch.Frequency * 800 / 1000);
             }
             if (await input.AnswerTaxRoundingPromptAsync(editorHandle, token) is { } tax)

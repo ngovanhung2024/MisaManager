@@ -179,6 +179,14 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase
             // Only stock goods are entered; a service or mixed invoice is listed for the user instead.
             foreach (var invoice in built)
             {
+                // A fuel-only buyer (Lộc Thủy) enters xăng/nhớt too (không qua kho) and leaves out everything that is not fuel.
+                if (FuelPurchases.Company(invoice) is not null)
+                {
+                    if (FuelPurchases.Skipped(invoice) is { } skipped)
+                        services.Add(new(invoice.InvoiceId, invoice.Identity.Number, invoice.Issued, invoice.Seller.Name, invoice.Seller.TaxCode,
+                            invoice.Subtotal, invoice.GrandTotal, InvoiceNature.Service, skipped));
+                    continue;
+                }
                 var (nature, classified) = ItemNatures.Classify(invoice);
                 if (nature != InvoiceNature.Goods)
                     services.Add(new(invoice.InvoiceId, invoice.Identity.Number, invoice.Issued, invoice.Seller.Name, invoice.Seller.TaxCode,

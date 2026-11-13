@@ -70,6 +70,15 @@ public static class NativeComparison
         return TaxpayerStatusKeys.All(part => key.Contains(part, StringComparison.Ordinal));
     }
 
+    /// <summary>MISA's "… chứng từ hạch toán thiếu &lt;Khoản mục chi phí&gt;. Bạn có muốn ghi sổ không?" warning on Cất.</summary>
+    public static bool IsCostItemPrompt(string? message)
+    {
+        var key = TextKey.Compact(System.Net.WebUtility.HtmlDecode(message ?? ""));
+        return CostItemKeys.All(part => key.Contains(part, StringComparison.Ordinal));
+    }
+
+    private static readonly string[] CostItemKeys = [TextKey.Compact("Khoản mục chi phí"), TextKey.Compact("muốn ghi sổ")];
+
     private static readonly string[] TaxpayerStatusKeys = [TextKey.Compact("mã số thuế"), TextKey.Compact("hoạt động"),
         TextKey.Compact("tiếp tục Cất")];
 

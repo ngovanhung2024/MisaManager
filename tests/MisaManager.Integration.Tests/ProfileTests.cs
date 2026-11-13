@@ -49,6 +49,24 @@ public sealed class ProfileTests : UiTest
     }
 
     [Fact]
+    public void PurchaseProfileHasAnExpenseVariantForMuaHangKhongQuaKho()
+    {
+        var stock = WorkflowProfile.Load(Path.Combine(AppContext.BaseDirectory, "profiles", "misa-sme2023-r20.json"), VoucherKind.Purchase);
+        var expense = stock.ForExpense();
+        Assert.False(stock.IsExpense);
+        Assert.True(expense.IsExpense && expense.IsPurchase);
+        Assert.Same(expense, stock.ForExpense());
+        Assert.Equal(("Phiếu nhập", "Chứng từ ghi nợ"), (stock.ReceiptTab, expense.ReceiptTab));
+        Assert.Equal(("TK Kho", "TK chi phí"), (stock.Columns["debit_account"], expense.Columns["debit_account"]));
+        Assert.True(stock.Columns.ContainsKey("stock") && !expense.Columns.ContainsKey("stock"));
+        Assert.Equal(("Chứng từ mua hàng", "ComboBox"), (stock.VoucherType?.Label, stock.VoucherType?.ControlType));
+        Assert.Equal(("1. Mua hàng trong nước nhập kho", "2. Mua hàng trong nước không qua kho"),
+            (stock.StockVoucherType, stock.ExpenseVoucherType));
+        // The fake's purchase editor draws its Kho columns, receipt tab and voucher-type options from the same profile.
+        Assert.Equal(stock.Fields["voucher_number"].AutomationId, expense.Fields["voucher_number"].AutomationId);
+    }
+
+    [Fact]
     public Task FakeMisaExposesEveryRequiredPurchaseSelector() => WithFakeAsync(async (misa, harness, token) =>
     {
         var profile = harness.PurchaseProfile;

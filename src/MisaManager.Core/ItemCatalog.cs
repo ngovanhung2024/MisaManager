@@ -63,15 +63,39 @@ public sealed partial class ItemCatalogStore
     /// <summary>
     /// Name identity: <see cref="TextKey.LettersAndDigits"/> plus wording that MISA and the e-invoice system spell
     /// differently for the same item: the packaging word of "(bao 25kg)", a bare distributor tag ("(ĐN)", trailing "ĐN"),
-    /// "bón" of "phân bón" and "khuyến mãi"/"khuyến mại". Weights, sizes and variant descriptions are kept.
+    /// "bón" of "phân bón", "khuyến mãi"/"khuyến mại" and fuel grades (<see cref="FuelName"/>). Weights, sizes and variant
+    /// descriptions are kept.
     /// </summary>
     public static string ItemNameKey(string? value)
     {
-        var text = Regex.Replace(TextKey.Canonical(value), @"(?<=\()\s*BAO\s*(?=\d+(?:\.\d+)?\s*KG\s*\))", "", RegexOptions.CultureInvariant);
+        var text = Regex.Replace(FuelName(TextKey.Canonical(value)), @"(?<=\()\s*BAO\s*(?=\d+(?:\.\d+)?\s*KG\s*\))", "", RegexOptions.CultureInvariant);
         text = DistributorTag().Replace(text, " ");
         text = FertilizerWord.Replace(text, Fertilizer);
         text = PromotionWord.Replace(text, Promotion);
         return TextKey.LettersAndDigits(text);
+    }
+
+    // Fuel names as MISA and the e-invoice spell them: "Xăng Ron 95-III" = "Xăng RON 95 Mức 3",
+    // "Dầu diezel/Diesel/DO 0,05S-II" = "Dầu Điêzen 0,05S Mức 2". Only names starting with "Xăng"/"Dầu" are touched.
+    private static readonly Regex FuelLead = new(@"^\s*(?:" + Regex.Escape(TextKey.Canonical("XĂNG")) + "|" + Regex.Escape(TextKey.Canonical("DẦU"))
+        + @")(?![\p{L}\p{Mn}])", RegexOptions.CultureInvariant);
+    private static readonly Regex DieselWord = new(@"(?<![\p{L}\p{Mn}])(?:"
+        + string.Join("|", new[] { "ĐIÊZEN", "ĐIEZEN", "DIÊZEN", "DIEZEN", "ĐIÊZEL", "DIEZEL", "DIESEL" }
+            .Select(word => Regex.Escape(TextKey.Canonical(word))).Distinct())
+        + "|(?<=" + Regex.Escape(TextKey.Canonical("DẦU")) + @"\s+)DO)(?![\p{L}\p{Mn}])", RegexOptions.CultureInvariant);
+    private static readonly string Diesel = TextKey.Canonical("ĐIÊZEN");
+    private static readonly Regex RomanGrade = new(@"(?<=[\p{L}\p{Mn}\p{Nd}])\s*-\s*(III|II|IV|V|I)(?![\p{L}\p{Mn}\p{Nd}])",
+        RegexOptions.CultureInvariant);
+    private static readonly string Grade = TextKey.Canonical("MỨC");
+
+    private static string FuelName(string canonical)
+    {
+        if (!FuelLead.IsMatch(canonical)) return canonical;
+        var text = DieselWord.Replace(canonical, Diesel);
+        return RomanGrade.Replace(text, match => " " + Grade + " " + match.Groups[1].Value switch
+        {
+            "I" => "1", "II" => "2", "III" => "3", "IV" => "4", _ => "5"
+        });
     }
 
     [GeneratedRegex(@"\(\s*ĐN\s*\)|(?<![\p{L}\p{Mn}\p{Nd}])ĐN\s*$", RegexOptions.CultureInvariant)]
@@ -107,7 +131,7 @@ public sealed partial class ItemCatalogStore
         var numbers = new List<string>();
         var ordered = new List<string>();
         // "100ml" = "100 ml", "16.16.8" = "16-16-8": digits and letters are separate tokens.
-        foreach (Match token in LooseToken().Matches(TextKey.Canonical(value)))
+        foreach (Match token in LooseToken().Matches(FuelName(TextKey.Canonical(value))))
         {
             if (char.IsDigit(token.Value[0])) numbers.Add(token.Value.TrimStart('0') is { Length: > 0 } digits ? digits : "0");
             else if (!LooseNoise.Contains(token.Value)) ordered.Add(token.Value);

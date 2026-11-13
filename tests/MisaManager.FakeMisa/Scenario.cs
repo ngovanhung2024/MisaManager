@@ -60,6 +60,11 @@ public sealed record Scenario
     /// "Dữ liệu không có trong danh mục." (failure report 0.2.137).
     /// </summary>
     public int PurchaseDefaultsDelayMilliseconds { get; init; }
+    /// <summary>Kho / TK Kho MISA proposes for an item on "nhập kho" purchase lines; empty = the profile's KHH / 1561.</summary>
+    public string PurchaseItemStock { get; init; } = "";
+    public string PurchaseItemStockAccount { get; init; } = "";
+    /// <summary>TK chi phí MISA proposes for an item on "không qua kho" purchase lines (real R20 shows the item's 632).</summary>
+    public string ExpenseItemAccount { get; init; } = "632";
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>
@@ -162,7 +167,7 @@ public sealed record SavedLine(string Code, string Name, string Unit, string Deb
 
 public sealed record SavedVoucher(string VoucherNumber, string InvoiceNumber, string Series, string CustomerCode,
     string CustomerName, string CustomerTaxCode, string PostedDate, string VoucherDate, string IssuedDate, string Payment,
-    IReadOnlyList<SavedLine> Lines, decimal Subtotal, decimal TaxTotal, decimal GrandTotal);
+    IReadOnlyList<SavedLine> Lines, decimal Subtotal, decimal TaxTotal, decimal GrandTotal, string VoucherType = "");
 
 public sealed record StateFile(IReadOnlyList<SavedVoucher> Vouchers, IReadOnlyList<CatalogItem> CreatedItems,
     IReadOnlyList<Customer> CreatedCustomers);

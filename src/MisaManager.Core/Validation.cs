@@ -89,7 +89,13 @@ public static class InvoiceValidation
                     if (amountDifference > 0.5m)
                         issues.Add(new("UNIT_PRICE_AMOUNT_DIFFERENCE", IssueSeverity.Warning, "Số lượng × đơn giá khác thành tiền nguồn; giữ nguyên giá trị nguồn để đối chiếu.", sourceWorksheet, line.Cells?.GetValueOrDefault("amount")?.Address, invoiceId, line.LineId));
                     var rateText = (line.TaxRate ?? "").TrimEnd('%').Trim();
-                    if (!DecimalValue.TryParseInvariant(rateText, out var rate) || rate is < 0 or > 100)
+                    // Purchases: fuel invoices state "KKKNT"/"KCT" with no VAT; MISA's rate list has both options.
+                    if (invoice.IsPurchase() && rateText.ToUpperInvariant() is "KCT" or "KKKNT")
+                    {
+                        if (line.TaxAmount is not (null or 0m))
+                            Block("TAX_RATE_UNSUPPORTED", $"Thuế suất {rateText} nhưng tiền thuế khác 0.", "Kiểm tra thuế suất/tiền thuế của dòng.", line, "taxRate");
+                    }
+                    else if (!DecimalValue.TryParseInvariant(rateText, out var rate) || rate is < 0 or > 100)
                         Block("TAX_RATE_UNSUPPORTED", "Thuế suất thiếu hoặc chưa được hỗ trợ.", "Cần thuế suất phần trăm rõ ràng; thuế đặc biệt chưa được hỗ trợ.", line, "taxRate");
                     else if (line.TaxAmount is decimal tax && Math.Abs(checked(amount * rate / 100m) - tax) > 0.5m)
                         issues.Add(new("TAX_RATE_AMOUNT_DIFFERENCE", IssueSeverity.Warning, "Tiền thuế chi tiết không khớp phép tính thuế suất; giữ nguyên dữ liệu nguồn.", sourceWorksheet, line.Cells?.GetValueOrDefault("taxAmount")?.Address, invoiceId, line.LineId));

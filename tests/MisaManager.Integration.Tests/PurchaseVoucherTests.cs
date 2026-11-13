@@ -230,4 +230,78 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Empty(misa.State().Vouchers);
         Assert.Contains(Events(misa), line => line.Contains("field customer <- '" + Invoices.UnknownSupplier.TaxCode + "'"));
     }, Purchase);
+
+    // Lộc Thủy (MST 3301661802) only enters fuel. MISA's catalogue spells the items its own way ("Xăng Ron 95-III").
+    private static readonly FakeItem[] FuelItems =
+    [
+        new("XANG_95", "Xăng Ron 95-III", "Lít", "10%"),
+        new("NHOT_CX", "Nhớt Caltex super", "Lít", "10%"),
+        new("DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", "10%")
+    ];
+
+    [Fact]
+    public Task LocThuyPetrolAndOilGoToVoucherWithoutStockAndAccount154() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3100", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 20, 20_000, "10%"),
+            Invoices.Line(1, "NHOT_CX", "Nhớt Caltex super", "Lít", 5, 90_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal("expense", voucher.VoucherType);
+        Assert.StartsWith("MH0", voucher.VoucherNumber);
+        Assert.Equal(["XANG_95", "NHOT_CX"], voucher.Lines.Select(line => line.Code));
+        // MISA proposed TK chi phí 632 (the item's); the buyer's rule makes it 154. No Kho on this voucher.
+        Assert.All(voucher.Lines, line => Assert.Equal(("", "154", "331"), (line.Stock, line.DebitAccount, line.CreditAccount)));
+        Assert.Equal((invoice.Subtotal, invoice.TaxTotal, invoice.GrandTotal), (voucher.Subtotal, voucher.TaxTotal, voucher.GrandTotal));
+
+        var events = Events(misa);
+        var typeIndex = Array.FindIndex(events, line => line.Contains("field voucher_type <- '2. Mua hàng trong nước không qua kho'"));
+        Assert.True(typeIndex >= 0, "Chưa chọn loại chứng từ 2. Mua hàng trong nước không qua kho.");
+        Assert.True(typeIndex < Array.FindIndex(events, line => line.Contains("field customer <-")), "Loại chứng từ phải đổi trước khi nhập nhà cung cấp.");
+        Assert.Contains(events, line => line.Contains("voucher type → không qua kho"));
+        Assert.Contains(events, line => line.Contains("row=0 debit_account <- '154'"));
+        Assert.Contains(events, line => line.Contains("row=1 debit_account <- '154'"));
+        Assert.DoesNotContain(events, line => line.Contains(" stock <-"));
+        // R20 asks whether to post a TK 154 line without Khoản mục chi phí; the tool answers Có.
+        Assert.Contains(events, line => line.Contains("prompt: Khoản mục chi phí → Yes"));
+    }, Purchase with { AdditionalItems = FuelItems });
+
+    [Fact]
+    public Task LocThuyDieselGoesToStockCtyWithAccount152() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3101", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 100, 19_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var voucher = Assert.Single(misa.State().Vouchers);
+        Assert.Equal("stock", voucher.VoucherType);
+        Assert.StartsWith("NK0", voucher.VoucherNumber);
+        // MISA proposed Kho KHH / TK Kho 156; the buyer's rule corrects them to CTY / 152.
+        var line = Assert.Single(voucher.Lines);
+        Assert.Equal(("CTY", "152", "331"), (line.Stock, line.DebitAccount, line.CreditAccount));
+        var events = Events(misa);
+        Assert.Contains(events, entry => entry.Contains("row=0 stock <- 'CTY'"));
+        Assert.Contains(events, entry => entry.Contains("row=0 debit_account <- '152'"));
+        Assert.DoesNotContain(events, entry => entry.Contains("field voucher_type"));
+        Assert.DoesNotContain(events, entry => entry.Contains("prompt: Khoản mục chi phí"));
+    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "KHH", PurchaseItemStockAccount = "156" });
+
+    [Fact]
+    public Task LocThuyDieselAlreadyOnCtyAnd152IsNotRetyped() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3102", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 50, 19_000, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal(("CTY", "152"), (line.Stock, line.DebitAccount));
+        Assert.DoesNotContain(Events(misa), entry => entry.Contains(" stock <-") || entry.Contains(" debit_account <-"));
+    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", PurchaseItemStockAccount = "152" });
 }

@@ -385,7 +385,7 @@ public partial class MainWindow : Window
         }
         finally { switchingMode = false; }
         importModel.Purchase = Purchase;
-        ModeHint.Text = Purchase ? "Hóa đơn mua vào → Mua hàng nhập kho (KHH · 1561 · 331)" : "Hóa đơn bán ra → Chứng từ bán hàng";
+        ModeHint.Text = Purchase ? "Hóa đơn mua vào → Mua hàng nhập kho (KHH · 1561 · 331); Lộc Thủy: dầu diesel → CTY · 152, xăng/nhớt → không qua kho · 154" : "Hóa đơn bán ra → Chứng từ bán hàng";
         OpenInvoicesItem.Header = Purchase ? "Mở hóa đơn mua vào (zip HTML)…" : "Mở Excel hóa đơn…";
         OpenInvoicesItem.ToolTip = Purchase
             ? "Chọn file zip các hóa đơn HTML tải từ cổng thuế (tool chuyển sang Excel, sắp xếp từ đầu năm), rồi file Mua hàng hóa, dịch vụ đã ghi sổ xuất từ MISA"

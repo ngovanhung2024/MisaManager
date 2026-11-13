@@ -282,6 +282,18 @@ và không đọc các cột này) → tiền thuế từng dòng đúng nguồn
 dừng trước khi nhập. Selector màn hình mua hàng (`purchase_list`, `purchase_voucher` trong profile) theo quy ước ID của bán
 hàng; nếu **Kiểm tra giao diện** báo lệch, **Copy lỗi** gửi lại để cập nhật profile.
 
+**Công ty chỉ nhập xăng dầu** (`FuelPurchases.Companies` trong `src/MisaManager.Core/FuelPurchases.cs`, nhận theo MST
+người mua; hiện có Lộc Thủy 3301661802): chỉ hóa đơn toàn xăng dầu được nhập, mọi hóa đơn khác (bia, sửa chữa, điện…) và
+hóa đơn có cả dầu diesel lẫn xăng/nhớt vào tab **Dịch vụ**.
+- Dầu diesel (Dầu Điêzen/Diesel/DO…) → **1. Mua hàng trong nước nhập kho**, Kho **CTY**, TK kho **152** (tool sửa nếu MISA
+  đề xuất khác).
+- Xăng, nhớt, dầu nhờn/thủy lực → chọn **2. Mua hàng trong nước không qua kho** (ô cạnh tiêu đề "Chứng từ mua hàng", tab
+  "Chứng từ ghi nợ"), TK chi phí **154**. Khi Cất, hộp "TK 154 chi tiết theo <Khoản mục chi phí>… Bạn có muốn ghi sổ
+  không?" được bấm **Yes**.
+- Mã hàng mới (F9) dùng kho ngầm định CTY. Tên xăng dầu so khớp cả cách viết khác: "Xăng RON 95 Mức 3" = "Xăng Ron 95-III",
+  "Dầu DO/diezel" = "Dầu Điêzen" (khác Mức là mặt hàng khác).
+- Hóa đơn mua vào thuế suất KKKNT/KCT (tiền thuế 0) được nhập; hóa đơn bán ra vẫn chặn.
+
 ## Đối chiếu hóa đơn
 
 Nút **Đối chiếu hóa đơn** đọc chứng từ bán hàng **đang mở trong MISA** (không cần tool vừa nhập, không cần nạp Excel):

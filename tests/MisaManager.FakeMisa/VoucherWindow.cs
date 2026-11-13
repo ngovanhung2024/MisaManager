@@ -32,6 +32,10 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly FakeProfile profile;
     private readonly string screen;
     private readonly bool purchase;
+    private readonly string company;
+    private bool expense;
+    private readonly CheckBox stockVoucher;
+    private readonly HashSet<TextBox> receiptBoxes = [];
     private readonly Scenario scenario;
     private bool gridWentUnavailable;
     private bool mainActivatedOnce;
@@ -67,9 +71,10 @@ public sealed class VoucherWindow : Window, IGridSource
         screen = scenario.VoucherScreen;
         this.store = store;
         this.main = main;
+        this.company = company;
         Owner = main;
         Ui.Id(this, profile.ScopeId(screen));
-        Title = (purchase ? "Mua hàng hóa, dịch vụ trong nước - Nhập kho - Chưa thanh toán - " : "Bán hàng hóa, dịch vụ trong nước - Tiền mặt - ") + company;
+        Title = VoucherTitle();
         var area = SystemParameters.WorkArea;
         Left = area.Left;
         Top = area.Top;
@@ -114,12 +119,13 @@ public sealed class VoucherWindow : Window, IGridSource
 
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 0) };
         titleRow.Children.Add(new TextBlock { Text = purchase ? "Chứng từ mua hàng" : "Chứng từ bán hàng", FontSize = 16, FontWeight = FontWeights.Bold, Width = 210 });
-        titleRow.Children.Add(new ComboBox
+        var voucherType = purchase ? VoucherTypeCombo() : new ComboBox
         {
-            Width = 210, SelectedIndex = 0,
-            ItemsSource = new[] { purchase ? "1. Mua hàng trong nước nhập kho" : "1. Bán hàng hóa, dịch vụ trong nước" }
-        });
-        titleRow.Children.Add(new CheckBox { Content = purchase ? "Kiêm phiếu nhập kho" : "Kiêm phiếu xuất kho", IsChecked = true, Margin = new Thickness(10, 3, 0, 0) });
+            Width = 210, SelectedIndex = 0, ItemsSource = new[] { "1. Bán hàng hóa, dịch vụ trong nước" }
+        };
+        titleRow.Children.Add(voucherType);
+        stockVoucher = new CheckBox { Content = purchase ? "Kiêm phiếu nhập kho" : "Kiêm phiếu xuất kho", IsChecked = true, Margin = new Thickness(10, 3, 0, 0) };
+        titleRow.Children.Add(stockVoucher);
         titleRow.Children.Add(new CheckBox { Content = "Lập kèm hóa đơn", IsChecked = true, Margin = new Thickness(10, 3, 0, 0) });
         titleRow.Children.Add(new RadioButton { Content = purchase ? "Chưa thanh toán" : "Chưa thu tiền", IsChecked = purchase, Margin = new Thickness(20, 3, 0, 0) });
         titleRow.Children.Add(new RadioButton { Content = purchase ? "Thanh toán ngay" : "Thu tiền ngay", IsChecked = !purchase, Margin = new Thickness(10, 3, 0, 0) });
@@ -127,7 +133,7 @@ public sealed class VoucherWindow : Window, IGridSource
         root.Children.Add(titleRow);
 
         headerTabs = new TabControl { Height = 205, Margin = new Thickness(4, 4, 4, 0) };
-        headerTabs.Items.Add(new TabItem { Header = profile.Tab(screen, "receipt"), Content = purchase ? PurchaseReceiptTab() : ReceiptTab() });
+        headerTabs.Items.Add(new TabItem { Header = profile.Tab(screen, "receipt"), Content = BuildReceiptTab() });
         if (!purchase) headerTabs.Items.Add(new TabItem { Header = "Phiếu xuất", Content = IssueTab() });
         headerTabs.Items.Add(new TabItem { Header = profile.Tab(screen, "invoice"), Content = purchase ? PurchaseInvoiceTab() : InvoiceTab() });
         headerTabs.SelectedIndex = 0;
@@ -223,7 +229,15 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void BuildLayouts()
     {
-        itemLayout = purchase
+        itemLayout = purchase && expense
+        ?
+        [
+            new("code", Column("code"), 110, CellKind.Edit), new("name", Column("name"), 200, CellKind.Edit),
+            new("debit_account", Column("expense_account"), 80, CellKind.Edit), new("credit_account", Column("credit_account"), 80, CellKind.Edit),
+            new("unit", Column("unit"), 60, CellKind.Combo, store.Units), new("quantity", Column("quantity"), 80, CellKind.Edit),
+            new("unit_price", Column("unit_price"), 90, CellKind.Edit), new("amount", Column("amount"), 100, CellKind.Edit)
+        ]
+        : purchase
         ?
         [
             new("code", Column("code"), 110, CellKind.Edit), new("name", Column("name"), 200, CellKind.Edit),
@@ -360,6 +374,77 @@ public sealed class VoucherWindow : Window, IGridSource
             ("Ngày chứng từ", Field("voucher_date", FieldId("voucher_date"))),
             ("Số phiếu thu", Field("voucher_number", FieldId("voucher_number"))))));
 
+    private string VoucherTitle() => purchase
+        ? "Mua hàng hóa, dịch vụ trong nước - " + (expense ? "Không qua kho" : "Nhập kho") + " - Chưa thanh toán - " + company
+        : "Bán hàng hóa, dịch vụ trong nước - Tiền mặt - " + company;
+
+    /// <summary>
+    /// Purchase "Chứng từ mua hàng" list: 1 (nhập kho) and 2 (không qua kho). Like the invoice template combo its text box
+    /// takes no UIA focus; the tool types the option and accepts it with Enter. Choosing 2 re-lays the form out in place.
+    /// </summary>
+    private ComboBox VoucherTypeCombo()
+    {
+        var combo = Ui.Combo("", ["1. Mua hàng trong nước nhập kho", "2. Mua hàng trong nước không qua kho"], 210,
+            "1. Mua hàng trong nước nhập kho");
+        combo.Loaded += (_, _) =>
+        {
+            if (combo.Template.FindName("PART_EditableTextBox", combo) is not TextBox editor) return;
+            editor.Focusable = false;
+            System.Windows.Automation.AutomationProperties.SetAutomationId(editor, "cboVoucherType_EmbeddableTextBox");
+        };
+        combo.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            CommitField("voucher_type", combo.Text);
+            e.Handled = true;
+            combo.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        };
+        combo.LostKeyboardFocus += (_, _) => { if (!combo.IsKeyboardFocusWithin) CommitField("voucher_type", combo.Text); };
+        return combo;
+    }
+
+    private Grid BuildReceiptTab()
+    {
+        bound.RemoveAll(item => receiptBoxes.Contains(item.Box));
+        receiptBoxes.Clear();
+        var first = bound.Count;
+        var tab = !purchase ? ReceiptTab() : expense ? PurchaseExpenseReceiptTab() : PurchaseReceiptTab();
+        foreach (var (box, _) in bound.Skip(first)) receiptBoxes.Add(box);
+        return tab;
+    }
+
+    // "Chứng từ ghi nợ": no delivery person and "Số chứng từ" instead of "Số phiếu nhập" (same txtRefNo).
+    private Grid PurchaseExpenseReceiptTab() => Split(
+        Ui.Group("Thông tin chung", Ui.Form(100, ("Nhà cung cấp", CustomerRow()), ("Diễn giải", Field("reason")),
+            ("NV mua hàng", Ui.Text()))),
+        Ui.Group("Chứng từ", Ui.Form(100,
+            ("Ngày hạch toán", Field("posted_date", FieldId("posted_date"))),
+            ("Ngày chứng từ", Field("voucher_date", FieldId("voucher_date"))),
+            ("Số chứng từ", Field("voucher_number", FieldId("voucher_number"))))));
+
+    private void SetVoucherType(string text)
+    {
+        var value = text.Trim();
+        var toExpense = value.StartsWith("2.", StringComparison.Ordinal);
+        if (!purchase || saved || toExpense == expense || !toExpense && !value.StartsWith("1.", StringComparison.Ordinal)) return;
+        if (lines.Count > 0)
+        {
+            FakeLog.Write("voucher type not changed: the voucher already has lines");
+            return;
+        }
+        expense = toExpense;
+        Title = VoucherTitle();
+        stockVoucher.Visibility = expense ? Visibility.Collapsed : Visibility.Visible;
+        header["voucher_number"] = store.NextVoucherNumber(expense ? "MH0" : "NK0");
+        var receipt = (TabItem)headerTabs.Items[0];
+        receipt.Header = profile.Tab(screen, expense ? "expense_receipt" : "receipt");
+        receipt.Content = BuildReceiptTab();
+        BuildLayouts();
+        BindLayout();
+        SyncHeader();
+        FakeLog.Write($"voucher type → {(expense ? "không qua kho" : "nhập kho")}, number {header["voucher_number"]}");
+    }
+
     private Grid PurchaseReceiptTab() => Split(
         Ui.Group("Thông tin chung", Ui.Form(100, ("Nhà cung cấp", CustomerRow()), ("Địa chỉ", Field("address")),
             ("Người giao hàng", Field("payer")), ("Diễn giải", Field("reason")), ("NV mua hàng", Ui.Text()))),
@@ -422,6 +507,11 @@ public sealed class VoucherWindow : Window, IGridSource
     {
         FakeLog.Write($"field {key} <- '{text}'{(saved ? " (ignored: saved)" : "")}");
         if (saved) return;
+        if (key == "voucher_type")
+        {
+            SetVoucherType(text);
+            return;
+        }
         var value = text.Trim();
         if (key.EndsWith("_date", StringComparison.Ordinal) && DateTime.TryParseExact(value,
                 ["dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
@@ -569,10 +659,12 @@ public sealed class VoucherWindow : Window, IGridSource
         if (purchase)
         {
             // MISA fills warehouse and accounts from the item's defaults; the profile expects KHH / 1561 / 331.
+            // "Không qua kho" has no Kho/TK Kho: TK chi phí comes from the item (632 unless the scenario says otherwise).
             void Defaults()
             {
-                line.Stock = profile.Setting(screen, "stock", "KHH");
-                line.DebitAccount = profile.Setting(screen, "stockAccount", "1561");
+                line.Stock = expense ? "" : scenario.PurchaseItemStock is { Length: > 0 } stock ? stock : profile.Setting(screen, "stock", "KHH");
+                line.DebitAccount = expense ? scenario.ExpenseItemAccount
+                    : scenario.PurchaseItemStockAccount is { Length: > 0 } account ? account : profile.Setting(screen, "stockAccount", "1561");
                 line.CreditAccount = profile.Setting(screen, "payableAccount", "331");
             }
             if (scenario.PurchaseDefaultsDelayMilliseconds <= 0) Defaults();
@@ -692,13 +784,24 @@ public sealed class VoucherWindow : Window, IGridSource
             header["number"] = store.NextInvoiceNumber();
             SyncHeader();
         }
+        if (expense && lines.Any(line => line.DebitAccount == "154"))
+        {
+            // TK 154 is tracked by "Khoản mục chi phí", which the tool does not enter: R20 asks whether to post anyway.
+            FakeLog.Write("prompt: TK 154 thiếu Khoản mục chi phí");
+            var answer = MessageBox.Show(this,
+                "Lỗi khi ghi sổ chứng từ: TK 154 chi tiết theo <Khoản mục chi phí>, chứng từ hạch toán thiếu <Khoản mục chi phí>. "
+                + "Bạn có muốn ghi sổ không? Nếu bạn không nhìn thấy thông tin <Khoản mục chi phí> trên giao diện chứng từ, "
+                + "vui lòng xem hướng dẫn TẠI ĐÂY.", "MISA SME", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            FakeLog.Write("prompt: Khoản mục chi phí → " + answer);
+            if (answer != MessageBoxResult.Yes) return;
+        }
         var savedLines = lines.Select(line => new SavedLine(line.Code, line.Name, line.Unit, line.DebitAccount, line.RevenueAccount,
             line.Quantity, line.UnitPrice, line.Amount, line.TaxRate, line.TaxAmount, line.Stock, line.CreditAccount)).ToArray();
         var amount = lines.Sum(line => line.Amount);
         var tax = lines.Sum(line => line.TaxAmount);
         store.Save(new SavedVoucher(header["voucher_number"], header["number"], header["series"], header["customer"], header["customer_name"],
             header["customer_tax"], header["posted_date"], header["voucher_date"], header["issued_date"], header["payment"],
-            savedLines, amount, tax, amount + tax));
+            savedLines, amount, tax, amount + tax, purchase ? (expense ? "expense" : "stock") : ""));
         saved = true;
         UserMouse.Saved = true;
         dirty = false;

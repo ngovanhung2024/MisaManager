@@ -32,6 +32,13 @@ public sealed partial class NativeInputService
     public Task<TaxPromptAnswer?> AnswerTaxpayerStatusPromptAsync(nint editorHandle, CancellationToken token)
         => AnswerSaveQuestionAsync(editorHandle, NativeComparison.IsTaxpayerStatusPrompt, _ => true, "tình trạng hoạt động MST", token);
 
+    /// <summary>
+    /// Answers "Yes" to MISA's posting warning "TK 154 chi tiết theo &lt;Khoản mục chi phí&gt;, chứng từ hạch toán thiếu
+    /// &lt;Khoản mục chi phí&gt;. Bạn có muốn ghi sổ không?": the user posts fuel expenses without a cost item.
+    /// </summary>
+    public Task<TaxPromptAnswer?> AnswerCostItemPromptAsync(nint editorHandle, CancellationToken token)
+        => AnswerSaveQuestionAsync(editorHandle, NativeComparison.IsCostItemPrompt, _ => true, "thiếu Khoản mục chi phí", token);
+
     // One Có/Không question MISA asks while Cất is in progress; accept decides the answer from its text.
     private async Task<TaxPromptAnswer?> AnswerSaveQuestionAsync(nint editorHandle, Func<string, bool> isPrompt,
         Func<string, bool> acceptable, string subject, CancellationToken token)

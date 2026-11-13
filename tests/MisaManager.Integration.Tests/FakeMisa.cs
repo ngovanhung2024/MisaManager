@@ -14,7 +14,7 @@ public sealed record FakeLine(string Code, string Name, string Unit, string Debi
 
 public sealed record FakeVoucher(string VoucherNumber, string InvoiceNumber, string Series, string CustomerCode,
     string CustomerName, string CustomerTaxCode, string PostedDate, string VoucherDate, string IssuedDate, string Payment,
-    IReadOnlyList<FakeLine> Lines, decimal Subtotal, decimal TaxTotal, decimal GrandTotal);
+    IReadOnlyList<FakeLine> Lines, decimal Subtotal, decimal TaxTotal, decimal GrandTotal, string VoucherType = "");
 
 public sealed record FakeItem(string Code, string Name, string Unit, string TaxRate, decimal Price = 0);
 
@@ -40,7 +40,8 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     bool GridCelllessWhileEditorInactive = false, bool MainActivatedOnFirstTaxAmountRead = false,
     int SessionDisconnectedMilliseconds = 0, bool GhostRowAfterItemCode = false, int BusyAfterQuantityClickMilliseconds = 0,
     bool R20UnitList = false, int SavePostingMilliseconds = 0, bool QuantityIgnoredInFirstVoucherOnly = false,
-    int SaveProofDelayMilliseconds = 0, bool OutOfMemoryOnSave = false);
+    int SaveProofDelayMilliseconds = 0, bool OutOfMemoryOnSave = false, string PurchaseItemStock = "",
+    string PurchaseItemStockAccount = "", string ExpenseItemAccount = "632");
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

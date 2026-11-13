@@ -34,11 +34,17 @@ public sealed class WorkflowProfile
     private static readonly string[] PurchaseRequiredFields = ["customer", "customer_name", "customer_tax", "voucher_date", "posted_date",
         "issued_date", "number", "voucher_number", "subtotal", "tax_total", "grand_total"];
     private static readonly string[] PurchaseRequiredColumns = [.. RequiredColumns, "stock", "credit_account"];
-    private static readonly string[] NonFieldElements = ["save", "close", "unpost"];
+    private static readonly string[] NonFieldElements = ["save", "close", "unpost", "voucher_type"];
 
-    private WorkflowProfile(ProfileDocument document, IReadOnlyDictionary<string, ScreenProfile> screens, VoucherKind kind)
+    private readonly ProfileDocument document;
+    private WorkflowProfile? expenseVariant;
+
+    private WorkflowProfile(ProfileDocument document, IReadOnlyDictionary<string, ScreenProfile> screens, VoucherKind kind,
+        bool expense = false)
     {
+        this.document = document;
         Kind = kind;
+        IsExpense = expense;
         Id = document.Id;
         Revision = document.Revision;
         VersionTitle = document.VersionTitle;
@@ -58,7 +64,9 @@ public sealed class WorkflowProfile
         UnpostVoucher = voucher.Elements.TryGetValue("unpost", out var unpost) ? unpost.Selector : null;
         foreach (var button in new[] { OpenVoucher, SaveVoucher, DiscardVoucher, UnpostVoucher ?? SaveVoucher })
             if (button.ControlType != "Button") throw new InvalidDataException("Nút chứng từ (add/save/close/unpost) phải có controlType Button.");
-        ReceiptTab = voucher.Tab("receipt");
+        // "2. Mua hàng trong nước không qua kho" is the same form with "Chứng từ ghi nợ" for "Phiếu nhập" and
+        // "TK chi phí" for "Kho"/"TK Kho".
+        ReceiptTab = voucher.Tab(expense ? "expense_receipt" : "receipt");
         InvoiceTab = voucher.Tab("invoice");
         ItemTab = voucher.Tab("items");
         TaxTab = voucher.Tab("tax");
@@ -66,12 +74,21 @@ public sealed class WorkflowProfile
         var sales = list.Grid("vouchers");
         ItemGridId = items.AutomationId;
         SalesGridId = sales.AutomationId;
-        Columns = items.Columns;
+        Columns = expense
+            ? items.Columns.Where(pair => pair.Key is not ("stock" or "debit_account" or "expense_account"))
+                .Append(new("debit_account", items.Columns.TryGetValue("expense_account", out var expenseColumn) ? expenseColumn
+                    : throw new InvalidDataException("Profile thiếu column expense_account (TK chi phí).")))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+            : items.Columns;
         SalesColumns = sales.Columns;
         Fields = voucher.Elements.Where(pair => !NonFieldElements.Contains(pair.Key))
             .ToDictionary(pair => pair.Key, pair => pair.Value.Selector, StringComparer.Ordinal);
         FieldTabs = voucher.Elements.Where(pair => pair.Value.Tab is not null)
-            .ToDictionary(pair => pair.Key, pair => voucher.Tab(pair.Value.Tab!), StringComparer.Ordinal);
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Tab == "receipt" ? ReceiptTab : voucher.Tab(pair.Value.Tab!),
+                StringComparer.Ordinal);
+        VoucherType = voucher.Elements.TryGetValue("voucher_type", out var voucherType) ? voucherType.Selector : null;
+        StockVoucherType = voucher.Setting("stockVoucherType", "1. Mua hàng trong nước nhập kho");
+        ExpenseVoucherType = voucher.Setting("expenseVoucherType", "2. Mua hàng trong nước không qua kho");
         ItemNewCode = item.Element("code").Selector;
         ItemNewName = item.Element("name").Selector;
         ItemNewUnit = item.Element("unit").Selector;
@@ -100,13 +117,28 @@ public sealed class WorkflowProfile
 
         foreach (var key in kind == VoucherKind.Purchase ? PurchaseRequiredFields : RequiredFields)
             if (!Fields.ContainsKey(key)) throw new InvalidDataException("Profile thiếu field " + key);
-        foreach (var key in kind == VoucherKind.Purchase ? PurchaseRequiredColumns : RequiredColumns)
+        foreach (var key in kind == VoucherKind.Purchase ? PurchaseRequiredColumns.Where(key => !expense || key != "stock") : RequiredColumns)
             if (!Columns.ContainsKey(key)) throw new InvalidDataException("Profile thiếu column " + key);
         foreach (var key in RequiredSalesColumns)
             if (!SalesColumns.ContainsKey(key)) throw new InvalidDataException("Profile thiếu sales column " + key);
     }
 
     public VoucherKind Kind { get; }
+    /// <summary>Purchase voucher "2. Mua hàng trong nước không qua kho": column debit_account is "TK chi phí".</summary>
+    public bool IsExpense { get; }
+    /// <summary>Combo "1. Mua hàng trong nước nhập kho / 2. … không qua kho"; null when the profile has none.</summary>
+    public NativeSelector? VoucherType { get; }
+    public string StockVoucherType { get; }
+    public string ExpenseVoucherType { get; }
+
+    /// <summary>The same purchase screens as "2. Mua hàng trong nước không qua kho".</summary>
+    public WorkflowProfile ForExpense()
+    {
+        if (!IsPurchase) throw new InvalidOperationException("Chỉ chứng từ mua hàng có loại không qua kho.");
+        if (IsExpense) return this;
+        if (VoucherType is null) throw new InvalidDataException("Profile thiếu voucher_type (loại chứng từ mua hàng).");
+        return expenseVariant ??= new(document, Screens, Kind, expense: true);
+    }
     public bool IsPurchase => Kind == VoucherKind.Purchase;
     /// <summary>Profile key of the voucher list screen (Bán hàng or Mua hàng hóa, dịch vụ).</summary>
     public string ListScreen { get; }

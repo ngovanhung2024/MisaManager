@@ -36,6 +36,7 @@ public static class Invoices
     }
 
     public static readonly Party Supplier = new("CÔNG TY CỔ PHẦN PHÂN BÓN HUẾ", "3300555111", "12 Lê Lợi, Thành phố Huế", "", ValuePresence.Provided);
+    public static readonly Party LocThuy = new("CÔNG TY TNHH THƯƠNG MẠI VÀ DỊCH VỤ LỘC THỦY", "3301661802", "Huế", "", ValuePresence.Provided);
     public static readonly Party UnknownSupplier = new("CÔNG TY TNHH HÓA CHẤT MỚI", "3300999888", "Huế", "", ValuePresence.Provided);
 
     public static InvoiceDocument Build(string directory, string number, Party buyer, params InvoiceLine[] lines)
@@ -48,6 +49,10 @@ public static class Invoices
     /// <summary>A purchase invoice as the tax-portal importer builds it: the supplier is the seller, the shop the buyer.</summary>
     public static InvoiceDocument BuildPurchase(string directory, string number, Party supplier, params InvoiceLine[] lines)
         => Create(directory, number, supplier, Seller, InvoiceKinds.Purchase, InvoiceKinds.PurchasePayment, lines, template: "1");
+
+    /// <summary>A purchase invoice addressed to another buyer than the shop (e.g. <see cref="LocThuy"/>, which only enters fuel).</summary>
+    public static InvoiceDocument BuildPurchaseFor(string directory, string number, Party supplier, Party buyer, params InvoiceLine[] lines)
+        => Create(directory, number, supplier, buyer, InvoiceKinds.Purchase, InvoiceKinds.PurchasePayment, lines, template: "1");
 
     private static InvoiceDocument Create(string directory, string number, Party seller, Party buyer, string invoiceType,
         string payment, InvoiceLine[] lines, string template = "")
