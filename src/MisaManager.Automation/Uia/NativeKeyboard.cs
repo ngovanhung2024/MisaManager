@@ -161,6 +161,11 @@ internal static class NativeKeyboard
             throw new AutomationException("FOCUS_LOST", hit != nint.Zero && hitProcess == Environment.ProcessId
                 ? "Cửa sổ của MISA Manager (đối chiếu/tool) đang che nút MISA cần bấm; không click."
                 : "Có cửa sổ khác che ô MISA cần click; không click.");
+        // Report 0.2.190, HĐ 205: with the voucher form a separate top-level window, MISA's main window covered the point
+        // and took the click. A click for a control lands only in that control's own window.
+        if (targetHandle != nint.Zero && PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT)
+                != PInvoke.GetAncestor((HWND)targetHandle, GET_ANCESTOR_FLAGS.GA_ROOT))
+            throw new AutomationException("FOCUS_LOST", "Cửa sổ MISA khác đang che ô cần click; không click.");
         SendClick(x, y);
     }
 

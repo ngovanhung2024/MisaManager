@@ -685,7 +685,7 @@ public sealed partial class NativeInputService
                 throw new AutomationException("GRID_OFFSCREEN", "Grid cell has no visible native bounds.");
             MarkWorkflowInput();
             NativeKeyboard.Click(cellBounds.X + cellBounds.Width / 2, cellBounds.Y + cellBounds.Height / 2,
-                identity!.WindowHandle, identity.ProcessId);
+                identity!.WindowHandle, identity.ProcessId, KeyboardHandle(target));
             Thread.Sleep(50);
             target = ResolveCell(cell, preserveComboBox: true);
             editor = WidestEditor(target) ?? target;
@@ -711,7 +711,7 @@ public sealed partial class NativeInputService
                 MarkWorkflowInput();
                 var arrowBounds = dropdowns[0].BoundingRectangle;
                 NativeKeyboard.Click(arrowBounds.X + arrowBounds.Width / 2, arrowBounds.Y + arrowBounds.Height / 2,
-                    identity!.WindowHandle, identity.ProcessId);
+                    identity!.WindowHandle, identity.ProcessId, KeyboardHandle(dropdowns[0]));
                 epoch++;
             }
             catch (Exception error)
@@ -792,7 +792,7 @@ public sealed partial class NativeInputService
                                 var closeArrowBounds = closeDropdowns[0].BoundingRectangle;
                                 NativeKeyboard.Click(closeArrowBounds.X + closeArrowBounds.Width / 2,
                                     closeArrowBounds.Y + closeArrowBounds.Height / 2,
-                                    identity.WindowHandle, identity.ProcessId);
+                                    identity.WindowHandle, identity.ProcessId, KeyboardHandle(closeDropdowns[0]));
                                 epoch++;
                                 toggleCloseSent = true;
                             }
@@ -1218,7 +1218,7 @@ public sealed partial class NativeInputService
                 throw new AutomationException("GRID_OFFSCREEN", "Grid cell has no visible native bounds.");
             MarkWorkflowInput();
             NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                identity!.WindowHandle, identity.ProcessId);
+                identity!.WindowHandle, identity.ProcessId, KeyboardHandle(clickTarget));
             // A Win32 error dialog can appear asynchronously after the grid
             // click and owns focus before UIA reports the change. Surface the
             // dialog identity instead of reducing this to a misleading focus
