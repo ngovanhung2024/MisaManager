@@ -1057,10 +1057,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         if (profile.IsPurchase) await EnterPurchaseTaxAmountsAsync(context, codes, token);
     }
 
-    // Fuel lines: MISA proposes Kho/TK kho/TK chi phí from the item (e.g. TK chi phí 632); the buyer's rule decides them.
+    // Fuel lines: MISA proposes TK kho/TK chi phí from the item (e.g. TK chi phí 632); the buyer's rule decides them.
+    // Kho is MISA's own default (the user: "kho không cần chọn CTY, nó tự mặc định"), so it is neither typed nor compared.
     private (string Key, string Value)[] PostingCells() => posting switch
     {
-        { Route: PurchaseRoute.Stock } stock => [("stock", stock.Stock), ("debit_account", stock.Account)],
+        { Route: PurchaseRoute.Stock } stock => [("debit_account", stock.Account)],
         { Route: PurchaseRoute.Expense } expense => [("debit_account", expense.Account)],
         _ => []
     };

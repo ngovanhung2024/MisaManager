@@ -270,8 +270,9 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Contains(events, line => line.Contains("prompt: Khoản mục chi phí → Yes"));
     }, Purchase with { AdditionalItems = FuelItems });
 
+    // Kho is MISA's own default for the item (CTY at Lộc Thủy): the tool neither types nor checks it. TK kho 156 → 152.
     [Fact]
-    public Task LocThuyDieselGoesToStockCtyWithAccount152() => WithFakeAsync(async (misa, harness, token) =>
+    public Task LocThuyDieselKeepsMisaStockAndGetsAccount152() => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "3101", Invoices.Supplier, Invoices.LocThuy,
@@ -283,15 +284,14 @@ public sealed class PurchaseVoucherTests : UiTest
         var voucher = Assert.Single(misa.State().Vouchers);
         Assert.Equal("stock", voucher.VoucherType);
         Assert.StartsWith("NK0", voucher.VoucherNumber);
-        // MISA proposed Kho KHH / TK Kho 156; the buyer's rule corrects them to CTY / 152.
         var line = Assert.Single(voucher.Lines);
         Assert.Equal(("CTY", "152", "331"), (line.Stock, line.DebitAccount, line.CreditAccount));
         var events = Events(misa);
-        Assert.Contains(events, entry => entry.Contains("row=0 stock <- 'CTY'"));
+        Assert.DoesNotContain(events, entry => entry.Contains(" stock <-"));
         Assert.Contains(events, entry => entry.Contains("row=0 debit_account <- '152'"));
         Assert.DoesNotContain(events, entry => entry.Contains("field voucher_type"));
         Assert.DoesNotContain(events, entry => entry.Contains("prompt: Khoản mục chi phí"));
-    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "KHH", PurchaseItemStockAccount = "156" });
+    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", PurchaseItemStockAccount = "156" });
 
     [Fact]
     public Task LocThuyDieselAlreadyOnCtyAnd152IsNotRetyped() => WithFakeAsync(async (misa, harness, token) =>
@@ -358,7 +358,7 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Contains(events, line => line.Contains("field voucher_type <- '1. Mua hàng trong nước nhập kho'"));
         Assert.True(Array.FindIndex(events, line => line.Contains("field voucher_type <-"))
             < Array.FindIndex(events, line => line.Contains("field customer <-")), "Loại chứng từ phải đổi trước khi nhập nhà cung cấp.");
-    }, Purchase with { AdditionalItems = FuelItems, VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
+    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
 
     // Report 0.2.197, HĐ 392: the unowned form was retitled "… nhập kho …" only after the readback had started; the guard
     // took the new title for another window and the voucher was Bỏ. The retitle naming the chosen type is the same form.

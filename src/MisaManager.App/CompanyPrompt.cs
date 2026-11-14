@@ -19,11 +19,11 @@ public static class CompanyPrompt
             IsChecked = company.Fuel is not null, Margin = new Thickness(0, 4, 0, 6)
         };
         var rule = company.Fuel ?? new FuelPurchaseRule("CTY", "152", "154");
-        var stock = Field(rule.Stock);
         var stockAccount = Field(rule.StockAccount);
         var expenseAccount = Field(rule.ExpenseAccount);
         var fuelFields = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
-        foreach (var (label, box) in new (string, TextBox)[] { ("Kho (dầu diesel)", stock), ("TK kho (dầu diesel)", stockAccount),
+        // Kho is left to MISA's default; the saved rule keeps its old value only for compatibility.
+        foreach (var (label, box) in new (string, TextBox)[] { ("TK kho (dầu diesel)", stockAccount),
                      ("TK chi phí (xăng/nhớt)", expenseAccount) })
         {
             fuelFields.Children.Add(new TextBlock { Text = label });
@@ -61,8 +61,8 @@ public static class CompanyPrompt
         {
             var problem = name.Text.Trim().Length == 0 ? "Cần tên công ty."
                 : fuel.IsChecked == true && PartyCatalogStore.TaxKey(tax.Text).Length == 0 ? "Quy tắc chỉ nhập xăng dầu cần MST của công ty."
-                : fuel.IsChecked == true && new[] { stock, stockAccount, expenseAccount }.Any(box => box.Text.Trim().Length == 0)
-                    ? "Cần đủ Kho, TK kho và TK chi phí." : null;
+                : fuel.IsChecked == true && new[] { stockAccount, expenseAccount }.Any(box => box.Text.Trim().Length == 0)
+                    ? "Cần đủ TK kho và TK chi phí." : null;
             if (problem is not null)
             {
                 MessageBox.Show(dialog, problem, title, MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -71,7 +71,7 @@ public static class CompanyPrompt
             result = company with
             {
                 Name = name.Text.Trim(), TaxCode = tax.Text.Trim(),
-                Fuel = fuel.IsChecked == true ? new(stock.Text.Trim(), stockAccount.Text.Trim(), expenseAccount.Text.Trim()) : null
+                Fuel = fuel.IsChecked == true ? new(rule.Stock, stockAccount.Text.Trim(), expenseAccount.Text.Trim()) : null
             };
             dialog.DialogResult = true;
         };
