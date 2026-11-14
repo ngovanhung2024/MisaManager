@@ -426,6 +426,23 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Single(Events(misa), entry => entry.Contains(" quantity <- "));
     }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true, QuantityDecimals = 2 });
 
+    // Report 0.2.199, HĐ 441: 26,096 lít at 2 số lẻ shows 26,10 — the same number as a 1-decimal rounding. It was taken for
+    // a 1-decimal setting and the voucher was Bỏ; it is MISA's 2-decimal rounding and is saved.
+    [Fact]
+    public Task QuantityRoundedToTwoDecimalsEndingInZeroIsSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "441", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 26.096m, 17_740.7407m, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal((26.10m, invoice.Lines[0].AmountBeforeTax!.Value), (line.Quantity, line.Amount));
+        Assert.Single(Events(misa), entry => entry.Contains(" quantity <- "));
+    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true, QuantityDecimals = 2 });
+
     // A coarser rounding (1 số lẻ: 17,487 → 17,5) is not accepted: the row stops with the setting to change, nothing is saved.
     [Fact]
     public Task QuantityMisaRoundsCoarselyIsReportedWithTheDecimalSetting() => WithFakeAsync(async (misa, harness, token) =>

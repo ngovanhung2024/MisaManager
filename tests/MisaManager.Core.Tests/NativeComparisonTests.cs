@@ -82,6 +82,10 @@ public sealed class NativeComparisonTests
     [InlineData("17.487", "17,487", null)]
     [InlineData("17.487", "17,48", null)]
     [InlineData("20", "20,00", null)]
+    // Report 0.2.199, HĐ 441: 26,096 at 2 số lẻ is 26,10, which also equals the 1-decimal rounding; the finer one counts.
+    [InlineData("26.096", "26,10", 2)]
+    [InlineData("26.096", "26,1", 2)]
+    [InlineData("26.046", "26,0", 1)]
     public void QuantityRoundedByMisaNamesItsDecimals(string source, string actual, int? decimals)
         => Assert.Equal(decimals, NativeComparison.RoundedDecimals(
             decimal.Parse(source, CultureInfo.InvariantCulture), actual, CultureInfo.GetCultureInfo("vi-VN")));
@@ -96,6 +100,7 @@ public sealed class NativeComparisonTests
     [InlineData("17.487", "17,48", null)]
     [InlineData("20", "20,00", "20")]
     [InlineData("20", "20,01", null)]
+    [InlineData("26.096", "26,10", "26.1")]
     public void QuantityAtMisaPrecisionAcceptsOnlyTwoOrMoreDecimals(string source, string actual, string? held)
         => Assert.Equal(held is null ? null : decimal.Parse(held, CultureInfo.InvariantCulture), NativeComparison.QuantityAtMisaPrecision(
             decimal.Parse(source, CultureInfo.InvariantCulture), actual, CultureInfo.GetCultureInfo("vi-VN")));
