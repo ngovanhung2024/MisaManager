@@ -360,6 +360,23 @@ public sealed class PurchaseVoucherTests : UiTest
             < Array.FindIndex(events, line => line.Contains("field customer <-")), "Loại chứng từ phải đổi trước khi nhập nhà cung cấp.");
     }, Purchase with { AdditionalItems = FuelItems, VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
 
+    // Report 0.2.197, HĐ 392: the unowned form was retitled "… nhập kho …" only after the readback had started; the guard
+    // took the new title for another window and the voucher was Bỏ. The retitle naming the chosen type is the same form.
+    [Fact]
+    public Task VoucherTypeRetitlingTheUnownedFormLaterIsTheSameForm() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "392", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 57.535m, 16_898.1481m, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("stock", Assert.Single(misa.State().Vouchers).VoucherType);
+        Assert.Single(Events(misa), line => line.Contains("field voucher_type <- "));
+    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true, VoucherTypeRetitleMilliseconds = 400,
+        VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho", QuantityDecimals = 2 });
+
     [Fact]
     public Task OrdinaryPurchaseOnStockTypeSendsNoVoucherTypeInput() => WithFakeAsync(async (misa, harness, token) =>
     {

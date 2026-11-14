@@ -440,6 +440,13 @@ public sealed class VoucherWindow : Window, IGridSource
             ("Ngày chứng từ", Field("voucher_date", FieldId("voucher_date"))),
             ("Số chứng từ", Field("voucher_number", FieldId("voucher_number"))))));
 
+    // R20 renames the form after its new type only once the re-layout is done (report 0.2.197, HĐ 392).
+    private async void RetitleLater()
+    {
+        await Task.Delay(scenario.VoucherTypeRetitleMilliseconds);
+        Title = VoucherTitle();
+    }
+
     private void SetVoucherType(string text)
     {
         var value = text.Trim();
@@ -451,7 +458,8 @@ public sealed class VoucherWindow : Window, IGridSource
             return;
         }
         expense = toExpense;
-        Title = VoucherTitle();
+        if (scenario.VoucherTypeRetitleMilliseconds > 0 && !rememberingVoucherType) RetitleLater();
+        else Title = VoucherTitle();
         stockVoucher.Visibility = expense ? Visibility.Collapsed : Visibility.Visible;
         header["voucher_number"] = store.NextVoucherNumber(expense ? "MH0" : "NK0");
         var receipt = (TabItem)headerTabs.Items[0];

@@ -323,6 +323,11 @@ public sealed partial class NativeInputService
         => dispatcher.RunAsync(() =>
         {
             RecordQuery();
+            // R20 renames a purchase form after its type once the re-layout ends, after the post-click frame was taken
+            // (report 0.2.197, HĐ 392). Only a title naming the chosen type, with the same company suffix, is that form.
+            var title = root!.Properties.Name.ValueOrDefault;
+            if (title is not null && title != frame.TabIdentity && RetitledTo(frame.TabIdentity, title, expected))
+                frame = frame with { TabIdentity = title };
             GuardWorkflow(frame);
             var combo = Resolve(selector);
             var seen = new List<(string Value, string Source)>();
@@ -352,6 +357,12 @@ public sealed partial class NativeInputService
         var label = TextKey.Canonical(OptionNumber().Replace(option, ""));
         var text = TextKey.Canonical(title);
         return label.Length > 0 && (text == label || text.StartsWith(label + " ", StringComparison.Ordinal));
+    }
+
+    private static bool RetitledTo(string before, string after, string option)
+    {
+        static string Suffix(string title) => title.IndexOf(" - ", StringComparison.Ordinal) is var at and >= 0 ? title[at..] : "";
+        return TitleNames(after, option) && !TitleNames(before, option) && Suffix(before) == Suffix(after);
     }
 
     [System.Text.RegularExpressions.GeneratedRegex(@"^\s*\d+\.\s*")]
