@@ -360,22 +360,25 @@ public sealed class PurchaseVoucherTests : UiTest
             < Array.FindIndex(events, line => line.Contains("field customer <-")), "Loại chứng từ phải đổi trước khi nhập nhà cung cấp.");
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
 
-    // Report 0.2.200, HĐ 18523: diesel at "KKKNT" (no VAT). R20's rate cell gives its data value through ValuePattern
-    // (a code for KKKNT) and the label only as DisplayText; the readback must use the label, as for ĐVT.
+    // Reports 0.2.200/0.2.201, HĐ 18523/18534: diesel at "KKKNT" (no VAT). R20's rate cell gives its data value through
+    // ValuePattern and the label only as DisplayText, and a typed "KKKNT" leaves it at 0%: the option is picked from the
+    // list opened by the cell's arrow, on a voucher form opened without owner.
     [Fact]
-    public Task DieselWithoutDeclaredVatIsReadBackByItsLabel() => WithFakeAsync(async (misa, harness, token) =>
+    public Task DieselWithoutDeclaredVatIsPickedFromTheRateList() => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
-        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18523", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 61.647m, 35_690m, "KKKNT"));
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
 
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.True(result.Outcome == "saved", Describe(result));
         var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
         Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
-        Assert.Single(Events(misa), entry => entry.Contains(" tax_rate <- "));
-    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2 });
+        var rateEvent = Assert.Single(Events(misa), entry => entry.Contains(" tax_rate <- "));
+        Assert.Contains("'KKKNT' by None", rateEvent);
+    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2,
+        EditorUnowned = true });
 
     // Report 0.2.197, HĐ 392: the unowned form was retitled "… nhập kho …" only after the readback had started; the guard
     // took the new title for another window and the voucher was Bỏ. The retitle naming the chosen type is the same form.

@@ -1051,8 +1051,13 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 continue;
             StopPoint();
             Entering("line:" + line.LineId + ":tax_rate");
-            await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"),
-                tax, tax, NativeValueKind.TaxRate, profile.Culture, token), token);
+            // Typed "KKKNT"/"KCT" is not taken by R20, which keeps "0%" (report 0.2.201, HĐ 18534): pick it from the list.
+            if (taxKey is not null && !decimal.TryParse(taxKey, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
+                await Steady(async () => await input.SelectCellOptionAsync(await input.CaptureAsync(token),
+                    CellTarget(row, codes[row], "tax_rate"), tax, profile.Culture, token), token);
+            else
+                await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"),
+                    tax, tax, NativeValueKind.TaxRate, profile.Culture, token), token);
         }
         if (profile.IsPurchase) await EnterPurchaseTaxAmountsAsync(context, codes, token);
     }

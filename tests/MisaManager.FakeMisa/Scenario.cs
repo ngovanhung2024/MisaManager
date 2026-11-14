@@ -74,7 +74,10 @@ public sealed record Scenario
     public string VoucherTypeRemembered { get; init; } = "";
     /// <summary>After a voucher type is picked, the form keeps its old title this long (report 0.2.197, HĐ 392).</summary>
     public int VoucherTypeRetitleMilliseconds { get; init; }
-    /// <summary>"% thuế GTGT" cells give their data value through ValuePattern, the label through DisplayText (report 0.2.200).</summary>
+    /// <summary>
+    /// R20 "% thuế GTGT" cells (reports 0.2.200/0.2.201): data value through ValuePattern, label through DisplayText, and a
+    /// typed KCT/KKKNT is not taken (the cell keeps 0%); the option must be picked from the list.
+    /// </summary>
     public bool TaxRateValueIsKey { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;

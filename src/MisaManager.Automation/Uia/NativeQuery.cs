@@ -134,8 +134,10 @@ public sealed partial class NativeInputService
     // R20 unit cells keep their value-list items in the UIA tree while the list is closed (or not drawn yet), with
     // bounds over the next grid row (report 0.2.172, HĐ 151/164). Clicking one clicked that row instead, and MISA
     // put the item on a second line. Only items whose point is drawn outside the grid's own window are options.
-    private AutomationElement[] RegisteredOptions(AutomationElement host, Rectangle cellBounds, nint gridWindow)
-        => Snapshots(host, Live(automation.ConditionFactory.ByControlType(ControlType.ListItem), identity!.ProcessId))
+    // The list belongs to the voucher form, which R20 may open without owner (report 0.2.187): search all MISA windows.
+    private AutomationElement[] RegisteredOptions(Rectangle cellBounds, nint gridWindow)
+        => ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
+                Live(automation.ConditionFactory.ByControlType(ControlType.ListItem), identity.ProcessId))
             .Where(item => item.HasArea
                 && item.Bounds.Left < cellBounds.Right && item.Bounds.Right > cellBounds.Left
                 && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420

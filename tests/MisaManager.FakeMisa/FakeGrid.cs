@@ -468,7 +468,7 @@ internal sealed class R20UnitCombo : ComboBox
         }
     }
 
-    private sealed class DropDownButtonPeer(ToggleButton toggle, ComboBox combo) : FrameworkElementAutomationPeer(toggle), IInvokeProvider
+    internal sealed class DropDownButtonPeer(ToggleButton toggle, ComboBox combo) : FrameworkElementAutomationPeer(toggle), IInvokeProvider
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Button;
         protected override string GetAutomationIdCore() => "[Editor] dropdown button";

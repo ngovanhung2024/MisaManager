@@ -733,9 +733,8 @@ public sealed partial class NativeInputService
             }
             catch (Exception error)
             {
-                throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở danh sách ĐVT.", true, error);
+                throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở danh sách của ô.", true, error);
             }
-            var host = automation.FromHandle(identity!.WindowHandle);
             var gridWindow = KeyboardHandle(target);
             AutomationElement[] registered = [];
             AutomationElement[] options = [];
@@ -744,7 +743,7 @@ public sealed partial class NativeInputService
             for (var attempt = 0; attempt < 40; attempt++)
             {
                 token.ThrowIfCancellationRequested();
-                registered = RegisteredOptions(host, cellBounds, gridWindow);
+                registered = RegisteredOptions(cellBounds, gridWindow);
                 // R20 can expose the same ValueList row more than once through
                 // UIA, and can populate the list in more than one pass. Read
                 // each name once, normalize invisible formatting, then keep a
@@ -782,7 +781,7 @@ public sealed partial class NativeInputService
                 for (var attempt = 0; attempt < 24; attempt++)
                 {
                     token.ThrowIfCancellationRequested();
-                    registered = RegisteredOptions(host, cellBounds, gridWindow);
+                    registered = RegisteredOptions(cellBounds, gridWindow);
                     if (registered.Length == 0) break;
 
                     // R20 can leave the Infragistics ValueList focused after
@@ -828,13 +827,13 @@ public sealed partial class NativeInputService
                 return Capture();
             }
             if (options.Length != 1)
-                throw new AutomationException("GRID_OPTION_AMBIGUOUS", $"Không xác định duy nhất ĐVT '{expected}'.");
+                throw new AutomationException("GRID_OPTION_AMBIGUOUS", $"Không xác định duy nhất mục '{expected}' trong danh sách.");
             try
             {
                 MarkWorkflowInput();
                 var optionBounds = options[0].BoundingRectangle;
                 if (optionBounds.Width <= 0 || optionBounds.Height <= 0)
-                    throw new AutomationException("BOUNDS_UNREADABLE", $"ĐVT '{expected}' không có bounds native.");
+                    throw new AutomationException("BOUNDS_UNREADABLE", $"Mục '{expected}' không có bounds native.");
                 // The list can close between the poll and the click; never click through it onto the grid.
                 NativeKeyboard.ClickOpenList(optionBounds.X + optionBounds.Width / 2,
                     optionBounds.Y + optionBounds.Height / 2, identity!.ProcessId, hit => OutsideGrid(hit, gridWindow));
@@ -842,7 +841,7 @@ public sealed partial class NativeInputService
             }
             catch (Exception error)
             {
-                throw new AutomationException("INPUT_UNCERTAIN", $"Không xác nhận được chọn ĐVT '{expected}'.", true, error);
+                throw new AutomationException("INPUT_UNCERTAIN", $"Không xác nhận được chọn '{expected}' trong danh sách.", true, error);
             }
             var fresh = Capture();
             return fresh;

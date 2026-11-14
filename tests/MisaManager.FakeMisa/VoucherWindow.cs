@@ -646,7 +646,9 @@ public sealed class VoucherWindow : Window, IGridSource
                     if (scenario.ScrollSidewaysAfterAmount) grid.ScrollHorizontally(150);
                     break;
                 case "tax_rate" when Ui.TaxRate(text) is { } rate:
-                    line.TaxRate = rate;
+                    // R20 does not take a typed KCT/KKKNT: the cell keeps 0% (report 0.2.201, HĐ 18534); only the list sets it.
+                    line.TaxRate = scenario.TaxRateValueIsKey && e.Trigger != System.Windows.Input.Key.None && rate is "KCT" or "KKKNT"
+                        ? "0%" : rate;
                     Recalculate(line);
                     break;
                 case "tax_amount" when Ui.TryNumber(text, out var tax): line.TaxAmount = tax; break;
