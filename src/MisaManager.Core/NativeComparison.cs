@@ -151,6 +151,19 @@ public static class NativeComparison
         return null;
     }
 
+    /// <summary>Fewest quantity decimals whose MISA rounding is accepted (HĐ 205: 17,487 lít booked as 17,49).</summary>
+    public const int MinimumQuantityDecimals = 2;
+
+    /// <summary>
+    /// The quantity MISA holds when <paramref name="actual"/> is the source itself or its rounding to the company's "số lẻ"
+    /// (at least <see cref="MinimumQuantityDecimals"/>); null otherwise. Callers still require the amount to be exact.
+    /// </summary>
+    public static decimal? QuantityAtMisaPrecision(decimal source, string? actual, CultureInfo culture)
+    {
+        if (actual is null || !TryNumber(actual, culture, out var shown)) return null;
+        return shown == source || RoundedDecimals(source, actual, culture) >= MinimumQuantityDecimals ? shown : null;
+    }
+
     /// <summary>
     /// Parses a number using the display culture first, then the other common separator
     /// convention when the text is not valid in the first one. Currency marks are ignored.

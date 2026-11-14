@@ -86,6 +86,20 @@ public sealed class NativeComparisonTests
         => Assert.Equal(decimals, NativeComparison.RoundedDecimals(
             decimal.Parse(source, CultureInfo.InvariantCulture), actual, CultureInfo.GetCultureInfo("vi-VN")));
 
+    // Report 0.2.196, HĐ 205: MISA books 17,49 for 17,487 at 2 số lẻ; coarser roundings and other values are not accepted.
+    [Theory]
+    [InlineData("17.487", "17,487", "17.487")]
+    [InlineData("17.487", "17,49", "17.49")]
+    [InlineData("17.487", "17,490", "17.49")]
+    [InlineData("17.487", "17,5", null)]
+    [InlineData("17.487", "17", null)]
+    [InlineData("17.487", "17,48", null)]
+    [InlineData("20", "20,00", "20")]
+    [InlineData("20", "20,01", null)]
+    public void QuantityAtMisaPrecisionAcceptsOnlyTwoOrMoreDecimals(string source, string actual, string? held)
+        => Assert.Equal(held is null ? null : decimal.Parse(held, CultureInfo.InvariantCulture), NativeComparison.QuantityAtMisaPrecision(
+            decimal.Parse(source, CultureInfo.InvariantCulture), actual, CultureInfo.GetCultureInfo("vi-VN")));
+
     [Theory]
     [InlineData("1234567", "1.234.567")]
     [InlineData("1234567.5", "1.234.567,5")]

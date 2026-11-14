@@ -392,10 +392,26 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Contains(Events(misa), line => line.Contains("prompt: Khoản mục chi phí → Yes"));
     }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true });
 
-    // Report 0.2.195, HĐ 205: 17,487 lít; the company data keeps 2 số lẻ for Số lượng, MISA showed 17,49 and the row readback
-    // failed after 10 s with no value named. The tool must neither accept the rounded quantity nor type it again.
+    // Report 0.2.196, HĐ 205: 17,487 lít; the company data keeps 2 số lẻ for Số lượng and MISA books 17,49 with the exact
+    // Thành tiền. That rounding is accepted (unit price checked against 17,49); Số lượng is typed once.
     [Fact]
-    public Task QuantityMisaRoundsIsReportedWithTheDecimalSetting() => WithFakeAsync(async (misa, harness, token) =>
+    public Task QuantityMisaRoundsToItsDecimalsIsSaved() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "XANG_95", "Xăng RON 95 Mức 3", "Lít", 17.487m, 17_740.7407m, "10%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal((17.49m, invoice.Lines[0].AmountBeforeTax!.Value), (line.Quantity, line.Amount));
+        Assert.Single(Events(misa), entry => entry.Contains(" quantity <- "));
+    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true, QuantityDecimals = 2 });
+
+    // A coarser rounding (1 số lẻ: 17,487 → 17,5) is not accepted: the row stops with the setting to change, nothing is saved.
+    [Fact]
+    public Task QuantityMisaRoundsCoarselyIsReportedWithTheDecimalSetting() => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
@@ -406,10 +422,10 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.NotEqual("saved", result.Outcome);
         Assert.Empty(misa.State().Vouchers);
         Assert.Equal("ROW_INPUT_UNCERTAIN", result.Context.Snapshot.LastErrorCode);
-        Assert.Contains("làm tròn số lượng 17,487 thành '17,490'", result.Context.Snapshot.LastMessage);
-        Assert.Contains("2 chữ số lẻ", result.Context.Snapshot.LastMessage);
-        Assert.Single(Events(misa), line => line.Contains(" quantity <- "));
-    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true, QuantityDecimals = 2 });
+        Assert.Contains("làm tròn số lượng 17,487 thành '17,500'", result.Context.Snapshot.LastMessage);
+        Assert.Contains("1 chữ số lẻ", result.Context.Snapshot.LastMessage);
+        Assert.Single(Events(misa), entry => entry.Contains(" quantity <- "));
+    }, Purchase with { AdditionalItems = FuelItems, EditorUnowned = true, QuantityDecimals = 1 });
 
     [Fact]
     public Task DialogOverAnUnownedVoucherFormIsReportedNotTypedThrough() => WithFakeAsync(async (misa, harness, token) =>

@@ -259,11 +259,15 @@ public sealed partial class NativeWorkflowGateway
             if (code is { Length: > 0 }) Line("code", code, Actual(row.Row, "code"), string.Equals(code, Actual(row.Row, "code"), StringComparison.OrdinalIgnoreCase));
             Line("name", line.Name, Actual(row.Row, "name"), CatalogNameMatch(line.Name, Actual(row.Row, "name")));
             Line("unit", tons ? "T\u1ea5n" : line.Unit, unit, tons || Match(line.Unit, unit, NativeValueKind.Text));
-            Line("quantity", Number(quantity), Actual(row.Row, "quantity"), Match(Number(quantity), Actual(row.Row, "quantity"), NativeValueKind.Decimal));
+            // A quantity MISA rounded to its "số lẻ" is what the tool enters (HĐ 205); MISA prices the line from it.
+            var nativeQuantity = tons || quantity is null ? null
+                : NativeComparison.QuantityAtMisaPrecision(quantity.Value, Actual(row.Row, "quantity"), Culture);
+            Line("quantity", Number(quantity), Actual(row.Row, "quantity"),
+                nativeQuantity is not null || Match(Number(quantity), Actual(row.Row, "quantity"), NativeValueKind.Decimal));
             Line("amount", Number(line.AmountBeforeTax), Actual(row.Row, "amount"), Match(Number(line.AmountBeforeTax), Actual(row.Row, "amount"), NativeValueKind.Decimal));
             var price = Actual(row.Row, "unit_price");
             Line("unit_price", Number(quantity is > 0 && line.AmountBeforeTax is { } amount ? decimal.Round(amount / quantity.Value, 2, MidpointRounding.AwayFromZero) : line.UnitPrice),
-                price, quantity is > 0 && line.AmountBeforeTax is { } total && NativeComparison.MatchesDerivedUnitPrice(quantity.Value, total, price, Culture)
+                price, quantity is > 0 && line.AmountBeforeTax is { } total && NativeComparison.MatchesDerivedUnitPrice(nativeQuantity ?? quantity.Value, total, price, Culture)
                     || Match(Number(line.UnitPrice), price, NativeValueKind.Decimal));
             Line("tax_rate", line.TaxRate, Actual(taxRow, "tax_rate"), Match(line.TaxRate, Actual(taxRow, "tax_rate"), NativeValueKind.TaxRate));
             Line("tax_amount", Number(line.TaxAmount), Actual(taxRow, "tax_amount"), NativeComparison.MatchesTaxRounding(Number(line.TaxAmount), Actual(taxRow, "tax_amount"), Culture));

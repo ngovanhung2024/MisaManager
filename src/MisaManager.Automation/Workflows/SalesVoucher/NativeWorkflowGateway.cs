@@ -1018,7 +1018,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             var verifiedRow = await Steady(async () => await input.WriteRowAsync(await input.CaptureAsync(token),
                 new NativeCell(profile.ItemGridId, row, profile.Columns["code"], profile.Columns["code"], code),
                 writes, [profile.Columns["quantity"], profile.Columns["amount"]],
-                values => Match(Decimal(expected.Quantity), values.Values[profile.Columns["quantity"]].Value, NativeValueKind.Decimal)
+                values => (converted
+                        ? Match(Decimal(expected.Quantity), values.Values[profile.Columns["quantity"]].Value, NativeValueKind.Decimal)
+                        : NativeComparison.QuantityAtMisaPrecision(expected.Quantity, values.Values[profile.Columns["quantity"]].Value, Culture) is not null)
                     && Match(Decimal(line.AmountBeforeTax), values.Values[profile.Columns["amount"]].Value, NativeValueKind.Decimal),
                 token, column => Entering("line:" + line.LineId + ":"
                     + profile.Columns.Single(pair => pair.Value == column).Key),
@@ -1229,6 +1231,10 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 if (!taxTab && profile.IsPurchase)
                     expected = [.. expected.Where(item => item.Item1 != "debit_account"),
                         .. PostingCells().Select(cell => (cell.Key, cell.Value, NativeValueKind.Exact))];
+                // A quantity MISA rounded to its "số lẻ" (unconverted lines only) also prices the line in MISA.
+                var convertedLine = !string.IsNullOrWhiteSpace(context.NativeValues?.GetValueOrDefault("conversion:" + line.LineId));
+                var nativeQuantity = taxTab || convertedLine ? null : NativeComparison.QuantityAtMisaPrecision(
+                    expectedLine.Quantity, native.Row?.GetValueOrDefault(profile.Columns["quantity"]), Culture);
                 foreach (var (key, wanted, kind) in expected)
                 {
                     var actual = native.Row?.GetValueOrDefault(profile.Columns[key]);
@@ -1238,8 +1244,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                     var matched = key switch
                     {
                         "name" => CatalogNameMatch(wanted, actual),
+                        "quantity" when nativeQuantity is not null => true,
                         // MISA derives the price from amount / quantity at its own display scale.
-                        "unit_price" => NativeComparison.MatchesDerivedUnitPrice(expectedLine.Quantity, line.AmountBeforeTax!.Value, actual, Culture),
+                        "unit_price" => NativeComparison.MatchesDerivedUnitPrice(nativeQuantity ?? expectedLine.Quantity, line.AmountBeforeTax!.Value, actual, Culture),
                         // MISA rounds VAT per line itself; up to 2 đồng off the e-invoice is accepted (Cất's prompt is answered Có).
                         "tax_amount" => NativeComparison.MatchesTaxRounding(wanted, actual, Culture),
                         _ => Match(wanted, actual, kind)
@@ -1876,8 +1883,8 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
         => actual is not null && ItemCatalogStore.SameItemName(expected, actual);
     private static string Decimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? throw new InvalidDataException("Thiếu số nguồn.");
 
-    // Report 0.2.195, HĐ 205 (17,487 lít): the row mismatch named no value. A quantity MISA rounds to its "số lẻ" setting
-    // cannot be entered as on the invoice, so the user is told which setting to change; the tool never accepts the rounding.
+    // Report 0.2.195, HĐ 205 (17,487 lít): the row mismatch named no value. A rounding to at least 2 số lẻ is accepted by the
+    // row check; a coarser one is reported with the setting to change, and the tool never retypes the value.
     private string RowMismatch(decimal quantity, decimal amount, string? nativeQuantity, string? nativeAmount)
     {
         var shown = $"MISA hiện Số lượng '{nativeQuantity}', Thành tiền '{nativeAmount}'; hóa đơn: Số lượng {quantity.ToString(Culture)}, "
