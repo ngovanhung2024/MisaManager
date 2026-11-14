@@ -193,7 +193,8 @@ public sealed partial class NativeInputService : IAsyncDisposable
                     throw new AutomationException("INPUT_UNCERTAIN", "Discard confirmation timed out; do not repeat it.", true);
                 return;
             }
-            if (Environment.TickCount64 >= deadline) return;
+            if (Environment.TickCount64 >= deadline || !PInvoke.IsWindow((HWND)editorHandle)
+                || !PInvoke.IsWindowVisible((HWND)editorHandle)) return;
             if (token.WaitHandle.WaitOne(50)) token.ThrowIfCancellationRequested();
         }
     }

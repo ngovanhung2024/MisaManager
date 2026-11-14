@@ -20,12 +20,28 @@ internal sealed class KeyedTaxRateCombo : ComboBox
 {
     private bool editing;
 
-    public KeyedTaxRateCombo()
+    public KeyedTaxRateCombo(bool opensOnClick = false)
     {
         GotKeyboardFocus += (_, _) => editing = true;
         LostKeyboardFocus += (_, _) => editing = false;
         // Tab/Enter commit the cell and leave edit mode, as R20 does.
         PreviewKeyDown += (_, e) => { if (e.Key is Key.Tab or Key.Enter) editing = false; };
+        if (!opensOnClick) return;
+        // R20 drop-down-list cell (report 0.2.202, HĐ 18534): a click on the cell drops the list and keeps it dropped;
+        // only the arrow toggles it.
+        PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            for (var at = e.OriginalSource as DependencyObject; at is not null && at != this;
+                 at = at is Visual ? VisualTreeHelper.GetParent(at) : LogicalTreeHelper.GetParent(at))
+                if (at is ToggleButton or ComboBoxItem) return;
+            if (IsDropDownOpen) e.Handled = true;
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (IsDropDownOpen) return;
+                IsDropDownOpen = true;
+                FakeLog.Write("tax_rate list dropped by the cell click");
+            });
+        };
     }
 
     private static string DataValue(string text) => text.Trim().ToUpperInvariant() switch

@@ -83,6 +83,7 @@ public sealed class FakeGrid : Border
     public int UnitListOpenDelayMilliseconds { get; set; }
     /// <summary>"% thuế GTGT" cells answer ValuePattern with the list's data value (KKKNT → "-2"); see <see cref="KeyedTaxRateCombo"/>.</summary>
     public bool TaxRateValueIsKey { get; set; }
+    public bool TaxRateListOpensOnClick { get; set; }
     /// <summary>
     /// R20 (VPS 0.2.163): a "DataRowCount" Tree region holding disabled copies of the data rows whose cells have no
     /// area, so nothing lies under the headers. Rebuilt with the rows while set.
@@ -584,7 +585,7 @@ internal sealed class GridRow : StackPanel
     private ComboBox CreateCombo(GridColumn column)
     {
         var combo = grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
-            : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo() : new ComboBox();
+            : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick) : new ComboBox();
         combo.IsEditable = true;
         combo.FontSize = 11;
         combo.ItemsSource = column.Options ?? [];

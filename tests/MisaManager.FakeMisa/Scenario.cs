@@ -79,6 +79,13 @@ public sealed record Scenario
     /// typed KCT/KKKNT is not taken (the cell keeps 0%); the option must be picked from the list.
     /// </summary>
     public bool TaxRateValueIsKey { get; init; }
+    /// <summary>
+    /// Report 0.2.202, HĐ 18534: the R20 "% thuế GTGT" drop-down-list cell drops its list on a click on the cell itself
+    /// (a further click on the cell keeps it open); the arrow then toggles the list closed.
+    /// </summary>
+    public bool TaxRateListOpensOnClick { get; init; }
+    /// <summary>"Dữ liệu đã bị thay đổi…" appears this long after Bỏ (a busy R20, report 0.2.202, HĐ 18534).</summary>
+    public int DirtyPromptDelayMilliseconds { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>

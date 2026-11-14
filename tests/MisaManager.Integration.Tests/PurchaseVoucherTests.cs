@@ -380,6 +380,42 @@ public sealed class PurchaseVoucherTests : UiTest
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2,
         EditorUnowned = true });
 
+    // Report 0.2.202, HĐ 18534: R20's rate cell dropped its list on the cell click and the arrow click then closed it, so
+    // KKKNT was never drawn (GRID_OPTION_AMBIGUOUS). An already dropped list is used as is.
+    [Fact]
+    public Task RateListDroppedByTheCellClickIsNotToggledClosed() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        Assert.Contains(Events(misa), entry => entry.Contains("tax_rate list dropped by the cell click"));
+        Assert.Contains("'KKKNT' by None", Assert.Single(Events(misa), entry => entry.Contains(" tax_rate <- ")));
+    }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2,
+        EditorUnowned = true, TaxRateListOpensOnClick = true });
+
+    // Report 0.2.202, HĐ 18534: "Dữ liệu đã bị thay đổi…" came after the 1.2 s Bỏ waited for it and the unowned form stayed
+    // open (EDITOR_STILL_OPEN). A late prompt is still answered Không, once.
+    [Fact]
+    public Task LateDirtyPromptOnAnUnownedFormIsAnsweredAndTheVoucherIsBo() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.BuildPurchase(TempDirectory(misa), "18535", Invoices.Supplier,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 22, 10_000, "5%"),
+            Invoices.Line(1, "HH_07", "Hesman 60WG 18g", "Gói", 38, 16_000, "8%"));
+
+        var result = await harness.RunAsync(invoice, misa, token, discardOnFailure: true);
+
+        Assert.True(result.Outcome == WorkflowRunner.ErrorDiscardedOutcome, Describe(result));
+        Assert.Equal(WorkflowStatus.Discarded, result.Context.Snapshot.Status);
+        Assert.Empty(misa.State().Vouchers);
+        Assert.Contains(Events(misa), entry => entry.Contains("Đóng: hỏi cất sau"));
+    }, Purchase with { QuantityIgnoredRow = 1, EditorUnowned = true, DirtyPromptDelayMilliseconds = 3000 });
+
     // Report 0.2.197, HĐ 392: the unowned form was retitled "… nhập kho …" only after the readback had started; the guard
     // took the new title for another window and the voucher was Bỏ. The retitle naming the chosen type is the same form.
     [Fact]

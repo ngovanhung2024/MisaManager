@@ -448,7 +448,9 @@ public sealed partial class NativeInputService
                 // Closing a voucher/dialog invalidates its UIA root before readback can run.
                 if (leavesScope)
                 {
-                    if (discardChanges) DismissDirtyVoucherPrompt(editorHandle, token, waitMilliseconds: 1200);
+                    // Report 0.2.202, HĐ 18534: "Dữ liệu đã bị thay đổi…" was still open after Bỏ; a busy R20 can show it later than
+                    // the 1.2 s this used to wait. The wait ends as soon as the editor closes without a prompt.
+                    if (discardChanges) DismissDirtyVoucherPrompt(editorHandle, token, waitMilliseconds: 10000);
                     root = automation.FromHandle(identity!.WindowHandle);
                 }
                 return new Readback("sent_unverified", null, "UIA3.Invoke", DateTimeOffset.UtcNow, null, Capture());
@@ -707,37 +709,49 @@ public sealed partial class NativeInputService
             target = ResolveCell(cell, preserveComboBox: true);
             editor = WidestEditor(target) ?? target;
             FocusTarget(editor, activateGridCell: true, token: token);
-            AutomationElement[] dropdowns = [];
-            for (var attempt = 0; attempt < 12 && dropdowns.Length != 1; attempt++)
-            {
-                target = ResolveCell(cell, preserveComboBox: true);
-                var bounds = target.BoundingRectangle;
-                dropdowns = Snapshots(target, Live(automation.ConditionFactory.ByControlType(ControlType.Button), identity!.ProcessId))
-                    .Where(button => button.HasArea && button.Bounds.Y <= bounds.Bottom && button.Bounds.Bottom >= bounds.Y
-                        && (button.AutomationId == "[Editor] dropdown button" || button.Bounds.Right >= bounds.Right - 8))
-                    .Select(button => button.Element)
-                    .Where(button => button.Patterns.Invoke.IsSupported)
-                    .ToArray();
-                if (dropdowns.Length != 1) Thread.Sleep(50);
-            }
-            if (dropdowns.Length != 1)
-                throw new AutomationException("GRID_DROPDOWN_MISSING", "Chưa xác định duy nhất mũi tên của ô danh sách.");
-            token.ThrowIfCancellationRequested();
-            try
-            {
-                MarkWorkflowInput();
-                var arrowBounds = dropdowns[0].BoundingRectangle;
-                NativeKeyboard.Click(arrowBounds.X + arrowBounds.Width / 2, arrowBounds.Y + arrowBounds.Height / 2,
-                    identity!.WindowHandle, identity.ProcessId, KeyboardHandle(dropdowns[0]));
-                epoch++;
-            }
-            catch (Exception error)
-            {
-                throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở danh sách của ô.", true, error);
-            }
             var gridWindow = KeyboardHandle(target);
             AutomationElement[] registered = [];
             AutomationElement[] options = [];
+            void ClickArrow()
+            {
+                AutomationElement[] dropdowns = [];
+                for (var attempt = 0; attempt < 12 && dropdowns.Length != 1; attempt++)
+                {
+                    target = ResolveCell(cell, preserveComboBox: true);
+                    var bounds = target.BoundingRectangle;
+                    dropdowns = Snapshots(target, Live(automation.ConditionFactory.ByControlType(ControlType.Button), identity!.ProcessId))
+                        .Where(button => button.HasArea && button.Bounds.Y <= bounds.Bottom && button.Bounds.Bottom >= bounds.Y
+                            && (button.AutomationId == "[Editor] dropdown button" || button.Bounds.Right >= bounds.Right - 8))
+                        .Select(button => button.Element)
+                        .Where(button => button.Patterns.Invoke.IsSupported)
+                        .ToArray();
+                    if (dropdowns.Length != 1) Thread.Sleep(50);
+                }
+                if (dropdowns.Length != 1)
+                    throw new AutomationException("GRID_DROPDOWN_MISSING", "Chưa xác định duy nhất mũi tên của ô danh sách.");
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    MarkWorkflowInput();
+                    var arrowBounds = dropdowns[0].BoundingRectangle;
+                    NativeKeyboard.Click(arrowBounds.X + arrowBounds.Width / 2, arrowBounds.Y + arrowBounds.Height / 2,
+                        identity!.WindowHandle, identity.ProcessId, KeyboardHandle(dropdowns[0]));
+                    epoch++;
+                }
+                catch (Exception error)
+                {
+                    throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở danh sách của ô.", true, error);
+                }
+            }
+            // Report 0.2.202, HĐ 18534: an R20 drop-down-list cell (% thuế GTGT) can drop its list on the cell click
+            // itself; the arrow click then closed it and no option was ever drawn. The arrow is clicked only while no
+            // list is drawn (it toggles the list).
+            for (var attempt = 0; attempt < 4 && registered.Length == 0; attempt++)
+            {
+                if (attempt > 0) Thread.Sleep(50);
+                registered = RegisteredOptions(cellBounds, gridWindow);
+            }
+            if (registered.Length == 0) ClickArrow();
             var expectedName = NormalizeOptionName(expected);
             // A slow MISA can open the list after the first polls; keep waiting while nothing is registered yet.
             for (var attempt = 0; attempt < 40; attempt++)
@@ -826,6 +840,12 @@ public sealed partial class NativeInputService
                         "Registered unit list remained open after Escape and close-toggle.", true);
                 return Capture();
             }
+            if (options.Length == 0 && registered.Length == 0)
+                throw new AutomationException("GRID_DROPDOWN_NOT_OPEN",
+                    $"Danh sách của ô không hiện ra để chọn '{expected}' (mũi tên không mở danh sách hoặc danh sách đã đóng).");
+            if (options.Length == 0)
+                throw new AutomationException("GRID_OPTION_MISSING", $"Danh sách của ô không có mục '{expected}'; MISA hiện: "
+                    + string.Join(", ", registered.Select(item => $"'{item.Properties.Name.ValueOrDefault?.Trim()}'").Distinct()) + ".");
             if (options.Length != 1)
                 throw new AutomationException("GRID_OPTION_AMBIGUOUS", $"Không xác định duy nhất mục '{expected}' trong danh sách.");
             try

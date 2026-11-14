@@ -49,6 +49,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly TabControl headerTabs;
     private bool userSwitchedTabs;
     private bool closeSwallowed;
+    private bool promptDelayed;
     private readonly TextBox subtotal, discount, taxTotal, grandTotal;
     private readonly Button save;
     private readonly Button post;
@@ -171,7 +172,7 @@ public sealed class VoucherWindow : Window, IGridSource
         {
             ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset,
             R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0,
-            TaxRateValueIsKey = scenario.TaxRateValueIsKey
+            TaxRateValueIsKey = scenario.TaxRateValueIsKey, TaxRateListOpensOnClick = scenario.TaxRateListOpensOnClick
         };
         grid.CellCommitted += OnCellCommitted;
         grid.CellClicked += (_, click) =>
@@ -903,6 +904,23 @@ public sealed class VoucherWindow : Window, IGridSource
         }
         if (dirty && !saved)
         {
+            if (scenario.DirtyPromptDelayMilliseconds > 0 && !promptDelayed)
+            {
+                promptDelayed = true;
+                FakeLog.Write($"Đóng: hỏi cất sau {scenario.DirtyPromptDelayMilliseconds} ms");
+                var timer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(scenario.DirtyPromptDelayMilliseconds)
+                };
+                timer.Tick += (_, _) =>
+                {
+                    timer.Stop();
+                    CloseVoucher();
+                    promptDelayed = false;
+                };
+                timer.Start();
+                return;
+            }
             var answer = MessageBox.Show(this, "Dữ liệu đã bị thay đổi. Bạn có muốn cất không?", Prompt,
                 MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
             if (answer == MessageBoxResult.Cancel) return;
