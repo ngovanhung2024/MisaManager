@@ -42,7 +42,8 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     bool R20UnitList = false, int SavePostingMilliseconds = 0, bool QuantityIgnoredInFirstVoucherOnly = false,
     int SaveProofDelayMilliseconds = 0, bool OutOfMemoryOnSave = false, string PurchaseItemStock = "",
     string PurchaseItemStockAccount = "", string ExpenseItemAccount = "632", bool EditorUnowned = false,
-    string VoucherTypeRemembered = "", int QuantityDecimals = -1, int VoucherTypeRetitleMilliseconds = 0);
+    string VoucherTypeRemembered = "", int QuantityDecimals = -1, int VoucherTypeRetitleMilliseconds = 0,
+    bool TaxRateValueIsKey = false);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable

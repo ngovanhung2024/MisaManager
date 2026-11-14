@@ -875,9 +875,14 @@ public sealed partial class NativeInputService
     {
         try
         {
-            return await NativeWait.UntilAsync(read,
-                actual => selected?.Invoke(actual) ?? NativeComparison.Matches(expected, actual.Value, kind, CultureInfo.GetCultureInfo(cultureName)),
-                "READBACK_MISMATCH", "Native readback chưa khớp giá trị vừa nhập.", token);
+            bool Ok(Readback actual) => selected?.Invoke(actual)
+                ?? NativeComparison.Matches(expected, actual.Value, kind, CultureInfo.GetCultureInfo(cultureName));
+            var last = await NativeWait.UntilAsync(read, Ok,
+                "READBACK_MISMATCH", "Native readback chưa khớp giá trị vừa nhập.", token, returnLastMismatch: true);
+            if (Ok(last)) return last;
+            // Name what MISA shows: report 0.2.200 (HĐ 18523, KKKNT) gave no value to work from.
+            throw new AutomationException("READBACK_MISMATCH",
+                $"Native readback chưa khớp giá trị vừa nhập: MISA hiện '{last.Value}' ({last.Source}), cần '{expected}'.", true);
         }
         catch (Exception error) { throw new AutomationException("INPUT_UNCERTAIN", error.Message, true, error); }
     }
@@ -991,7 +996,10 @@ public sealed partial class NativeInputService
 
     private (string Value, string Source) ReadCustomCellText(AutomationElement cell, string column)
     {
-        if (string.Equals(column, UnitColumnCaption, StringComparison.Ordinal))
+        var unit = string.Equals(column, UnitColumnCaption, StringComparison.Ordinal);
+        // Value-list cells give their data value through ValuePattern: a GUID for ĐVT, and for "% thuế GTGT" a number
+        // that reads like the rate except for KCT/KKKNT (report 0.2.200, HĐ 18523). The label shown is in DisplayText.
+        if (unit || string.Equals(column, TaxRateColumnCaption, StringComparison.Ordinal))
         {
             var status = cell.Properties.ItemStatus.ValueOrDefault ?? string.Empty;
             const string marker = "DisplayText^IG_TOKEN_SEPERATOR^";
@@ -1004,6 +1012,9 @@ public sealed partial class NativeInputService
                 if (!string.IsNullOrWhiteSpace(label))
                     return (label, "UIA3.ItemStatus.DisplayText");
             }
+        }
+        if (unit)
+        {
             var selected = cell.FindAllDescendants(automation.ConditionFactory.ByControlType(ControlType.ListItem))
                 .Where(item => item.Patterns.SelectionItem.IsSupported
                     && item.Patterns.SelectionItem.Pattern.IsSelected.Value

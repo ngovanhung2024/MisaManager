@@ -74,6 +74,8 @@ public sealed record Scenario
     public string VoucherTypeRemembered { get; init; } = "";
     /// <summary>After a voucher type is picked, the form keeps its old title this long (report 0.2.197, HĐ 392).</summary>
     public int VoucherTypeRetitleMilliseconds { get; init; }
+    /// <summary>"% thuế GTGT" cells give their data value through ValuePattern, the label through DisplayText (report 0.2.200).</summary>
+    public bool TaxRateValueIsKey { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>

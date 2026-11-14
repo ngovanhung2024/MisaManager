@@ -17,7 +17,8 @@ public static class Invoices
     public static InvoiceLine Line(int index, string code, string name, string unit, decimal quantity, decimal unitPrice, string taxRate)
     {
         var amount = Math.Round(quantity * unitPrice, 0, MidpointRounding.AwayFromZero);
-        var rate = decimal.Parse(taxRate.TrimEnd('%'), CultureInfo.InvariantCulture);
+        // KCT/KKKNT carry no VAT.
+        var rate = decimal.TryParse(taxRate.TrimEnd('%'), NumberStyles.Number, CultureInfo.InvariantCulture, out var percent) ? percent : 0m;
         var tax = Math.Round(amount * rate / 100m, 0, MidpointRounding.AwayFromZero);
         var row = 2 + index;
         var cells = ImmutableDictionary.CreateBuilder<string, SourceCell>();

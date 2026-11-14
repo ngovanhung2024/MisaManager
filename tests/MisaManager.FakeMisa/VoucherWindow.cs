@@ -170,7 +170,8 @@ public sealed class VoucherWindow : Window, IGridSource
         grid = new FakeGrid(profile.GridId(screen, "items"), 230, scenario.GridFooterOutside)
         {
             ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset,
-            R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0
+            R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0,
+            TaxRateValueIsKey = scenario.TaxRateValueIsKey
         };
         grid.CellCommitted += OnCellCommitted;
         grid.CellClicked += (_, click) =>
