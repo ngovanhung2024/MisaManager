@@ -616,8 +616,9 @@ public sealed class VoucherWindow : Window, IGridSource
                     FakeLog.Write($"Bỏ qua số lượng dòng {row + 1}");
                     break;
                 case "quantity" when Ui.TryNumber(text, out var quantity):
-                    line.Quantity = quantity;
-                    line.Amount = Math.Round(quantity * line.UnitPrice, 0, MidpointRounding.AwayFromZero);
+                    line.Quantity = scenario.QuantityDecimals < 0 ? quantity
+                        : Math.Round(quantity, scenario.QuantityDecimals, MidpointRounding.AwayFromZero);
+                    line.Amount = Math.Round(line.Quantity * line.UnitPrice, 0, MidpointRounding.AwayFromZero);
                     Recalculate(line);
                     break;
                 case "unit_price" when Ui.TryNumber(text, out var price):

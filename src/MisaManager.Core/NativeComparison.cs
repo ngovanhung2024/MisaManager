@@ -139,6 +139,19 @@ public static class NativeComparison
     }
 
     /// <summary>
+    /// The number of decimals MISA rounded <paramref name="source"/> to when <paramref name="actual"/> is that rounding
+    /// (17.487 shown as 17,49 → 2); null when it is not a rounding of the source.
+    /// </summary>
+    public static int? RoundedDecimals(decimal source, string? actual, CultureInfo culture)
+    {
+        if (actual is null || !TryNumber(actual, culture, out var shown) || shown == source) return null;
+        var scale = (decimal.GetBits(source)[3] >> 16) & 0xFF;
+        for (var decimals = 0; decimals < scale; decimals++)
+            if (decimal.Round(source, decimals, MidpointRounding.AwayFromZero) == shown) return decimals;
+        return null;
+    }
+
+    /// <summary>
     /// Parses a number using the display culture first, then the other common separator
     /// convention when the text is not valid in the first one. Currency marks are ignored.
     /// </summary>

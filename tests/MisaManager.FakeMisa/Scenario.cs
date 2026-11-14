@@ -84,6 +84,8 @@ public sealed record Scenario
     public bool ScrollSidewaysAfterAmount { get; init; }
     /// <summary>Added to the price MISA derives from a typed amount (R20 showed 11.523.809,67 for 57.619.048 / 5).</summary>
     public decimal UnitPriceDrift { get; init; }
+    /// <summary>Số lẻ of Số lượng in the company data: a typed quantity is rounded to it (-1: kept as typed). Report 0.2.195.</summary>
+    public int QuantityDecimals { get; init; } = -1;
     /// <summary>Extra suppliers (found by MST) on top of the built-in ones.</summary>
     public IReadOnlyList<Customer> AdditionalSuppliers { get; init; } = [];
     /// <summary>

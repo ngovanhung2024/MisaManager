@@ -1021,7 +1021,9 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 values => Match(Decimal(expected.Quantity), values.Values[profile.Columns["quantity"]].Value, NativeValueKind.Decimal)
                     && Match(Decimal(line.AmountBeforeTax), values.Values[profile.Columns["amount"]].Value, NativeValueKind.Decimal),
                 token, column => Entering("line:" + line.LineId + ":"
-                    + profile.Columns.Single(pair => pair.Value == column).Key)), token);
+                    + profile.Columns.Single(pair => pair.Value == column).Key),
+                values => RowMismatch(expected.Quantity, line.AmountBeforeTax!.Value,
+                    values.Values[profile.Columns["quantity"]].Value, values.Values[profile.Columns["amount"]].Value)), token);
             if (pending is not null) RequireCatalog().ConfirmPending(pending.Code);
             else if (ItemCatalog?.FindPending(line.Name, line.Unit) is { } createdPending
                 && Match(code, createdPending.Code, NativeValueKind.Exact))
@@ -1873,6 +1875,18 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
     private static bool CatalogNameMatch(string expected, string? actual)
         => actual is not null && ItemCatalogStore.SameItemName(expected, actual);
     private static string Decimal(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? throw new InvalidDataException("Thiếu số nguồn.");
+
+    // Report 0.2.195, HĐ 205 (17,487 lít): the row mismatch named no value. A quantity MISA rounds to its "số lẻ" setting
+    // cannot be entered as on the invoice, so the user is told which setting to change; the tool never accepts the rounding.
+    private string RowMismatch(decimal quantity, decimal amount, string? nativeQuantity, string? nativeAmount)
+    {
+        var shown = $"MISA hiện Số lượng '{nativeQuantity}', Thành tiền '{nativeAmount}'; hóa đơn: Số lượng {quantity.ToString(Culture)}, "
+            + $"Thành tiền {amount.ToString("N0", Culture)}.";
+        return NativeComparison.RoundedDecimals(quantity, nativeQuantity, Culture) is { } decimals
+            ? $"MISA làm tròn số lượng {quantity.ToString(Culture)} thành '{nativeQuantity}' (dữ liệu kế toán chỉ để {decimals} chữ số lẻ cho "
+                + "số lượng). Trong MISA vào Hệ thống → Tùy chọn → Định dạng số, tăng số chữ số lẻ của Số lượng đủ cho hóa đơn, rồi chạy lại. " + shown
+            : shown;
+    }
     private static string Saved(WorkflowContext context, string key) => context.NativeValues?.GetValueOrDefault(key)
         ?? throw new AutomationException("CHECKPOINT_PROOF_MISSING", "Checkpoint thiếu native proof " + key);
     private static string Frame(NativeFrame frame) => JsonSerializer.Serialize(frame, ContractJson.Compact);

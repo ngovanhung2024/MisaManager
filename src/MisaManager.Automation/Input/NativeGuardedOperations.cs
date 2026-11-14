@@ -511,9 +511,11 @@ public sealed partial class NativeInputService
 
     // Commit each value through MISA, then verify the whole row before publishing progress.
     // Controls are resolved again after each commit because R20 recreates its editors.
+    // explain: the reason for a row MISA still shows differently after the wait (report 0.2.195 gave none).
     public async Task<NativeFields> WriteRowAsync(NativeFrame frame, NativeCell row,
         IReadOnlyList<NativeCellWrite> writes, IReadOnlyList<string> readColumns,
-        Func<NativeFields, bool> verified, CancellationToken token, Action<string>? enteringColumn = null)
+        Func<NativeFields, bool> verified, CancellationToken token, Action<string>? enteringColumn = null,
+        Func<NativeFields, string>? explain = null)
     {
         if (string.IsNullOrWhiteSpace(row.ExpectedCode) || writes.Count is < 1 or > 3
             || writes.Select(write => write.Column).Distinct(StringComparer.Ordinal).Count() != writes.Count
@@ -524,8 +526,12 @@ public sealed partial class NativeInputService
         try
         {
             frame = await SendRowAsync(frame, row, writes, token, enteringColumn);
-            return await NativeWait.UntilAsync(() => ReadRowAsync(frame, row, readColumns, token), verified,
-                "READBACK_MISMATCH", $"Row {row.Row + 1} ({row.ExpectedCode}) does not match after native writes.", token);
+            var last = await NativeWait.UntilAsync(() => ReadRowAsync(frame, row, readColumns, token), verified,
+                "READBACK_MISMATCH", $"Row {row.Row + 1} ({row.ExpectedCode}) does not match after native writes.", token,
+                returnLastMismatch: true);
+            if (verified(last)) return last;
+            throw new AutomationException("READBACK_MISMATCH", explain?.Invoke(last)
+                ?? "MISA đọc lại: " + string.Join("; ", last.Values.Select(pair => $"{pair.Key}='{pair.Value.Value}'")) + ".", true);
         }
         catch (Exception error)
         {

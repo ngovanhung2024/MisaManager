@@ -74,6 +74,18 @@ public sealed class NativeComparisonTests
 
     // ---- decimals ----
 
+    // Report 0.2.195, HĐ 205: 17,487 lít shown as 17,49 by a company keeping 2 số lẻ for Số lượng.
+    [Theory]
+    [InlineData("17.487", "17,49", 2)]
+    [InlineData("17.487", "17,490", 2)]
+    [InlineData("17.487", "17", 0)]
+    [InlineData("17.487", "17,487", null)]
+    [InlineData("17.487", "17,48", null)]
+    [InlineData("20", "20,00", null)]
+    public void QuantityRoundedByMisaNamesItsDecimals(string source, string actual, int? decimals)
+        => Assert.Equal(decimals, NativeComparison.RoundedDecimals(
+            decimal.Parse(source, CultureInfo.InvariantCulture), actual, CultureInfo.GetCultureInfo("vi-VN")));
+
     [Theory]
     [InlineData("1234567", "1.234.567")]
     [InlineData("1234567.5", "1.234.567,5")]
