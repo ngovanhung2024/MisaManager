@@ -539,12 +539,13 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Equal("KKKNT", Assert.Single(Assert.Single(misa.State().Vouchers).Lines).TaxRate);
         var events = Events(misa);
         Assert.Single(events, entry => entry.Contains(" tax_rate <- 'KKKNT' by Return"));
+        Assert.Contains(events, entry => entry.Contains("tax_rate keyboard text received"));
         Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list key Down")
             || entry.Contains("tax_rate list key Up") || entry.Contains("tax_rate list moved"));
     }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
         TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick,
-        TaxRateListKeyFault = "ignore-arrows" });
+        TaxRateListKeyFault = "ignore-arrows", TaxRateRequiresKeyboardText = true });
 
     [Fact]
     public Task RejectedTypedKkkntStopsWithoutSavingOrTryingTheList()
@@ -565,7 +566,7 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Equal(events, Events(misa));
     }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
-        TaxRateListHiddenFromUia = true, TaxRateTextIgnored = true });
+        TaxRateListHiddenFromUia = true, TaxRateTextIgnored = true, TaxRateRequiresKeyboardText = true });
 
     // Report 0.2.202, HĐ 18534: "Dữ liệu đã bị thay đổi…" came after the 1.2 s Bỏ waited for it and the unowned form stayed
     // open (EDITOR_STILL_OPEN). A late prompt is still answered Không, once.
