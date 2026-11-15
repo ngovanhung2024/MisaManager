@@ -149,6 +149,40 @@ public sealed partial class NativeInputService
     private static bool DrawnOutside(Rectangle bounds, nint gridWindow)
         => OutsideGrid(NativeKeyboard.WindowAt(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2), gridWindow);
 
+    // Report 0.2.203, HĐ 18534: R20's "% thuế GTGT" list was drawn open but UIA gave none of its items. The open list
+    // is a top-level popup of MISA drawn against the cell (above it when there is no room below).
+    private bool ListDrawnAt(Rectangle cellBounds, nint gridWindow)
+        => ListPopupAt(cellBounds, gridWindow) != nint.Zero;
+
+    private nint ListPopupAt(Rectangle cellBounds, nint gridWindow)
+    {
+        var x = cellBounds.X + cellBounds.Width / 2;
+        foreach (var y in new[] { cellBounds.Bottom + 6, cellBounds.Top - 6 })
+        {
+            var hit = NativeKeyboard.WindowAt(x, y);
+            if (hit == nint.Zero) continue;
+            PInvoke.GetWindowThreadProcessId((HWND)hit, out var processId);
+            if (processId == identity!.ProcessId && InOwnPopup(hit, gridWindow))
+                return (nint)PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT);
+        }
+        return nint.Zero;
+    }
+
+    // What UIA lists near the cell, for reports when no option could be read.
+    private string DescribeListItems(Rectangle cellBounds, nint gridWindow)
+    {
+        var items = ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
+                Live(automation.ConditionFactory.ByControlType(ControlType.ListItem), identity.ProcessId, enabled: false, onscreen: false))
+            .Where(item => Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420)
+            .ToArray();
+        if (items.Length == 0) return "UIA không có mục danh sách nào gần ô";
+        return $"UIA có {items.Length} mục gần ô: " + string.Join("; ", items.Take(10).Select(item =>
+            $"'{item.Name.Trim()}' {item.Bounds.X},{item.Bounds.Y} {item.Bounds.Width}x{item.Bounds.Height}"
+            + $"{(item.Offscreen ? " offscreen" : "")}{(item.Enabled ? "" : " disabled")}"
+            + $"{(item.HasArea && DrawnOutside(item.Bounds, gridWindow) ? "" : " trong-grid")}"
+            + $"{(item.Element.Patterns.SelectionItem.IsSupported ? "" : " no-select")}"));
+    }
+
     private static bool OutsideGrid(nint hit, nint gridWindow)
         => hit != nint.Zero && hit != gridWindow && !PInvoke.IsChild((HWND)gridWindow, (HWND)hit);
 

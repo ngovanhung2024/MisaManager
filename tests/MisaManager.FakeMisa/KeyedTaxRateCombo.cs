@@ -19,13 +19,29 @@ namespace MisaManager.FakeMisa;
 internal sealed class KeyedTaxRateCombo : ComboBox
 {
     private bool editing;
+    private readonly bool hidden;
+    private readonly string keyFault;
+    public bool HidesList => hidden;
 
-    public KeyedTaxRateCombo(bool opensOnClick = false)
+    public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "")
     {
+        this.hidden = hidden;
+        this.keyFault = keyFault;
         GotKeyboardFocus += (_, _) => editing = true;
         LostKeyboardFocus += (_, _) => editing = false;
         // Tab/Enter commit the cell and leave edit mode, as R20 does.
         PreviewKeyDown += (_, e) => { if (e.Key is Key.Tab or Key.Enter) editing = false; };
+        if (hidden)
+        {
+            // Editable WPF combos consume arrow keys before routed handlers. Intercept before WPF processes them.
+            Loaded += (_, _) => InputManager.Current.PreProcessInput += BeforeListKey;
+            Unloaded += (_, _) => InputManager.Current.PreProcessInput -= BeforeListKey;
+            DropDownOpened += (_, _) => { if (Items.Contains(Text)) SelectedItem = Text; };
+            // R20's open list (report 0.2.203): the arrows move the highlighted rate, which the cell shows (WPF's own
+            // editable-combo keys do this); the rate is taken when the list closes (Enter), see FakeGrid.CreateCombo.
+            SelectionChanged += (_, _) => { if (IsDropDownOpen) FakeLog.Write($"tax_rate list moved to '{SelectedItem}'"); };
+            DropDownClosed += (_, _) => FakeLog.Write($"tax_rate list closed on '{Text}'");
+        }
         if (!opensOnClick) return;
         // R20 drop-down-list cell (report 0.2.202, HĐ 18534): a click on the cell drops the list and keeps it dropped;
         // only the arrow toggles it.
@@ -42,6 +58,20 @@ internal sealed class KeyedTaxRateCombo : ComboBox
                 FakeLog.Write("tax_rate list dropped by the cell click");
             });
         };
+    }
+
+    private void BeforeListKey(object sender, PreProcessInputEventArgs input)
+    {
+        if (!IsDropDownOpen || input.StagingItem.Input is not KeyEventArgs e
+            || e.RoutedEvent != Keyboard.PreviewKeyDownEvent || e.Key is not (Key.Down or Key.Up or Key.Enter)) return;
+        FakeLog.Write($"tax_rate list key {e.Key}");
+        if (keyFault == "close" && e.Key is Key.Down or Key.Up)
+        {
+            input.Cancel();
+            IsDropDownOpen = false;
+        }
+        if (keyFault == "ignore-arrows" && e.Key is Key.Down or Key.Up
+            || keyFault == "ignore-enter" && e.Key == Key.Enter) input.Cancel();
     }
 
     private static string DataValue(string text) => text.Trim().ToUpperInvariant() switch
@@ -64,6 +94,20 @@ internal sealed class KeyedTaxRateCombo : ComboBox
 
     protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
 
+    protected override DependencyObject GetContainerForItemOverride() => hidden ? new HiddenItem() : base.GetContainerForItemOverride();
+
+    // Drawn like an option but not a UIA list item, as R20's rate list (report 0.2.203).
+    private sealed class HiddenItem : ComboBoxItem
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new HiddenItemPeer(this);
+    }
+
+    private sealed class HiddenItemPeer(HiddenItem owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Text;
+        protected override string GetClassNameCore() => "ValueListItem";
+    }
+
     private sealed class Peer(KeyedTaxRateCombo owner) : ComboBoxAutomationPeer(owner), IValueProvider
     {
         private R20UnitCombo.DropDownButtonPeer? button;
@@ -74,7 +118,7 @@ internal sealed class KeyedTaxRateCombo : ComboBox
         protected override List<AutomationPeer>? GetChildrenCore()
         {
             if (!owner.editing && !owner.IsDropDownOpen) return null;
-            var children = base.GetChildrenCore() ?? [];
+            List<AutomationPeer> children = owner.hidden ? [] : base.GetChildrenCore() ?? [];
             if (button is null && FindToggle(owner) is { } toggle) button = new R20UnitCombo.DropDownButtonPeer(toggle, owner);
             if (button is not null) children.Add(button);
             return children;

@@ -84,6 +84,8 @@ public sealed class FakeGrid : Border
     /// <summary>"% thuế GTGT" cells answer ValuePattern with the list's data value (KKKNT → "-2"); see <see cref="KeyedTaxRateCombo"/>.</summary>
     public bool TaxRateValueIsKey { get; set; }
     public bool TaxRateListOpensOnClick { get; set; }
+    public bool TaxRateListHiddenFromUia { get; set; }
+    public string TaxRateListKeyFault { get; set; } = "";
     /// <summary>
     /// R20 (VPS 0.2.163): a "DataRowCount" Tree region holding disabled copies of the data rows whose cells have no
     /// area, so nothing lies under the headers. Rebuilt with the rows while set.
@@ -477,6 +479,15 @@ internal sealed class R20UnitCombo : ComboBox
         public override object? GetPattern(PatternInterface patternInterface)
             => patternInterface == PatternInterface.Invoke ? this : null;
         public void Invoke() => combo.IsDropDownOpen = !combo.IsDropDownOpen;
+
+        // WPF's toggle spans the whole editable combo under its text box; R20's arrow is the glyph at the right edge.
+        protected override System.Windows.Rect GetBoundingRectangleCore()
+        {
+            var bounds = base.GetBoundingRectangleCore();
+            if (bounds.IsEmpty) return bounds;
+            var width = Math.Min(16, bounds.Width);
+            return new System.Windows.Rect(bounds.Right - width, bounds.Y, width, bounds.Height);
+        }
     }
 
     // A closed list's item, laid over the next grid row in a 2-pixel band per item.
@@ -585,7 +596,8 @@ internal sealed class GridRow : StackPanel
     private ComboBox CreateCombo(GridColumn column)
     {
         var combo = grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
-            : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick) : new ComboBox();
+            : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick,
+                grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault) : new ComboBox();
         combo.IsEditable = true;
         combo.FontSize = 11;
         combo.ItemsSource = column.Options ?? [];
@@ -593,9 +605,17 @@ internal sealed class GridRow : StackPanel
         combo.PreviewKeyDown += (_, e) => OnKey(column.Key, combo.Text, e);
         combo.SelectionChanged += (_, _) =>
         {
+            if (combo is KeyedTaxRateCombo { HidesList: true, IsDropDownOpen: true }) return;
             if (combo.IsKeyboardFocusWithin && combo.SelectedItem is string chosen)
                 grid.RaiseCommit(Index, column.Key, chosen, Key.None);
         };
+        // R20 takes the rate highlighted in its open list when the list closes.
+        if (combo is KeyedTaxRateCombo { HidesList: true })
+            combo.DropDownClosed += (_, _) =>
+            {
+                if (combo.IsKeyboardFocusWithin && combo.SelectedItem is string chosen)
+                    grid.RaiseCommit(Index, column.Key, chosen, Key.None);
+            };
         return combo;
     }
 

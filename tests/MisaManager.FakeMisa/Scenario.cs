@@ -86,6 +86,13 @@ public sealed record Scenario
     public bool TaxRateListOpensOnClick { get; init; }
     /// <summary>"Dữ liệu đã bị thay đổi…" appears this long after Bỏ (a busy R20, report 0.2.202, HĐ 18534).</summary>
     public int DirtyPromptDelayMilliseconds { get; init; }
+    /// <summary>
+    /// Report 0.2.203, HĐ 18534: the open "% thuế GTGT" list exposes no items through UIA; arrow keys move its selection
+    /// (the cell shows the highlighted rate) and Enter closes it.
+    /// </summary>
+    public bool TaxRateListHiddenFromUia { get; init; }
+    /// <summary>Keyboard failures in an unreadable rate list: close, ignore-arrows or ignore-enter.</summary>
+    public string TaxRateListKeyFault { get; init; } = "";
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>

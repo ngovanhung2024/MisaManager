@@ -751,8 +751,9 @@ public sealed partial class NativeInputService
                 if (attempt > 0) Thread.Sleep(50);
                 registered = RegisteredOptions(cellBounds, gridWindow);
             }
-            if (registered.Length == 0) ClickArrow();
+            if (registered.Length == 0 && !ListDrawnAt(cellBounds, gridWindow)) ClickArrow();
             var expectedName = NormalizeOptionName(expected);
+            var drawnWithoutItems = false;
             // A slow MISA can open the list after the first polls; keep waiting while nothing is registered yet.
             for (var attempt = 0; attempt < 40; attempt++)
             {
@@ -771,6 +772,11 @@ public sealed partial class NativeInputService
                     .Select(group => group.Select(item => item.Element).FirstOrDefault(ShowsAt) ?? group.First().Element)
                     .ToArray();
                 if (options.Length > 0 || registered.Length > 0 && attempt >= 11) break;
+                if (registered.Length == 0 && attempt >= 11 && ListDrawnAt(cellBounds, gridWindow))
+                {
+                    drawnWithoutItems = true;
+                    break;
+                }
                 Thread.Sleep(50);
             }
             if (options.Length == 0 && allowMissing)
@@ -840,9 +846,73 @@ public sealed partial class NativeInputService
                         "Registered unit list remained open after Escape and close-toggle.", true);
                 return Capture();
             }
+            if (drawnWithoutItems && !allowMissing)
+            {
+                // The list is open but unreadable: step through it with the arrow keys, reading the cell after every key.
+                System.Diagnostics.Trace.TraceInformation($"Danh sách ô '{cell.Column}' mở nhưng không đọc được mục; chọn '{expected}' bằng phím mũi tên. "
+                    + DescribeListItems(cellBounds, gridWindow));
+                string Shown() => NormalizeOptionName(ReadCustomCellText(ResolveCell(cell, preserveComboBox: true), cell.Column).Value);
+                var listPopup = ListPopupAt(cellBounds, gridWindow);
+                void PressListKey(string key)
+                {
+                    // Each key is a new input: keep the window/dialog guards and never reactivate a dropped list.
+                    GuardWorkflow(Capture(), forInput: true);
+                    ThrowIfBlockingDialog();
+                    var current = ResolveCell(cell, preserveComboBox: true);
+                    if (current.BoundingRectangle != cellBounds || !IsFocusedTarget(current, KeyboardHandle(current))
+                        || listPopup == nint.Zero || ListPopupAt(cellBounds, gridWindow) != listPopup)
+                        throw new AutomationException("INPUT_UNCERTAIN", "Ô hoặc danh sách đã đổi trong khi chọn bằng phím.", true);
+                    token.ThrowIfCancellationRequested();
+                    MarkWorkflowInput();
+                    NativeKeyboard.PressFocused(identity!.WindowHandle, identity.ProcessId, key, token, gridWindow);
+                    epoch++;
+                }
+                try
+                {
+                    foreach (var key in new[] { "ArrowDown", "ArrowUp" })
+                    {
+                        for (var step = 0; step < 24 && Shown() != expectedName; step++)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (!ListDrawnAt(cellBounds, gridWindow))
+                                throw new AutomationException("INPUT_UNCERTAIN",
+                                    $"Danh sách của ô đóng lại khi đang chọn '{expected}' bằng phím; MISA hiện '{Shown()}'.", true);
+                            var before = Shown();
+                            PressListKey(key);
+                            var moved = false;
+                            for (var wait = 0; wait < 16 && !moved; wait++)
+                            {
+                                Thread.Sleep(50);
+                                moved = Shown() != before;
+                                if (!ListDrawnAt(cellBounds, gridWindow))
+                                    throw new AutomationException("INPUT_UNCERTAIN", "Danh sách đã đóng trước khi xác nhận lựa chọn.", true);
+                            }
+                            if (!moved) break; // End of the list in this direction.
+                        }
+                        if (Shown() == expectedName) break;
+                    }
+                    if (Shown() != expectedName)
+                        throw new AutomationException("INPUT_UNCERTAIN", $"Không tới được mục '{expected}' bằng phím mũi tên; MISA hiện '{Shown()}'. "
+                            + DescribeListItems(cellBounds, gridWindow), true);
+                    PressListKey("Enter");
+                    for (var wait = 0; wait < 24 && ListDrawnAt(cellBounds, gridWindow); wait++)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        Thread.Sleep(50);
+                    }
+                    if (ListDrawnAt(cellBounds, gridWindow))
+                        throw new AutomationException("INPUT_UNCERTAIN", "Danh sách vẫn mở sau Enter; chưa xác nhận chọn mục.", true);
+                }
+                catch (Exception error)
+                {
+                    throw new AutomationException("INPUT_UNCERTAIN", $"Không xác nhận được chọn '{expected}' bằng phím: {error.Message}", true, error);
+                }
+                return Capture();
+            }
             if (options.Length == 0 && registered.Length == 0)
                 throw new AutomationException("GRID_DROPDOWN_NOT_OPEN",
-                    $"Danh sách của ô không hiện ra để chọn '{expected}' (mũi tên không mở danh sách hoặc danh sách đã đóng).");
+                    $"Danh sách của ô không hiện ra để chọn '{expected}' (mũi tên không mở danh sách hoặc danh sách đã đóng). "
+                    + DescribeListItems(cellBounds, gridWindow));
             if (options.Length == 0)
                 throw new AutomationException("GRID_OPTION_MISSING", $"Danh sách của ô không có mục '{expected}'; MISA hiện: "
                     + string.Join(", ", registered.Select(item => $"'{item.Properties.Name.ValueOrDefault?.Trim()}'").Distinct()) + ".");

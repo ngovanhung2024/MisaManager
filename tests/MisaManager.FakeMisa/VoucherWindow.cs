@@ -172,7 +172,8 @@ public sealed class VoucherWindow : Window, IGridSource
         {
             ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset,
             R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0,
-            TaxRateValueIsKey = scenario.TaxRateValueIsKey, TaxRateListOpensOnClick = scenario.TaxRateListOpensOnClick
+            TaxRateValueIsKey = scenario.TaxRateValueIsKey, TaxRateListOpensOnClick = scenario.TaxRateListOpensOnClick,
+            TaxRateListHiddenFromUia = scenario.TaxRateListHiddenFromUia, TaxRateListKeyFault = scenario.TaxRateListKeyFault
         };
         grid.CellCommitted += OnCellCommitted;
         grid.CellClicked += (_, click) =>
