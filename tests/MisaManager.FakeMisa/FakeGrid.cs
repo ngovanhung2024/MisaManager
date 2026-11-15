@@ -86,6 +86,7 @@ public sealed class FakeGrid : Border
     public bool TaxRateListOpensOnClick { get; set; }
     public bool TaxRateListHiddenFromUia { get; set; }
     public string TaxRateListKeyFault { get; set; } = "";
+    public bool TaxRateStatusStaleWhileOpen { get; set; }
     /// <summary>
     /// R20 (VPS 0.2.163): a "DataRowCount" Tree region holding disabled copies of the data rows whose cells have no
     /// area, so nothing lies under the headers. Rebuilt with the rows while set.
@@ -597,7 +598,7 @@ internal sealed class GridRow : StackPanel
     {
         var combo = grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
             : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick,
-                grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault) : new ComboBox();
+                grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault, grid.TaxRateStatusStaleWhileOpen) : new ComboBox();
         combo.IsEditable = true;
         combo.FontSize = 11;
         combo.ItemsSource = column.Options ?? [];

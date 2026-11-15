@@ -21,12 +21,28 @@ internal sealed class KeyedTaxRateCombo : ComboBox
     private bool editing;
     private readonly bool hidden;
     private readonly string keyFault;
+    private readonly bool staleStatus;
+    private string committedText = "";
+    private string StatusText => staleStatus && IsDropDownOpen ? committedText : Text;
     public bool HidesList => hidden;
 
-    public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "")
+    public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "", bool staleStatus = false)
     {
         this.hidden = hidden;
         this.keyFault = keyFault;
+        this.staleStatus = staleStatus;
+        DropDownOpened += (_, _) =>
+        {
+            committedText = Text;
+            if (staleStatus) FakeLog.Write($"tax_rate committed status frozen at '{committedText}' while list open");
+        };
+        DropDownClosed += (_, _) =>
+        {
+            if (keyFault != "reject-selection") return;
+            SelectedItem = committedText;
+            Text = committedText;
+            FakeLog.Write($"tax_rate selection rejected; committed '{Text}'");
+        };
         GotKeyboardFocus += (_, _) => editing = true;
         LostKeyboardFocus += (_, _) => editing = false;
         // Tab/Enter commit the cell and leave edit mode, as R20 does.
@@ -118,15 +134,16 @@ internal sealed class KeyedTaxRateCombo : ComboBox
         protected override List<AutomationPeer>? GetChildrenCore()
         {
             if (!owner.editing && !owner.IsDropDownOpen) return null;
-            List<AutomationPeer> children = owner.hidden ? [] : base.GetChildrenCore() ?? [];
+            var children = base.GetChildrenCore() ?? [];
+            if (owner.hidden) children.RemoveAll(peer => peer is not TextBoxAutomationPeer);
             if (button is null && FindToggle(owner) is { } toggle) button = new R20UnitCombo.DropDownButtonPeer(toggle, owner);
             if (button is not null) children.Add(button);
             return children;
         }
 
-        protected override string GetItemStatusCore() => $"DisplayText^IG_TOKEN_SEPERATOR^{owner.Text}^IG_TOKEN_DELIMETER^";
+        protected override string GetItemStatusCore() => $"DisplayText^IG_TOKEN_SEPERATOR^{owner.StatusText}^IG_TOKEN_DELIMETER^";
 
-        string IValueProvider.Value => DataValue(owner.Text);
+        string IValueProvider.Value => DataValue(owner.StatusText);
         bool IValueProvider.IsReadOnly => false;
         void IValueProvider.SetValue(string value) => owner.Text = value;
     }

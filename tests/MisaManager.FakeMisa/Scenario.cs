@@ -91,8 +91,10 @@ public sealed record Scenario
     /// (the cell shows the highlighted rate) and Enter closes it.
     /// </summary>
     public bool TaxRateListHiddenFromUia { get; init; }
-    /// <summary>Keyboard failures in an unreadable rate list: close, ignore-arrows or ignore-enter.</summary>
+    /// <summary>Unreadable list faults: close, ignore-arrows, ignore-enter or reject-selection.</summary>
     public string TaxRateListKeyFault { get; init; } = "";
+    /// <summary>0.2.205: ItemStatus and combo Value keep the committed rate while its editor previews the selection.</summary>
+    public bool TaxRateStatusStaleWhileOpen { get; init; }
     /// <summary>Zero-based line whose item code pops "Dữ liệu không có trong danh mục." (an error after earlier lines were entered).</summary>
     public int LineErrorRow { get; init; } = -1;
     /// <summary>"Số lượng" typed on this line is silently dropped: a readback failure with no MISA dialog open.</summary>

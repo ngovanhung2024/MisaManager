@@ -430,6 +430,7 @@ public sealed class PurchaseVoucherTests : UiTest
     [InlineData("close")]
     [InlineData("ignore-arrows")]
     [InlineData("ignore-enter")]
+    [InlineData("reject-selection")]
     public Task UnconfirmedRateListSelectionStopsWithoutSavingOrReplaying(string fault) => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
@@ -443,14 +444,38 @@ public sealed class PurchaseVoucherTests : UiTest
         Assert.Empty(misa.State().Vouchers);
         var events = Events(misa);
         Assert.DoesNotContain(events, entry => entry.Contains(" Cất ("));
-        if (fault == "ignore-enter")
+        if (fault is "ignore-enter" or "reject-selection")
             Assert.Single(events, entry => entry.Contains("tax_rate list key Return"));
         else
             Assert.Equal(fault == "close" ? 1 : 2, events.Count(entry => entry.Contains("tax_rate list key ")));
         await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Runner.AdvanceAsync(token));
         Assert.Equal(events, Events(misa));
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2,
-        EditorUnowned = true, TaxRateListHiddenFromUia = true, TaxRateListKeyFault = fault });
+        EditorUnowned = true, TaxRateListHiddenFromUia = true, TaxRateListKeyFault = fault,
+        TaxRateStatusStaleWhileOpen = true });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task RateListReadsLiveEditorWhenCommittedStatusStaysAtEightPercent(bool opensOnClick)
+        => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        var events = Events(misa);
+        Assert.Contains(events, entry => entry.Contains("status frozen at '8%'"));
+        Assert.Single(events, entry => entry.Contains("tax_rate list closed on 'KKKNT'"));
+        Assert.Contains("'KKKNT' by None", Assert.Single(events, entry => entry.Contains(" tax_rate <- ")));
+    }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
+        PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
+        TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick });
 
     // Report 0.2.202, HĐ 18534: "Dữ liệu đã bị thay đổi…" came after the 1.2 s Bỏ waited for it and the unowned form stayed
     // open (EDITOR_STILL_OPEN). A late prompt is still answered Không, once.
