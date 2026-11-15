@@ -174,7 +174,8 @@ public sealed class VoucherWindow : Window, IGridSource
             R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0,
             TaxRateValueIsKey = scenario.TaxRateValueIsKey, TaxRateListOpensOnClick = scenario.TaxRateListOpensOnClick,
             TaxRateListHiddenFromUia = scenario.TaxRateListHiddenFromUia, TaxRateListKeyFault = scenario.TaxRateListKeyFault,
-            TaxRateStatusStaleWhileOpen = scenario.TaxRateStatusStaleWhileOpen
+            TaxRateStatusStaleWhileOpen = scenario.TaxRateStatusStaleWhileOpen,
+            TaxRateListTextAccessible = scenario.TaxRateListTextAccessible
         };
         grid.CellCommitted += OnCellCommitted;
         grid.CellClicked += (_, click) =>

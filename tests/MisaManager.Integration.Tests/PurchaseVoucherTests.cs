@@ -477,6 +477,55 @@ public sealed class PurchaseVoucherTests : UiTest
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
         TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick });
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task RateListWithTextLabelsIsClickedWithoutArrowKeys(bool opensOnClick)
+        => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
+        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        var events = Events(misa);
+        Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list key "));
+        Assert.Single(events, entry => entry.Contains("tax_rate list closed on 'KKKNT'"));
+        Assert.Contains("'KKKNT' by None", Assert.Single(events, entry => entry.Contains(" tax_rate <- ")));
+    }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
+        PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
+        TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick,
+        TaxRateListTextAccessible = true, TaxRateListKeyFault = "close" });
+
+    [Fact]
+    public Task ClickedRateLabelStillRequiresCommittedReadbackAndCannotReplay()
+        => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+
+        var result = await harness.EnterWithoutSavingAsync(invoice, misa, token);
+
+        Assert.Equal(WorkflowStatus.InputUncertain, result.Context.Snapshot.Status);
+        Assert.Equal("INPUT_UNCERTAIN", result.Context.Snapshot.LastErrorCode);
+        Assert.Contains("MISA hiện '8%'", result.Context.Snapshot.LastMessage);
+        Assert.Contains("cần 'KKKNT'", result.Context.Snapshot.LastMessage);
+        Assert.Empty(misa.State().Vouchers);
+        var events = Events(misa);
+        Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list key ") || entry.Contains(" Cất ("));
+        Assert.Single(events, entry => entry.Contains("tax_rate selection rejected"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Runner.AdvanceAsync(token));
+        Assert.Equal(events, Events(misa));
+    }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
+        PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
+        TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = true,
+        TaxRateListTextAccessible = true, TaxRateListKeyFault = "reject-selection" });
+
     // Report 0.2.202, HĐ 18534: "Dữ liệu đã bị thay đổi…" came after the 1.2 s Bỏ waited for it and the unowned form stayed
     // open (EDITOR_STILL_OPEN). A late prompt is still answered Không, once.
     [Fact]

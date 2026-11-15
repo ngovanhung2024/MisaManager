@@ -85,6 +85,7 @@ public sealed class FakeGrid : Border
     public bool TaxRateValueIsKey { get; set; }
     public bool TaxRateListOpensOnClick { get; set; }
     public bool TaxRateListHiddenFromUia { get; set; }
+    public bool TaxRateListTextAccessible { get; set; }
     public string TaxRateListKeyFault { get; set; } = "";
     public bool TaxRateStatusStaleWhileOpen { get; set; }
     /// <summary>
@@ -598,7 +599,8 @@ internal sealed class GridRow : StackPanel
     {
         var combo = grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
             : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick,
-                grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault, grid.TaxRateStatusStaleWhileOpen) : new ComboBox();
+                grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault, grid.TaxRateStatusStaleWhileOpen,
+                grid.TaxRateListTextAccessible) : new ComboBox();
         combo.IsEditable = true;
         combo.FontSize = 11;
         combo.ItemsSource = column.Options ?? [];

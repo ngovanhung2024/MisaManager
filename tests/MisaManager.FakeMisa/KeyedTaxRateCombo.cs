@@ -22,15 +22,18 @@ internal sealed class KeyedTaxRateCombo : ComboBox
     private readonly bool hidden;
     private readonly string keyFault;
     private readonly bool staleStatus;
+    private readonly bool textAccessible;
     private string committedText = "";
     private string StatusText => staleStatus && IsDropDownOpen ? committedText : Text;
     public bool HidesList => hidden;
 
-    public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "", bool staleStatus = false)
+    public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "", bool staleStatus = false,
+        bool textAccessible = false)
     {
         this.hidden = hidden;
         this.keyFault = keyFault;
         this.staleStatus = staleStatus;
+        this.textAccessible = textAccessible;
         DropDownOpened += (_, _) =>
         {
             committedText = Text;
@@ -110,18 +113,20 @@ internal sealed class KeyedTaxRateCombo : ComboBox
 
     protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
 
-    protected override DependencyObject GetContainerForItemOverride() => hidden ? new HiddenItem() : base.GetContainerForItemOverride();
+    protected override DependencyObject GetContainerForItemOverride() => hidden ? new HiddenItem(textAccessible) : base.GetContainerForItemOverride();
 
     // Drawn like an option but not a UIA list item, as R20's rate list (report 0.2.203).
-    private sealed class HiddenItem : ComboBoxItem
+    private sealed class HiddenItem(bool textAccessible) : ComboBoxItem
     {
-        protected override AutomationPeer OnCreateAutomationPeer() => new HiddenItemPeer(this);
+        protected override AutomationPeer OnCreateAutomationPeer() => new HiddenItemPeer(this, textAccessible);
     }
 
-    private sealed class HiddenItemPeer(HiddenItem owner) : FrameworkElementAutomationPeer(owner)
+    private sealed class HiddenItemPeer(HiddenItem owner, bool textAccessible) : FrameworkElementAutomationPeer(owner)
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Text;
         protected override string GetClassNameCore() => "ValueListItem";
+        protected override string GetNameCore() => textAccessible ? owner.Content?.ToString() ?? "" : "";
+        protected override List<AutomationPeer>? GetChildrenCore() => textAccessible ? base.GetChildrenCore() : [];
     }
 
     private sealed class Peer(KeyedTaxRateCombo owner) : ComboBoxAutomationPeer(owner), IValueProvider
