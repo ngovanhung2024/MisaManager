@@ -13,7 +13,7 @@
     <BaseOutputPath>$(MSBuildThisFileDirectory)out\bin\$(MSBuildProjectName)\</BaseOutputPath>
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)out\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
     <!-- GitHub owner/repo whose Releases the in-app updater reads; override with -p:UpdateRepository=... -->
-    <UpdateRepository Condition="'$(UpdateRepository)' == ''">vanalex2026/new-misa-r20</UpdateRepository>
+    <UpdateRepository Condition="'$(UpdateRepository)' == ''">ngovanhung2024/MisaManager</UpdateRepository>
   </PropertyGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'MisaManager.App'">
     <AssemblyMetadata Include="UpdateRepository" Value="$(UpdateRepository)" />
