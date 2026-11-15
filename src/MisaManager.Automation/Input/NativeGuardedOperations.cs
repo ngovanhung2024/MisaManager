@@ -708,8 +708,12 @@ public sealed partial class NativeInputService
             Thread.Sleep(50);
             target = ResolveCell(cell, preserveComboBox: true);
             editor = WidestEditor(target) ?? target;
-            FocusTarget(editor, activateGridCell: true, token: token);
             var gridWindow = KeyboardHandle(target);
+            // Focusing/clicking an embedded editor can dismiss a list opened by the first cell click.
+            if (!ListDrawnAt(cellBounds, gridWindow))
+                FocusTarget(editor, activateGridCell: true, token: token);
+            else if (!IsFocusedTarget(target, gridWindow))
+                throw new AutomationException("INPUT_UNCERTAIN", "Danh sách đã mở nhưng ô đích chưa nhận focus.", true);
             AutomationElement[] registered = [];
             AutomationElement[] options = [];
             void ClickArrow()
@@ -851,7 +855,18 @@ public sealed partial class NativeInputService
                 // The list is open but unreadable: step through it with the arrow keys, reading the cell after every key.
                 System.Diagnostics.Trace.TraceInformation($"Danh sách ô '{cell.Column}' mở nhưng không đọc được mục; chọn '{expected}' bằng phím mũi tên. "
                     + DescribeListItems(cellBounds, gridWindow));
-                string Shown() => NormalizeOptionName(ReadCustomCellText(ResolveCell(cell, preserveComboBox: true), cell.Column).Value);
+                string Shown()
+                {
+                    var current = ResolveCell(cell, preserveComboBox: true);
+                    // ItemStatus/Value on the cell may still describe the committed rate (0.2.205, HĐ 18534).
+                    // The embedded Edit previews the highlighted option; the cell is verified again after Enter.
+                    var editors = Snapshots(current, Live(automation.ConditionFactory.ByControlType(ControlType.Edit), identity!.ProcessId))
+                        .Where(item => item.HasArea && cellBounds.Contains(item.Bounds)).ToArray();
+                    if (editors.Length > 1)
+                        throw new AutomationException("INPUT_UNCERTAIN", "Không xác định duy nhất editor của ô danh sách.", true);
+                    return NormalizeOptionName(editors.Length == 1
+                        ? ReadNativeText(editors[0].Element).Value : ReadCustomCellText(current, cell.Column).Value);
+                }
                 var listPopup = ListPopupAt(cellBounds, gridWindow);
                 void PressListKey(string key)
                 {
