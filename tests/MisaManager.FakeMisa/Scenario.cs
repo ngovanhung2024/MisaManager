@@ -97,6 +97,8 @@ public sealed record Scenario
     public bool TaxRateTextIgnored { get; init; }
     /// <summary>SetValue is insufficient: the rate must receive keyboard text before Enter (0.2.210).</summary>
     public bool TaxRateRequiresKeyboardText { get; init; }
+    /// <summary>The focused text editor is not listed as a child of the rate ComboBox (0.2.211).</summary>
+    public bool TaxRateEditorOutsideCellTree { get; init; }
     /// <summary>Unreadable list faults: close, ignore-arrows, ignore-enter or reject-selection.</summary>
     public string TaxRateListKeyFault { get; init; } = "";
     /// <summary>0.2.205: ItemStatus and combo Value keep the committed rate while its editor previews the selection.</summary>

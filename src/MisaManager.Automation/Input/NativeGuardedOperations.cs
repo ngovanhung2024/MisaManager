@@ -674,23 +674,23 @@ public sealed partial class NativeInputService
                     FocusTarget(target, activateGridCell: true, token: token);
                     var current = ResolveCell(cell, preserveComboBox: true);
                     var bounds = current.BoundingRectangle;
-                    var editors = Snapshots(current, Live(automation.ConditionFactory.ByControlType(ControlType.Edit), identity!.ProcessId))
-                        .Where(item => item.HasArea && bounds.Contains(item.Bounds)).Select(item => item.Element).ToArray();
-                    var editor = current.ControlType == ControlType.Edit ? current
-                        : editors.Length == 1 ? editors[0]
-                        : throw new AutomationException("PATTERN_UNSUPPORTED", "Không xác định duy nhất ô soạn thảo để gõ thuế suất.");
+                    var editor = ResolveTypingEditor(current, token);
                     if (!IsFocusedTarget(editor, KeyboardHandle(editor)))
                         FocusTarget(editor, token: token);
                     GuardWorkflow(Capture(), forInput: true);
                     ThrowIfBlockingDialog();
                     var handle = KeyboardHandle(editor);
-                    if (!IsFocusedTarget(editor, handle))
+                    bool EditorFocused() => editor.ControlType == ControlType.ComboBox
+                        ? FocusBelongsTo(editor) : IsFocusedTarget(editor, handle);
+                    if (!EditorFocused())
                         throw new AutomationException("FOCUS_LOST", "Ô thuế suất chưa nhận focus để gõ.");
                     sent = true;
                     MarkWorkflowInput();
-                    NativeKeyboard.ReplaceText(handle, identity.WindowHandle, identity.ProcessId, text, token);
+                    NativeKeyboard.ReplaceText(handle, identity!.WindowHandle, identity.ProcessId, text, token);
                     epoch++;
-                    var typed = false;
+                    // A virtual ComboBox can accept typing without exposing a raw-text editor.
+                    // In that case Enter + the committed-cell readback below is the proof, never its numeric Value.
+                    var typed = editor.ControlType == ControlType.ComboBox;
                     for (var wait = 0; wait < 20 && !typed; wait++)
                     {
                         token.ThrowIfCancellationRequested();
@@ -702,7 +702,7 @@ public sealed partial class NativeInputService
                     GuardWorkflow(Capture(), forInput: true);
                     ThrowIfBlockingDialog();
                     if (ResolveCell(cell, preserveComboBox: true).BoundingRectangle != bounds
-                        || !IsFocusedTarget(editor, handle))
+                        || !EditorFocused())
                         throw new AutomationException("INPUT_UNCERTAIN", "Ô thuế suất đã đổi sau khi gõ; không gửi Enter.", true);
                     // Do not refocus/click a combo after typing: that can reset its pending text.
                     MarkWorkflowInput();
@@ -1467,6 +1467,40 @@ public sealed partial class NativeInputService
     {
         if (target.ControlType != ControlType.ComboBox) return target;
         return WidestEditor(target) ?? target;
+    }
+
+    private AutomationElement ResolveTypingEditor(AutomationElement cell, CancellationToken token)
+    {
+        if (cell.ControlType == ControlType.Edit) return cell;
+        var bounds = cell.BoundingRectangle;
+        var area = bounds;
+        area.Inflate(4, 4);
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            token.ThrowIfCancellationRequested();
+            var focused = automation.FocusedElement();
+            if (focused is not null && focused.ControlType == ControlType.Edit
+                && focused.Properties.ProcessId.ValueOrDefault == identity!.ProcessId
+                && !focused.Properties.IsOffscreen.ValueOrDefault
+                && focused.BoundingRectangle.Width > 0 && focused.BoundingRectangle.Height > 0
+                && area.Contains(focused.BoundingRectangle)
+                && NativeKeyboard.InSameRoot(KeyboardHandle(focused), KeyboardHandle(cell))
+                && IsFocusedTarget(focused, KeyboardHandle(focused)))
+                return focused;
+            var handle = NativeKeyboard.FocusedControlInCell(KeyboardHandle(cell), identity!.ProcessId, bounds);
+            if (handle != nint.Zero)
+            {
+                var nativeEditor = automation.FromHandle(handle);
+                if (nativeEditor.ControlType == ControlType.Edit) return nativeEditor;
+            }
+            var editors = Snapshots(cell, Live(automation.ConditionFactory.ByControlType(ControlType.Edit), identity.ProcessId))
+                .Where(item => item.HasArea && area.Contains(item.Bounds)).Select(item => item.Element).ToArray();
+            if (editors.Length == 1) return editors[0];
+            if (attempt < 11) Thread.Sleep(50);
+        }
+        // Do not mistake Win32 focus on the entire grid for focus on this particular virtual cell.
+        if (cell.ControlType == ControlType.ComboBox && FocusBelongsTo(cell)) return cell;
+        throw new AutomationException("FOCUS_LOST", "Không xác nhận được editor hoặc ComboBox thuế suất đang nhận focus; không gõ.");
     }
 
     private nint KeyboardHandle(AutomationElement target)
