@@ -149,6 +149,28 @@ public sealed partial class NativeInputService
     private static bool DrawnOutside(Rectangle bounds, nint gridWindow)
         => OutsideGrid(NativeKeyboard.WindowAt(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2), gridWindow);
 
+    // Some value lists expose text labels without ListItem/SelectionItem. Clicking a drawn label needs neither pattern.
+    // Scope every candidate to the one popup beside this cell; never infer an option from its row number.
+    private AutomationElement[] DrawnOptionLabels(Rectangle cellBounds, nint gridWindow, string expectedName)
+    {
+        var popup = ListPopupAt(cellBounds, gridWindow);
+        if (popup == nint.Zero) return [];
+        var labels = Snapshots(automation.FromHandle(popup), Live(
+                AnyControlType(ControlType.ListItem, ControlType.Text), identity!.ProcessId))
+            .Where(item => item.HasArea && NormalizeOptionName(item.Name) == expectedName
+                && !item.Bounds.IntersectsWith(cellBounds)
+                && item.Bounds.Left < cellBounds.Right && item.Bounds.Right > cellBounds.Left
+                && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420
+                && (nint)PInvoke.GetAncestor((HWND)NativeKeyboard.WindowAt(
+                    item.Bounds.X + item.Bounds.Width / 2, item.Bounds.Y + item.Bounds.Height / 2),
+                    GET_ANCESTOR_FLAGS.GA_ROOT) == popup)
+            .ToArray();
+        // A text child and its containing row describe one choice. Separate rows with the same label are ambiguous.
+        return labels.Where(item => !labels.Any(other => other.Bounds != item.Bounds
+                && item.Bounds.Contains(other.Bounds)))
+            .GroupBy(item => item.Bounds).Select(group => group.First().Element).ToArray();
+    }
+
     // Report 0.2.203, HĐ 18534: R20's "% thuế GTGT" list was drawn open but UIA gave none of its items. The open list
     // is a top-level popup of MISA drawn against the cell (above it when there is no room below).
     private bool ListDrawnAt(Rectangle cellBounds, nint gridWindow)

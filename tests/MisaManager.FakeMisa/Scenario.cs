@@ -91,6 +91,8 @@ public sealed record Scenario
     /// (the cell shows the highlighted rate) and Enter closes it.
     /// </summary>
     public bool TaxRateListHiddenFromUia { get; init; }
+    /// <summary>The popup exposes drawn text labels but no selectable ListItem pattern (0.2.208).</summary>
+    public bool TaxRateListTextAccessible { get; init; }
     /// <summary>Unreadable list faults: close, ignore-arrows, ignore-enter or reject-selection.</summary>
     public string TaxRateListKeyFault { get; init; } = "";
     /// <summary>0.2.205: ItemStatus and combo Value keep the committed rate while its editor previews the selection.</summary>

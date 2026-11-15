@@ -4,6 +4,9 @@ using System.Text;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using MisaManager.Core;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace MisaManager.Automation;
 
@@ -783,6 +786,12 @@ public sealed partial class NativeInputService
                 }
                 Thread.Sleep(50);
             }
+            var optionPopup = ListPopupAt(cellBounds, gridWindow);
+            if (!allowMissing && options.Length == 0 && optionPopup != nint.Zero)
+            {
+                options = DrawnOptionLabels(cellBounds, gridWindow, expectedName);
+                if (options.Length > 0) drawnWithoutItems = false;
+            }
             if (options.Length == 0 && allowMissing)
             {
                 // Absence requires a complete native list, never a failed search
@@ -935,14 +944,29 @@ public sealed partial class NativeInputService
                 throw new AutomationException("GRID_OPTION_AMBIGUOUS", $"Không xác định duy nhất mục '{expected}' trong danh sách.");
             try
             {
+                GuardWorkflow(Capture(), forInput: true);
+                ThrowIfBlockingDialog();
+                if (ResolveCell(cell, preserveComboBox: true).BoundingRectangle != cellBounds
+                    || optionPopup == nint.Zero || ListPopupAt(cellBounds, gridWindow) != optionPopup)
+                    throw new AutomationException("INPUT_UNCERTAIN", "Ô hoặc danh sách đã đổi trước khi chọn mục.", true);
+                token.ThrowIfCancellationRequested();
                 MarkWorkflowInput();
                 var optionBounds = options[0].BoundingRectangle;
                 if (optionBounds.Width <= 0 || optionBounds.Height <= 0)
                     throw new AutomationException("BOUNDS_UNREADABLE", $"Mục '{expected}' không có bounds native.");
                 // The list can close between the poll and the click; never click through it onto the grid.
                 NativeKeyboard.ClickOpenList(optionBounds.X + optionBounds.Width / 2,
-                    optionBounds.Y + optionBounds.Height / 2, identity!.ProcessId, hit => OutsideGrid(hit, gridWindow));
+                    optionBounds.Y + optionBounds.Height / 2, identity!.ProcessId,
+                    hit => OutsideGrid(hit, gridWindow)
+                        && (nint)PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT) == optionPopup);
                 epoch++;
+                for (var wait = 0; wait < 24 && ListDrawnAt(cellBounds, gridWindow); wait++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    Thread.Sleep(50);
+                }
+                if (ListDrawnAt(cellBounds, gridWindow))
+                    throw new AutomationException("INPUT_UNCERTAIN", "Danh sách vẫn mở sau khi chọn mục.", true);
             }
             catch (Exception error)
             {

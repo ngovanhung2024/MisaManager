@@ -44,7 +44,8 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     string PurchaseItemStockAccount = "", string ExpenseItemAccount = "632", bool EditorUnowned = false,
     string VoucherTypeRemembered = "", int QuantityDecimals = -1, int VoucherTypeRetitleMilliseconds = 0,
     bool TaxRateValueIsKey = false, bool TaxRateListOpensOnClick = false, int DirtyPromptDelayMilliseconds = 0,
-    bool TaxRateListHiddenFromUia = false, string TaxRateListKeyFault = "", bool TaxRateStatusStaleWhileOpen = false);
+    bool TaxRateListHiddenFromUia = false, string TaxRateListKeyFault = "", bool TaxRateStatusStaleWhileOpen = false,
+    bool TaxRateListTextAccessible = false);
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>
 public sealed class FakeMisa : IDisposable
