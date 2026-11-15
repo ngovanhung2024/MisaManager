@@ -86,6 +86,7 @@ public sealed class FakeGrid : Border
     public bool TaxRateListOpensOnClick { get; set; }
     public bool TaxRateListHiddenFromUia { get; set; }
     public bool TaxRateListTextAccessible { get; set; }
+    public bool TaxRateRequiresKeyboardText { get; set; }
     public string TaxRateListKeyFault { get; set; } = "";
     public bool TaxRateStatusStaleWhileOpen { get; set; }
     /// <summary>
@@ -605,9 +606,12 @@ internal sealed class GridRow : StackPanel
         combo.FontSize = 11;
         combo.ItemsSource = column.Options ?? [];
         combo.PreviewMouseLeftButtonDown += (_, _) => grid.RaiseCellClicked(Index, column.Key);
-        combo.PreviewKeyDown += (_, e) => OnKey(column.Key, combo.Text, e);
+        combo.PreviewKeyDown += (_, e) => OnKey(column.Key,
+            combo is KeyedTaxRateCombo keyed && grid.TaxRateRequiresKeyboardText && !keyed.ReceivedKeyboardText
+                ? "0%" : combo.Text, e);
         combo.SelectionChanged += (_, _) =>
         {
+            if (combo is KeyedTaxRateCombo && grid.TaxRateRequiresKeyboardText) return;
             if (combo is KeyedTaxRateCombo { HidesList: true, IsDropDownOpen: true }) return;
             if (combo.IsKeyboardFocusWithin && combo.SelectedItem is string chosen)
                 grid.RaiseCommit(Index, column.Key, chosen, Key.None);
@@ -616,6 +620,7 @@ internal sealed class GridRow : StackPanel
         if (combo is KeyedTaxRateCombo { HidesList: true })
             combo.DropDownClosed += (_, _) =>
             {
+                if (grid.TaxRateRequiresKeyboardText) return;
                 if (combo.IsKeyboardFocusWithin && combo.SelectedItem is string chosen)
                     grid.RaiseCommit(Index, column.Key, chosen, Key.None);
             };

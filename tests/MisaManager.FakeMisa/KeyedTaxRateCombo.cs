@@ -26,6 +26,7 @@ internal sealed class KeyedTaxRateCombo : ComboBox
     private string committedText = "";
     private string StatusText => staleStatus && IsDropDownOpen ? committedText : Text;
     public bool HidesList => hidden;
+    public bool ReceivedKeyboardText { get; private set; }
 
     public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "", bool staleStatus = false,
         bool textAccessible = false)
@@ -34,6 +35,11 @@ internal sealed class KeyedTaxRateCombo : ComboBox
         this.keyFault = keyFault;
         this.staleStatus = staleStatus;
         this.textAccessible = textAccessible;
+        PreviewTextInput += (_, _) =>
+        {
+            ReceivedKeyboardText = true;
+            FakeLog.Write("tax_rate keyboard text received");
+        };
         DropDownOpened += (_, _) =>
         {
             committedText = Text;

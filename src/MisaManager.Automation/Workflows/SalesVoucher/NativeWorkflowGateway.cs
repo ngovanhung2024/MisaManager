@@ -1054,7 +1054,7 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
             // KKKNT is accepted as text with Enter; Tab does not commit it (user confirmation for report 0.2.209).
             if (string.Equals(taxKey, "KKKNT", StringComparison.OrdinalIgnoreCase))
                 await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"),
-                    "KKKNT", "KKKNT", NativeValueKind.TaxRate, profile.Culture, token, commitKey: "Enter"), token);
+                    "KKKNT", "KKKNT", NativeValueKind.TaxRate, profile.Culture, token, commitKey: "Enter", keyboardText: true), token);
             else if (taxKey is not null && !decimal.TryParse(taxKey, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
                 await Steady(async () => await input.SelectCellOptionAsync(await input.CaptureAsync(token),
                     CellTarget(row, codes[row], "tax_rate"), tax, profile.Culture, token), token);

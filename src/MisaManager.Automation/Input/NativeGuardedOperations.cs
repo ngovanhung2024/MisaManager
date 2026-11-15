@@ -518,9 +518,9 @@ public sealed partial class NativeInputService
             return new Readback("supported", value, source + "+GridItem", DateTimeOffset.UtcNow, null, Capture());
         }, token);
     public async Task<Readback> WriteCellAsync(NativeFrame frame, NativeCell cell, string text, string expected,
-        NativeValueKind kind, string cultureName, CancellationToken token, string commitKey = "Tab")
+        NativeValueKind kind, string cultureName, CancellationToken token, string commitKey = "Tab", bool keyboardText = false)
     {
-        var sentFrame = await SendCellAsync(frame, cell, text, token, commitKey);
+        var sentFrame = await SendCellAsync(frame, cell, text, token, commitKey, keyboardText);
         var reread = cell.Column == cell.CodeColumn ? cell with { ExpectedCode = expected } : cell;
         return await VerifyWrittenAsync(() => ReadCellAsync(sentFrame, reread, token, waitForCode: cell.Column == cell.CodeColumn), expected, kind, cultureName, token);
     }
@@ -640,7 +640,7 @@ public sealed partial class NativeInputService
         }, token, maySendInput: true);
 
     private Task<NativeFrame> SendCellAsync(NativeFrame frame, NativeCell cell, string text, CancellationToken token,
-        string commitKey = "Tab")
+        string commitKey = "Tab", bool keyboardText = false)
         => dispatcher.RunAsync(() =>
         {
             RecordInput();
@@ -668,6 +668,48 @@ public sealed partial class NativeInputService
             var sent = false;
             try
             {
+                if (keyboardText)
+                {
+                    // SetValue can parse a textual rate as numeric zero. Type in the live editor instead (0.2.210).
+                    FocusTarget(target, activateGridCell: true, token: token);
+                    var current = ResolveCell(cell, preserveComboBox: true);
+                    var bounds = current.BoundingRectangle;
+                    var editors = Snapshots(current, Live(automation.ConditionFactory.ByControlType(ControlType.Edit), identity!.ProcessId))
+                        .Where(item => item.HasArea && bounds.Contains(item.Bounds)).Select(item => item.Element).ToArray();
+                    var editor = current.ControlType == ControlType.Edit ? current
+                        : editors.Length == 1 ? editors[0]
+                        : throw new AutomationException("PATTERN_UNSUPPORTED", "Không xác định duy nhất ô soạn thảo để gõ thuế suất.");
+                    if (!IsFocusedTarget(editor, KeyboardHandle(editor)))
+                        FocusTarget(editor, token: token);
+                    GuardWorkflow(Capture(), forInput: true);
+                    ThrowIfBlockingDialog();
+                    var handle = KeyboardHandle(editor);
+                    if (!IsFocusedTarget(editor, handle))
+                        throw new AutomationException("FOCUS_LOST", "Ô thuế suất chưa nhận focus để gõ.");
+                    sent = true;
+                    MarkWorkflowInput();
+                    NativeKeyboard.ReplaceText(handle, identity.WindowHandle, identity.ProcessId, text, token);
+                    epoch++;
+                    var typed = false;
+                    for (var wait = 0; wait < 20 && !typed; wait++)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        typed = string.Equals(ReadNativeText(editor).Value, text, StringComparison.Ordinal);
+                        if (!typed) Thread.Sleep(50);
+                    }
+                    if (!typed)
+                        throw new AutomationException("INPUT_UNCERTAIN", "Ô soạn thảo chưa hiển thị đúng chữ vừa gõ; không gửi Enter.", true);
+                    GuardWorkflow(Capture(), forInput: true);
+                    ThrowIfBlockingDialog();
+                    if (ResolveCell(cell, preserveComboBox: true).BoundingRectangle != bounds
+                        || !IsFocusedTarget(editor, handle))
+                        throw new AutomationException("INPUT_UNCERTAIN", "Ô thuế suất đã đổi sau khi gõ; không gửi Enter.", true);
+                    // Do not refocus/click a combo after typing: that can reset its pending text.
+                    MarkWorkflowInput();
+                    NativeKeyboard.Press(handle, identity.WindowHandle, identity.ProcessId, commitKey, token);
+                    epoch++;
+                    return Capture();
+                }
                 try
                 {
                     SetNativeValue(target, text, token, ref sent);

@@ -131,6 +131,33 @@ internal static class NativeKeyboard
         }
     }
 
+    internal static void ReplaceText(nint targetHandle, nint windowHandle, int processId, string text, CancellationToken token)
+    {
+        if (text.Length is 0 or > 32768 || text.Any(char.IsControl))
+            throw new AutomationException("INVALID_TEXT", "Chữ cần gõ không hợp lệ.");
+        var root = InputRoot(targetHandle, windowHandle, processId);
+        var foreground = (nint)PInvoke.GetForegroundWindow();
+        PInvoke.GetWindowThreadProcessId((HWND)foreground, out var pid);
+        if (foreground != root || pid != processId || !PInvoke.IsWindowEnabled((HWND)foreground)
+            || !HasTargetFocus(targetHandle))
+            throw new AutomationException("FOCUS_LOST", "Focus không nằm trong editor MISA đã chọn; không gõ.");
+        if (new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C }.Any(key => (GetAsyncKeyState(key) & 0x8000) != 0))
+            throw new AutomationException("FOCUS_LOST", "Phím Shift/Ctrl/Alt/Windows đang được giữ; không gõ.");
+        token.ThrowIfCancellationRequested();
+        DesktopSession.ThrowIfUnavailable();
+        var inputs = new List<NativeInput> { Key(0x11), Key(0x41), Key(0x41, true), Key(0x11, true) };
+        foreach (var character in text)
+        {
+            inputs.Add(new() { Type = 1, Data = new() { Keyboard = new() { Scan = character, Flags = 4 } } });
+            inputs.Add(new() { Type = 1, Data = new() { Keyboard = new() { Scan = character, Flags = 6 } } });
+        }
+        if (SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<NativeInput>()) != inputs.Count)
+        {
+            SendInput(2, [Key(0x41, true), Key(0x11, true)], Marshal.SizeOf<NativeInput>());
+            throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận đủ phím gõ chữ; không gửi lại.", true);
+        }
+    }
+
     internal static void PressFocused(nint windowHandle, int processId, string key, CancellationToken token = default,
         nint scopeHandle = default)
     {
