@@ -13,6 +13,7 @@ SetCursorPos
 GetGUIThreadInfo
 SendInput
 GetClientRect
+GetWindowRect
 ClientToScreen
 GetDpiForWindow
 ShowWindow

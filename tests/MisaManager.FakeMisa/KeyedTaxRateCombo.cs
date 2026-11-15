@@ -23,18 +23,20 @@ internal sealed class KeyedTaxRateCombo : ComboBox
     private readonly string keyFault;
     private readonly bool staleStatus;
     private readonly bool textAccessible;
+    private readonly bool editorOutsideCellTree;
     private string committedText = "";
     private string StatusText => staleStatus && IsDropDownOpen ? committedText : Text;
     public bool HidesList => hidden;
     public bool ReceivedKeyboardText { get; private set; }
 
     public KeyedTaxRateCombo(bool opensOnClick = false, bool hidden = false, string keyFault = "", bool staleStatus = false,
-        bool textAccessible = false)
+        bool textAccessible = false, bool editorOutsideCellTree = false)
     {
         this.hidden = hidden;
         this.keyFault = keyFault;
         this.staleStatus = staleStatus;
         this.textAccessible = textAccessible;
+        this.editorOutsideCellTree = editorOutsideCellTree;
         PreviewTextInput += (_, _) =>
         {
             ReceivedKeyboardText = true;
@@ -147,6 +149,7 @@ internal sealed class KeyedTaxRateCombo : ComboBox
             if (!owner.editing && !owner.IsDropDownOpen) return null;
             var children = base.GetChildrenCore() ?? [];
             if (owner.hidden) children.RemoveAll(peer => peer is not TextBoxAutomationPeer);
+            if (owner.editorOutsideCellTree) children.RemoveAll(peer => peer is TextBoxAutomationPeer);
             if (button is null && FindToggle(owner) is { } toggle) button = new R20UnitCombo.DropDownButtonPeer(toggle, owner);
             if (button is not null) children.Add(button);
             return children;

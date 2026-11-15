@@ -176,7 +176,8 @@ public sealed class VoucherWindow : Window, IGridSource
             TaxRateListHiddenFromUia = scenario.TaxRateListHiddenFromUia, TaxRateListKeyFault = scenario.TaxRateListKeyFault,
             TaxRateStatusStaleWhileOpen = scenario.TaxRateStatusStaleWhileOpen,
             TaxRateListTextAccessible = scenario.TaxRateListTextAccessible,
-            TaxRateRequiresKeyboardText = scenario.TaxRateRequiresKeyboardText
+            TaxRateRequiresKeyboardText = scenario.TaxRateRequiresKeyboardText,
+            TaxRateEditorOutsideCellTree = scenario.TaxRateEditorOutsideCellTree
         };
         grid.CellCommitted += OnCellCommitted;
         grid.CellClicked += (_, click) =>

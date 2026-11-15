@@ -524,9 +524,11 @@ public sealed class PurchaseVoucherTests : UiTest
         TaxRateListTextAccessible = true, TaxRateListKeyFault = "reject-selection" });
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public Task KkkntIsEnteredAsTextAndCommittedWithEnter(bool opensOnClick)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public Task KkkntIsEnteredAsTextAndCommittedWithEnter(bool opensOnClick, bool editorOutsideCellTree)
         => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
@@ -545,7 +547,8 @@ public sealed class PurchaseVoucherTests : UiTest
     }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
         TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick,
-        TaxRateListKeyFault = "ignore-arrows", TaxRateRequiresKeyboardText = true });
+        TaxRateListKeyFault = "ignore-arrows", TaxRateRequiresKeyboardText = true,
+        TaxRateEditorOutsideCellTree = editorOutsideCellTree });
 
     [Fact]
     public Task RejectedTypedKkkntStopsWithoutSavingOrTryingTheList()

@@ -275,9 +275,24 @@ internal static class NativeKeyboard
         return thread != 0 && GetGUIThreadInfo(thread, ref info)
             && (info.Focus == targetHandle || PInvoke.IsChild((HWND)targetHandle, (HWND)info.Focus));
     }
+
+    // Infragistics may host its live editor outside the virtual cell's UIA subtree.
+    internal static nint FocusedControlInCell(nint scopeHandle, int processId, System.Drawing.Rectangle bounds)
+    {
+        var thread = PInvoke.GetWindowThreadProcessId((HWND)scopeHandle, out _);
+        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info) || info.Focus == nint.Zero
+            || PInvoke.GetWindowThreadProcessId((HWND)info.Focus, out var focusedProcess) == 0 || focusedProcess != processId
+            || !InSameRoot(info.Focus, scopeHandle) || !PInvoke.IsWindowVisible((HWND)info.Focus)
+            || !PInvoke.IsWindowEnabled((HWND)info.Focus) || !PInvoke.GetWindowRect((HWND)info.Focus, out var rect))
+            return nint.Zero;
+        var editorBounds = System.Drawing.Rectangle.FromLTRB(rect.left, rect.top, rect.right, rect.bottom);
+        bounds.Inflate(4, 4);
+        return editorBounds.Width > 0 && editorBounds.Height > 0 && bounds.Contains(editorBounds) ? info.Focus : nint.Zero;
+    }
     // Report 0.2.191, invoice 205: the voucher form can be a top-level window without owner; the key may go to that form
     // (the window holding the target), never to another one.
-    private static bool InSameRoot(nint foreground, nint scopeHandle)
+    internal static bool InSameRoot(nint foreground, nint scopeHandle)
         => scopeHandle != nint.Zero && foreground != nint.Zero
             && PInvoke.GetAncestor((HWND)foreground, GET_ANCESTOR_FLAGS.GA_ROOT) == PInvoke.GetAncestor((HWND)scopeHandle, GET_ANCESTOR_FLAGS.GA_ROOT);
 
