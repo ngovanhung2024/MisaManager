@@ -1051,8 +1051,11 @@ public sealed partial class NativeWorkflowGateway : IWorkflowNativeGateway
                 continue;
             StopPoint();
             Entering("line:" + line.LineId + ":tax_rate");
-            // Typed "KKKNT"/"KCT" is not taken by R20, which keeps "0%" (report 0.2.201, HĐ 18534): pick it from the list.
-            if (taxKey is not null && !decimal.TryParse(taxKey, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
+            // KKKNT is accepted as text with Enter; Tab does not commit it (user confirmation for report 0.2.209).
+            if (string.Equals(taxKey, "KKKNT", StringComparison.OrdinalIgnoreCase))
+                await Steady(async () => await input.WriteCellAsync(await input.CaptureAsync(token), CellTarget(row, codes[row], "tax_rate"),
+                    "KKKNT", "KKKNT", NativeValueKind.TaxRate, profile.Culture, token, commitKey: "Enter"), token);
+            else if (taxKey is not null && !decimal.TryParse(taxKey, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out _))
                 await Steady(async () => await input.SelectCellOptionAsync(await input.CaptureAsync(token),
                     CellTarget(row, codes[row], "tax_rate"), tax, profile.Culture, token), token);
             else
