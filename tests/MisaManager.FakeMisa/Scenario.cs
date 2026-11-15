@@ -93,6 +93,8 @@ public sealed record Scenario
     public bool TaxRateListHiddenFromUia { get; init; }
     /// <summary>The popup exposes drawn text labels but no selectable ListItem pattern (0.2.208).</summary>
     public bool TaxRateListTextAccessible { get; init; }
+    /// <summary>Reject a typed KKKNT even after Enter, to check committed readback and no replay.</summary>
+    public bool TaxRateTextIgnored { get; init; }
     /// <summary>Unreadable list faults: close, ignore-arrows, ignore-enter or reject-selection.</summary>
     public string TaxRateListKeyFault { get; init; } = "";
     /// <summary>0.2.205: ItemStatus and combo Value keep the committed rate while its editor previews the selection.</summary>

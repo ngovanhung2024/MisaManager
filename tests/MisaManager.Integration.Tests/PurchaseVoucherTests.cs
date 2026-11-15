@@ -360,50 +360,47 @@ public sealed class PurchaseVoucherTests : UiTest
             < Array.FindIndex(events, line => line.Contains("field customer <-")), "Loại chứng từ phải đổi trước khi nhập nhà cung cấp.");
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", VoucherTypeRemembered = "2. Mua hàng trong nước không qua kho" });
 
-    // Reports 0.2.200/0.2.201, HĐ 18523/18534: diesel at "KKKNT" (no VAT). R20's rate cell gives its data value through
-    // ValuePattern and the label only as DisplayText, and a typed "KKKNT" leaves it at 0%: the option is picked from the
-    // list opened by the cell's arrow, on a voucher form opened without owner.
+    // Keep list-selection coverage on KCT; KKKNT now uses text + Enter as confirmed by the user.
     [Fact]
-    public Task DieselWithoutDeclaredVatIsPickedFromTheRateList() => WithFakeAsync(async (misa, harness, token) =>
+    public Task DieselExemptVatIsPickedFromTheRateList() => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KCT"));
 
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.True(result.Outcome == "saved", Describe(result));
         var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
-        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        Assert.Equal(("KCT", 0m), (line.TaxRate, line.TaxAmount));
         var rateEvent = Assert.Single(Events(misa), entry => entry.Contains(" tax_rate <- "));
-        Assert.Contains("'KKKNT' by None", rateEvent);
+        Assert.Contains("'KCT' by None", rateEvent);
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2,
         EditorUnowned = true });
 
-    // Report 0.2.202, HĐ 18534: R20's rate cell dropped its list on the cell click and the arrow click then closed it, so
-    // KKKNT was never drawn (GRID_OPTION_AMBIGUOUS). An already dropped list is used as is.
+    // An already dropped list must not be toggled closed; use KCT to exercise the remaining list path.
     [Fact]
     public Task RateListDroppedByTheCellClickIsNotToggledClosed() => WithFakeAsync(async (misa, harness, token) =>
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KCT"));
 
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.True(result.Outcome == "saved", Describe(result));
         var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
-        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        Assert.Equal(("KCT", 0m), (line.TaxRate, line.TaxAmount));
         Assert.Contains(Events(misa), entry => entry.Contains("tax_rate list dropped by the cell click"));
-        Assert.Contains("'KKKNT' by None", Assert.Single(Events(misa), entry => entry.Contains(" tax_rate <- ")));
+        Assert.Contains("'KCT' by None", Assert.Single(Events(misa), entry => entry.Contains(" tax_rate <- ")));
     }, Purchase with { AdditionalItems = FuelItems, PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2,
         EditorUnowned = true, TaxRateListOpensOnClick = true });
 
     // Report 0.2.203, HĐ 18534: the rate list was drawn open but UIA gave none of its items (GRID_DROPDOWN_NOT_OPEN). The
     // option is reached with the arrow keys, the cell read back after every key, and taken with Enter.
     [Theory]
-    [InlineData(false, "10%", "KKKNT")]
-    [InlineData(true, "10%", "KKKNT")]
+    [InlineData(false, "10%", "KCT")]
+    [InlineData(true, "10%", "KCT")]
     [InlineData(false, "KKKNT", "KCT")]
     public Task RateListWithoutUiaItemsIsPickedWithArrowKeys(bool opensOnClick, string initialRate, string expectedRate)
         => WithFakeAsync(async (misa, harness, token) =>
@@ -435,7 +432,7 @@ public sealed class PurchaseVoucherTests : UiTest
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KCT"));
 
         var result = await harness.EnterWithoutSavingAsync(invoice, misa, token);
 
@@ -462,17 +459,17 @@ public sealed class PurchaseVoucherTests : UiTest
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KCT"));
 
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.True(result.Outcome == "saved", Describe(result));
         var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
-        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        Assert.Equal(("KCT", 0m), (line.TaxRate, line.TaxAmount));
         var events = Events(misa);
         Assert.Contains(events, entry => entry.Contains("status frozen at '8%'"));
-        Assert.Single(events, entry => entry.Contains("tax_rate list closed on 'KKKNT'"));
-        Assert.Contains("'KKKNT' by None", Assert.Single(events, entry => entry.Contains(" tax_rate <- ")));
+        Assert.Single(events, entry => entry.Contains("tax_rate list closed on 'KCT'"));
+        Assert.Contains("'KCT' by None", Assert.Single(events, entry => entry.Contains(" tax_rate <- ")));
     }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
         TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick });
@@ -485,17 +482,17 @@ public sealed class PurchaseVoucherTests : UiTest
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KCT"));
 
         var result = await harness.RunAsync(invoice, misa, token);
 
         Assert.True(result.Outcome == "saved", Describe(result));
         var line = Assert.Single(Assert.Single(misa.State().Vouchers).Lines);
-        Assert.Equal(("KKKNT", 0m), (line.TaxRate, line.TaxAmount));
+        Assert.Equal(("KCT", 0m), (line.TaxRate, line.TaxAmount));
         var events = Events(misa);
         Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list key "));
-        Assert.Single(events, entry => entry.Contains("tax_rate list closed on 'KKKNT'"));
-        Assert.Contains("'KKKNT' by None", Assert.Single(events, entry => entry.Contains(" tax_rate <- ")));
+        Assert.Single(events, entry => entry.Contains("tax_rate list closed on 'KCT'"));
+        Assert.Contains("'KCT' by None", Assert.Single(events, entry => entry.Contains(" tax_rate <- ")));
     }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
         TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick,
@@ -507,14 +504,14 @@ public sealed class PurchaseVoucherTests : UiTest
     {
         harness.Companies.Select(CompanyProfileStore.LocThuyId);
         var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
-            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KCT"));
 
         var result = await harness.EnterWithoutSavingAsync(invoice, misa, token);
 
         Assert.Equal(WorkflowStatus.InputUncertain, result.Context.Snapshot.Status);
         Assert.Equal("INPUT_UNCERTAIN", result.Context.Snapshot.LastErrorCode);
         Assert.Contains("MISA hiện '8%'", result.Context.Snapshot.LastMessage);
-        Assert.Contains("cần 'KKKNT'", result.Context.Snapshot.LastMessage);
+        Assert.Contains("cần 'KCT'", result.Context.Snapshot.LastMessage);
         Assert.Empty(misa.State().Vouchers);
         var events = Events(misa);
         Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list key ") || entry.Contains(" Cất ("));
@@ -525,6 +522,50 @@ public sealed class PurchaseVoucherTests : UiTest
         PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
         TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = true,
         TaxRateListTextAccessible = true, TaxRateListKeyFault = "reject-selection" });
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task KkkntIsEnteredAsTextAndCommittedWithEnter(bool opensOnClick)
+        => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Equal("KKKNT", Assert.Single(Assert.Single(misa.State().Vouchers).Lines).TaxRate);
+        var events = Events(misa);
+        Assert.Single(events, entry => entry.Contains(" tax_rate <- 'KKKNT' by Return"));
+        Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list key Down")
+            || entry.Contains("tax_rate list key Up") || entry.Contains("tax_rate list moved"));
+    }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
+        PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
+        TaxRateListHiddenFromUia = true, TaxRateStatusStaleWhileOpen = true, TaxRateListOpensOnClick = opensOnClick,
+        TaxRateListKeyFault = "ignore-arrows" });
+
+    [Fact]
+    public Task RejectedTypedKkkntStopsWithoutSavingOrTryingTheList()
+        => WithFakeAsync(async (misa, harness, token) =>
+    {
+        harness.Companies.Select(CompanyProfileStore.LocThuyId);
+        var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "18534", Invoices.Supplier, Invoices.LocThuy,
+            Invoices.Line(0, "DAU_DO", "Dầu Điêzen 0,05S Mức 2", "Lít", 40.422m, 35_890m, "KKKNT"));
+
+        var result = await harness.EnterWithoutSavingAsync(invoice, misa, token);
+
+        Assert.Equal(WorkflowStatus.InputUncertain, result.Context.Snapshot.Status);
+        Assert.Empty(misa.State().Vouchers);
+        var events = Events(misa);
+        Assert.Single(events, entry => entry.Contains(" tax_rate <- 'KKKNT' by Return"));
+        Assert.DoesNotContain(events, entry => entry.Contains("tax_rate list moved") || entry.Contains(" Cất ("));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Runner.AdvanceAsync(token));
+        Assert.Equal(events, Events(misa));
+    }, Purchase with { AdditionalItems = FuelItems.Select(item => item with { TaxRate = "8%" }).ToArray(),
+        PurchaseItemStock = "CTY", TaxRateValueIsKey = true, QuantityDecimals = 2, EditorUnowned = true,
+        TaxRateListHiddenFromUia = true, TaxRateTextIgnored = true });
 
     // Report 0.2.202, HĐ 18534: "Dữ liệu đã bị thay đổi…" came after the 1.2 s Bỏ waited for it and the unowned form stayed
     // open (EDITOR_STILL_OPEN). A late prompt is still answered Không, once.
