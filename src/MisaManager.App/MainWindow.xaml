@@ -175,6 +175,8 @@
         <Button.ContextMenu><ContextMenu>
           <MenuItem x:Name="OpenInvoicesItem" Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập"/>
+          <MenuItem x:Name="ExportPendingHtmlItem" Header="Xuất hóa đơn chưa nhập ra ZIP…" Click="ExportPendingHtml_Click" IsEnabled="{Binding CanEditSource}"
+                    ToolTip="Chọn zip HTML gốc để lọc các hóa đơn còn lại trong danh sách rồi lưu thành một zip mới"/>
           <MenuItem x:Name="CatalogMenuItem" Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Nạp file danh mục vật tư, hàng hóa xuất từ MISA; xóa toàn bộ mã hàng cũ và thay bằng dữ liệu trong file"/>
           <MenuItem x:Name="ItemGroupsMenuItem" Header="Nạp nhóm vật tư, hàng hóa…" Click="ChooseItemGroups_Click" IsEnabled="{Binding CanEditSource}"

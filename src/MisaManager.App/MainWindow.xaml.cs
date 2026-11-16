@@ -83,6 +83,7 @@ public partial class MainWindow : Window
     private VoucherKind mode;
     private bool Purchase => mode == VoucherKind.Purchase;
     private bool switchingMode;
+    private bool exportingPendingHtml;
 
     public MainWindow()
     {
@@ -394,6 +395,8 @@ public partial class MainWindow : Window
         OpenInvoicesItem.ToolTip = Purchase
             ? "Chọn file zip các hóa đơn HTML tải từ cổng thuế (tool chuyển sang Excel, sắp xếp từ đầu năm), rồi file Mua hàng hóa, dịch vụ đã ghi sổ xuất từ MISA"
             : "Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập";
+        ExportPendingHtmlItem.Header = Purchase ? "Xuất hóa đơn mua vào chưa nhập ra ZIP…" : "Xuất hóa đơn bán ra chưa nhập ra ZIP…";
+        ExportPendingHtmlItem.ToolTip = "Chọn zip HTML gốc để lọc toàn bộ hóa đơn còn lại trong danh sách (không cần tick) rồi lưu thành một zip mới";
         ServicesTab.Visibility = Purchase ? Visibility.Visible : Visibility.Collapsed;
         if (!Purchase && ServicesTab.IsSelected) WorkspaceTabs.SelectedIndex = 0;
         if (invoices.Count == 0)
@@ -401,6 +404,60 @@ public partial class MainWindow : Window
             WorkbookLabel.Text = Purchase ? "Chưa chọn hóa đơn mua vào" : "Chưa chọn file Excel hóa đơn";
             WorkbookLabel.ToolTip = null;
         }
+    }
+
+    private async void ExportPendingHtml_Click(object sender, RoutedEventArgs e)
+    {
+        if (exportingPendingHtml || importModel.IsBusy) return;
+        if (workflow.IsRunning) { StatusLabel.Text = "Đang chạy Thêm vào MISA; hãy chờ lượt nhập dừng hẳn rồi xuất ZIP."; return; }
+        if (!workflow.HistoryLoaded) { StatusLabel.Text = "Đang tải lịch sử hóa đơn; hãy chờ tải xong rồi xuất ZIP."; return; }
+        var pending = invoices.Select(row => row.Invoice).Where(invoice => !workflow.IsDone(invoice)).ToArray();
+        var companyTaxCode = ((App)Application.Current).Services.Company.TaxCode;
+        if (pending.Length == 0)
+        {
+            MessageBox.Show(this, "Danh sách hiện không còn hóa đơn chưa nhập để xuất.", "Xuất hóa đơn chưa nhập", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var open = new OpenFileDialog
+        {
+            Filter = "ZIP hóa đơn HTML (*.zip)|*.zip",
+            CheckFileExists = true,
+            Multiselect = false,
+            Title = "Chọn file ZIP chứa toàn bộ hóa đơn HTML gốc"
+        };
+        if (open.ShowDialog(this) != true) return;
+        var save = new SaveFileDialog
+        {
+            Filter = "ZIP hóa đơn HTML đã lọc (*.zip)|*.zip",
+            AddExtension = true,
+            DefaultExt = ".zip",
+            FileName = Path.GetFileNameWithoutExtension(open.FileName) + "_chua_nhap.zip",
+            Title = "Lưu ZIP các hóa đơn chưa nhập"
+        };
+        if (save.ShowDialog(this) != true) return;
+        exportingPendingHtml = true;
+        StatusLabel.Text = "Đang lọc và đóng gói các hóa đơn HTML chưa nhập...";
+        try
+        {
+            var result = await Task.Run(() => RemainingInvoiceArchive.Export(open.FileName, save.FileName, pending, companyTaxCode));
+            var message = result.ExportedFiles > 0
+                ? $"Đã xuất {result.ExportedFiles:N0}/{pending.Length:N0} file HTML vào:\n{save.FileName}"
+                : "Không tìm thấy HTML khớp duy nhất với hóa đơn chưa nhập. Chưa tạo ZIP kết quả.";
+            if (result.UnmatchedInvoices.Count > 0)
+                message += "\n\nKhông tìm thấy hoặc có nhiều bản không khớp rõ ràng trong ZIP nguồn:\n" + string.Join(", ", result.UnmatchedInvoices.Take(12))
+                    + (result.UnmatchedInvoices.Count > 12 ? "…" : "");
+            if (result.SkippedFiles.Count > 0)
+                message += $"\n\nBỏ qua {result.SkippedFiles.Count:N0} file không đọc được.";
+            StatusLabel.Text = $"Đã xuất {result.ExportedFiles:N0} file HTML chưa nhập.";
+            MessageBox.Show(this, message, "Đã xuất hóa đơn chưa nhập", MessageBoxButton.OK,
+                result.UnmatchedInvoices.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+        {
+            StatusLabel.Text = "Không xuất được ZIP hóa đơn chưa nhập.";
+            MessageBox.Show(this, error.Message, "Không xuất được ZIP", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally { exportingPendingHtml = false; }
     }
 
     private async void ChooseCatalog_Click(object sender, RoutedEventArgs e)
