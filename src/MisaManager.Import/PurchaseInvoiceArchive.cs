@@ -303,7 +303,7 @@ public static partial class PurchaseInvoiceArchive
     private static bool IsHtml(string name) => name.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".htm", StringComparison.OrdinalIgnoreCase);
 
     // Portal file names end with "_<trạng thái>_<hash>.html" ("dung" = valid).
-    private static bool IsCancelledFile(string name)
+    internal static bool IsCancelledFile(string name)
     {
         var parts = Path.GetFileNameWithoutExtension(name).Split('_');
         return parts.Length >= 3 && Plain(parts[^2]) is "huy" or "dahuy" or "bihuy";

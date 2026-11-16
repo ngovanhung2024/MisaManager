@@ -66,6 +66,13 @@ dotnet run --project src/MisaManager.App
 
 Trên Linux/macOS chỉ biên dịch được (không chạy WPF/UIA): `dotnet build MisaManager.sln -p:EnableWindowsTargeting=true`.
 
+## Xuất HTML hóa đơn chưa nhập
+
+Để lấy lại HTML của các hóa đơn còn chưa nhập, chọn **••• → Xuất hóa đơn bán ra/mua vào chưa nhập ra ZIP…**,
+chọn ZIP chứa toàn bộ HTML gốc rồi chọn nơi lưu ZIP đã lọc. Tool dùng danh sách của công ty và chế độ đang mở,
+bỏ các hóa đơn đã Cất/đã có trong MISA, lấy cả dòng chưa tick hoặc đang thiếu dữ liệu/tạm hoãn. File HTML được giữ
+nguyên nội dung và thư mục; hóa đơn không tìm thấy hoặc khớp nhiều bản khác nhau sẽ được báo khi xuất xong.
+
 ## Test
 
 ```powershell

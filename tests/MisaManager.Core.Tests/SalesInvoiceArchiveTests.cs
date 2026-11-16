@@ -77,6 +77,78 @@ public sealed class SalesInvoiceArchiveTests : IDisposable
         return await new InvoiceWorkbookImporter(new WorkbookReader()).ImportAsync(workbook, null, Token);
     }
 
+    private static string ExportHtml(string number = "1805") => Html(number, 5, Buyer("NGƯỜI MUA", tax: "3300100999"),
+        [("Hàng mẫu", "Chai", "1", "100", "100")], "5", "105");
+
+    [Fact]
+    public async Task RemainingExportCopiesOriginalHtmlAndPathsForLegacySales()
+    {
+        var html = ExportHtml();
+        var pending = (await Import(("pending.html", html))).Invoices.Single();
+        Assert.Empty(pending.Identity.SellerTaxCode);
+        var source = Zip(("nested/pending.html", html), ("done.html", ExportHtml("1806")),
+            ("cancelled_huy_hash.html", html));
+        var target = temp.Combine("remaining.zip");
+
+        var result = RemainingInvoiceArchive.Export(source, target, [pending], "3301000999", Token);
+
+        Assert.Equal(1, result.ExportedFiles);
+        Assert.Empty(result.UnmatchedInvoices);
+        using var output = ZipFile.OpenRead(target);
+        var entry = Assert.Single(output.Entries);
+        Assert.Equal("html/nested/pending.html", entry.FullName);
+        using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
+        Assert.Equal(html, await reader.ReadToEndAsync(Token));
+    }
+
+    [Fact]
+    public async Task RemainingExportRejectsOtherSellerOrDateAndKeepsExistingDestination()
+    {
+        var pending = (await Import(("pending.html", ExportHtml()))).Invoices.Single();
+        var source = Zip(("other-seller.html", ExportHtml().Replace("3301000999", "3301000888", StringComparison.Ordinal)),
+            ("other-date.html", ExportHtml().Replace("05", "06", StringComparison.Ordinal)));
+        var target = temp.Combine("remaining.zip");
+        await File.WriteAllTextAsync(target, "existing output", Token);
+
+        var result = RemainingInvoiceArchive.Export(source, target, [pending], "3301000999", Token);
+
+        Assert.Equal(0, result.ExportedFiles);
+        Assert.Single(result.UnmatchedInvoices);
+        Assert.Equal("existing output", await File.ReadAllTextAsync(target, Token));
+    }
+
+    [Fact]
+    public async Task RemainingExportDoesNotGuessBetweenSellersWithoutCompanyTax()
+    {
+        var pending = (await Import(("pending.html", ExportHtml()))).Invoices.Single();
+        var source = Zip(("a.html", ExportHtml()),
+            ("b.html", ExportHtml().Replace("3301000999", "3301000888", StringComparison.Ordinal)));
+        var target = temp.Combine("remaining.zip");
+
+        var result = RemainingInvoiceArchive.Export(source, target, [pending], token: Token);
+
+        Assert.Equal(0, result.ExportedFiles);
+        Assert.Single(result.UnmatchedInvoices);
+        Assert.False(File.Exists(target));
+    }
+
+    [Fact]
+    public async Task RemainingExportSkipsUnsafePathsAndNeverOverwritesSource()
+    {
+        var pending = (await Import(("pending.html", ExportHtml()))).Invoices.Single();
+        var source = Zip(("../../unsafe.html", ExportHtml()));
+        var target = temp.Combine("remaining.zip");
+        var original = await File.ReadAllBytesAsync(source, Token);
+
+        Assert.Throws<InvalidOperationException>(() => RemainingInvoiceArchive.Export(source, source, [pending], token: Token));
+        var result = RemainingInvoiceArchive.Export(source, target, [pending], token: Token);
+
+        Assert.Equal(0, result.ExportedFiles);
+        Assert.Single(result.SkippedFiles);
+        Assert.Equal(original, await File.ReadAllBytesAsync(source, Token));
+        Assert.False(File.Exists(target));
+    }
+
     [Fact]
     public async Task PortalPagesImportLikeTheOldInvoiceListExcel()
     {
