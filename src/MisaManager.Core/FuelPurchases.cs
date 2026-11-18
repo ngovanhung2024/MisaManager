@@ -67,6 +67,14 @@ public static partial class FuelPurchases
         };
     }
 
+    /// <summary>True when every non-discount line is gasoline/lubricant for the selected fuel company.</summary>
+    public static bool IsGasolineOnly(InvoiceDocument invoice, FuelPurchaseCompany? rule)
+    {
+        if (Company(invoice, rule) is null) return false;
+        var lines = invoice.Lines.Where(line => !ItemNatures.IsDiscount(line)).ToArray();
+        return lines.Length > 0 && lines.All(line => Kind(line.Name) == FuelKind.Gasoline);
+    }
+
     /// <summary>Lines as the "Dịch vụ" tab lists a fuel-only buyer's invoice that is left out (null when it is entered).</summary>
     public static IReadOnlyList<ServiceLine>? Skipped(InvoiceDocument invoice, FuelPurchaseCompany? rule)
     {

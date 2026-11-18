@@ -62,6 +62,14 @@ public sealed class FuelPurchaseTests : IDisposable
     }
 
     [Fact]
+    public void GasolineOnlySelectionExcludesDieselAndNonFuelInvoices()
+    {
+        Assert.True(FuelPurchases.IsGasolineOnly(Purchase(LocThuy, "Xăng RON 95 Mức 3", "Nhớt Caltex super"), Rule));
+        Assert.False(FuelPurchases.IsGasolineOnly(Purchase(LocThuy, "Xăng RON 95 Mức 3", "Dầu Điêzen 0,05S Mức 2"), Rule));
+        Assert.False(FuelPurchases.IsGasolineOnly(Purchase(LocThuy, "Bia heineken bạc 250ml"), Rule));
+    }
+
+    [Fact]
     public void NonFuelAndMixedRouteInvoicesOfTheFuelBuyerAreSkipped()
     {
         var beer = Purchase(LocThuy, "Bia heineken bạc 250ml");

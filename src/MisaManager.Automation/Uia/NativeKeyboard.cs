@@ -197,6 +197,20 @@ internal static class NativeKeyboard
         SendClick(x, y);
     }
 
+    internal static void DoubleClick(int x, int y, nint windowHandle, int processId, nint targetHandle = default)
+    {
+        Activate(targetHandle == nint.Zero ? windowHandle : targetHandle, windowHandle, processId);
+        WaitForUserButtonsReleased();
+        if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới dòng MISA.");
+        var hit = WindowFromPoint(new PointStruct { X = x, Y = y });
+        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out var owner) == 0 || owner != processId)
+            throw new AutomationException("FOCUS_LOST", "Có cửa sổ khác che dòng MISA cần mở.");
+        if (targetHandle != nint.Zero && PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT)
+                != PInvoke.GetAncestor((HWND)targetHandle, GET_ANCESTOR_FLAGS.GA_ROOT))
+            throw new AutomationException("FOCUS_LOST", "Cửa sổ MISA khác đang che dòng cần mở.");
+        SendDoubleClick(x, y);
+    }
+
     /// <summary>
     /// Clicks an item of a MISA popup list that is open now. Unlike <see cref="Click"/> nothing is activated first: the
     /// Alt key and foreground switch of activation close R20's value list, and the click then lands on the grid row
@@ -216,6 +230,31 @@ internal static class NativeKeyboard
         SendClick(x, y);
     }
 
+    /// <summary>Scrolls an already-open MISA popup without activating the window again.</summary>
+    internal static void ScrollOpenListDown(int x, int y, int processId, Func<nint, bool> isList)
+    {
+        DesktopSession.ThrowIfUnavailable();
+        var foreground = (nint)PInvoke.GetForegroundWindow();
+        if (foreground == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)foreground, out var owner) == 0 || owner != processId)
+            throw new AutomationException("GRID_DROPDOWN_MISSING", "MISA không còn ở trước nên danh sách đã đóng; không cuộn.");
+        WaitForUserButtonsReleased();
+        if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới danh sách MISA.");
+        var hit = WindowAt(x, y);
+        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out var hitProcess) == 0
+            || hitProcess != processId || !isList(hit))
+            throw new AutomationException("GRID_DROPDOWN_MISSING", "Danh sách MISA đã đóng trước khi cuộn.");
+        var input = new NativeInput
+        {
+            Type = 0,
+            Data = new()
+            {
+                Mouse = new MouseInput { Data = unchecked((uint)-WHEEL_DELTA), Flags = MouseWheel }
+            }
+        };
+        if (SendInput(1, [input], Marshal.SizeOf<NativeInput>()) != 1)
+            throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được cuộn danh sách MISA.", true);
+    }
+
     private static void SendClick(int x, int y)
     {
         // Every event carries the absolute target, and SendInput queues the batch without
@@ -232,8 +271,23 @@ internal static class NativeKeyboard
             throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được click ô MISA.", true);
     }
 
+    private static void SendDoubleClick(int x, int y)
+    {
+        var (dx, dy) = AbsolutePoint(x, y);
+        const uint at = MouseMove | MouseAbsolute | MouseVirtualDesk;
+        var inputs = new[]
+        {
+            Mouse(at, dx, dy), Mouse(at | MouseLeftDown, dx, dy), Mouse(at | MouseLeftUp, dx, dy),
+            Mouse(at | MouseLeftDown, dx, dy), Mouse(at | MouseLeftUp, dx, dy)
+        };
+        if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length)
+            throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được mở dòng MISA.", true);
+    }
+
     private const uint MouseMove = 0x0001, MouseLeftDown = 0x0002, MouseLeftUp = 0x0004,
-        MouseVirtualDesk = 0x4000, MouseAbsolute = 0x8000;
+        MouseWheel = 0x0800;
+    private const int WHEEL_DELTA = 120;
+    private const uint MouseVirtualDesk = 0x4000, MouseAbsolute = 0x8000;
 
     private static (int X, int Y) AbsolutePoint(int x, int y)
     {
