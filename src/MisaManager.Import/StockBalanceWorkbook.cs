@@ -43,6 +43,8 @@ public static class StockBalanceWorkbook
                 Assignment: byLine.GetValueOrDefault((invoice.InvoiceId, line.LineId)))))
             .Where(entry => entry.Assignment is not null && entry.Line.Cells.ContainsKey("name"))
             .ToDictionary(entry => entry.Line.Cells["name"].Row, entry => (entry.Line, Assignment: entry.Assignment!));
+        var skippedRows = lines.Values.Where(entry => entry.Assignment.Kind == StockAllocationKind.Skipped)
+            .Select(entry => entry.Line.Cells["name"].Row).ToHashSet();
         int? Column(string field) => imported.Invoices.SelectMany(invoice => invoice.Lines)
             .Select(line => line.Cells.GetValueOrDefault(field)?.Column).FirstOrDefault(column => column is not null);
         var last = sheet.Rows.SelectMany(row => row.Cells.Keys).DefaultIfEmpty(0).Max();
@@ -50,7 +52,7 @@ public static class StockBalanceWorkbook
         var notes = Enumerable.Range(last + 1, NoteHeaders.Length).ToArray();
         var (name, unit, quantity, price) = (Column("name"), Column("unit"), Column("quantity"), Column("unitPrice"));
         var written = 0;
-        var rows = sheet.Rows.Select(row =>
+        var rows = sheet.Rows.Where(row => row.Number == imported.Source.FirstRow || !skippedRows.Contains(row.Number)).Select(row =>
         {
             var cells = row.Cells.Values.ToDictionary(cell => cell.Column, cell => Value(cell, source.Date1904));
             if (row.Number == imported.Source.FirstRow)
@@ -102,7 +104,7 @@ public static class StockBalanceWorkbook
             Table("Dòng bán ra đổi mã", ["Ngày", "Số hóa đơn", "Tên hàng trên hóa đơn", "ĐVT", "Số lượng", "Mã theo tên", "Mã dùng", "Tên hàng nhập",
                     "ĐVT nhập", "Số lượng nhập", "Cân đối kho", "Thiếu tồn"],
                 plan.Sales.Where(line => line.CodeChanged || line.Converted || line.Name != line.SourceName
-                        || line.Kind is StockAllocationKind.Borrowed or StockAllocationKind.Shortage or StockAllocationKind.Unmatched)
+                        || line.Kind is StockAllocationKind.Borrowed or StockAllocationKind.Shortage or StockAllocationKind.Unmatched or StockAllocationKind.Skipped)
                     .Select(line => (IReadOnlyList<object?>)[line.Date.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture), line.InvoiceNumber,
                         line.SourceName, line.SourceUnit, line.SourceQuantity, line.MatchedCode, line.Code, line.Name, line.Unit, line.Quantity,
                         Note(line), line.Missing == 0 ? null : line.Missing])),
@@ -123,6 +125,7 @@ public static class StockBalanceWorkbook
         StockAllocationKind.Similar => $"Tên gần giống: dùng tồn của {line.Code} (thay {line.MatchedCode ?? "mã mới"})",
         StockAllocationKind.Borrowed => $"Âm tạm thời {line.Missing.ToString("0.###", CultureInfo.InvariantCulture)} đến khi nhập mua {line.Code}",
         StockAllocationKind.Shortage => $"Thiếu tồn {line.Missing.ToString("0.###", CultureInfo.InvariantCulture)}: không mã cùng loại nào đủ hàng",
+        StockAllocationKind.Skipped => $"Bỏ qua dòng: thiếu {line.Missing.ToString("0.###", CultureInfo.InvariantCulture)} hoặc không quy đổi được, không nhập để tránh âm kho",
         _ => "Chưa có mã trong danh mục: tool sẽ tạo mã mới không có tồn"
     };
 

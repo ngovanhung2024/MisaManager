@@ -641,16 +641,20 @@ public partial class MainWindow : Window
     private static string BalanceSummary(StockBalancePlan plan, ImportResult purchases, string purchaseSource, int posted)
     {
         int Count(params StockAllocationKind[] kinds) => plan.Sales.Count(line => kinds.Contains(line.Kind));
+        var balanced = plan.Sales.Where(line => line.Kind != StockAllocationKind.Skipped).ToArray();
+        var skipped = Count(StockAllocationKind.Skipped);
         var dates = plan.Sales.Select(line => line.Date).DefaultIfEmpty().ToArray();
         var lines = new List<string>
         {
-            $"Đã cân đối {plan.Sales.Count:N0} dòng bán ra ({dates.Min():dd/MM/yyyy} → {dates.Max():dd/MM/yyyy}) với tồn đầu kỳ"
+            $"Đã cân đối {balanced.Length:N0} dòng bán ra ({dates.Min():dd/MM/yyyy} → {dates.Max():dd/MM/yyyy}) với tồn đầu kỳ"
                 + $"{(plan.From is { } from ? " " + from.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "")} và {plan.Purchases:N0} hóa đơn mua vào "
                 + $"({Path.GetFileName(purchaseSource)}, {purchases.Invoices.Count:N0} hóa đơn hàng hóa).",
             $"• Giữ mã theo tên hàng: {Count(StockAllocationKind.Matched, StockAllocationKind.Fixed):N0} dòng",
             $"• Chuyển sang mã cùng mặt hàng còn tồn (ưu tiên hết tồn đầu năm): {Count(StockAllocationKind.Family):N0} dòng",
-            $"• Chuyển sang mã tên gần giống: {Count(StockAllocationKind.Similar):N0} dòng; quy đổi ĐVT: {plan.Sales.Count(line => line.Converted):N0} dòng",
+            $"• Chuyển sang mã tên gần giống: {Count(StockAllocationKind.Similar):N0} dòng; quy đổi ĐVT: {balanced.Count(line => line.Converted):N0} dòng",
         };
+        if (skipped > 0)
+            lines.Add($"• Bỏ qua {skipped:N0} dòng thiếu tồn hoặc không quy đổi được để không phát sinh âm kho; xem tab Dòng bán ra đổi mã trong báo cáo.");
         if (Count(StockAllocationKind.Borrowed) > 0)
             lines.Add($"• Âm tạm thời (hàng mua vào sau ngày bán): {Count(StockAllocationKind.Borrowed):N0} dòng");
         if (Count(StockAllocationKind.Shortage, StockAllocationKind.Unmatched) > 0)
@@ -1088,7 +1092,7 @@ public partial class MainWindow : Window
             + (posted.Count == 0 ? " (chưa nạp danh sách đã ghi sổ)" : $" · bỏ {hidden:N0} hóa đơn đã ghi sổ")
             + (imported.Services is { Count: > 0 } services ? $" · {services.Count:N0} hóa đơn dịch vụ không nhập (tab Dịch vụ)" : "")
             + (imported.SkippedUnnumberedRows > 0 ? $" · bỏ {imported.SkippedUnnumberedRows:N0} dòng chưa có số" : "")
-            + (imported.SkippedNegativeInvoices > 0 ? $" · bỏ {imported.SkippedNegativeInvoices:N0} hóa đơn số lượng âm" : "")
+            + (imported.SkippedNegativeInvoices > 0 ? $" · lọc dòng âm trong {imported.SkippedNegativeInvoices:N0} hóa đơn" : "")
             + (blocked > 0 ? $" · {blocked:N0} hóa đơn cần bổ sung dữ liệu" : "")
             + (held > 0 ? $" · {held:N0} hóa đơn tạm hoãn (mặt hàng trùng tên nhiều mã)" : "");
     }

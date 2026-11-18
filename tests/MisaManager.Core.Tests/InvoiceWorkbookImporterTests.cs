@@ -293,7 +293,17 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
         Assert.True(Has(result.Issues, "NO_INVOICES"));
     }
 
-    /// <summary>HĐ 1425 of the real export: one line of quantity -1 makes the whole invoice an adjustment, left out.</summary>
+    [Fact]
+    public async Task InvoiceWithOnlyNegativeLinesIsDropped()
+    {
+        var result = await ImportPortal(PortalLine(1, "9000", "Khách hàng không cung cấp thông tin", "", "",
+            quantity: -1, amount: -41_905, taxAmount: -2_095));
+
+        Assert.Empty(result.Invoices);
+        Assert.Equal(1, result.SkippedNegativeInvoices);
+        Assert.True(Has(result.Issues, "INVOICE_NEGATIVE_SKIPPED", IssueSeverity.Info));
+    }
+    /// <summary>HĐ 1425 of the real export: the negative adjustment line is dropped while the positive line remains.</summary>
     [Fact]
     public async Task InvoiceWithANegativeLineIsSkipped()
     {
@@ -303,7 +313,10 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
                 "Kg", 0, -1, -13_524, 5, -676),
             PortalLine(3, "1426", "BÁN CHO NGƯỜI TIÊU DÙNG", "", ""));
 
-        Assert.Equal("1426", Only(result).Identity.Number);
+        Assert.Equal(["1425", "1426"], result.Invoices.Select(invoice => invoice.Identity.Number));
+        var adjusted = result.Invoices.Single(invoice => invoice.Identity.Number == "1425");
+        Assert.Single(adjusted.Lines);
+        Assert.Equal("COMPASS 60OD-100CC PET", adjusted.Lines[0].Name);
         Assert.False(result.IsBlocked);
         Assert.Equal(1, result.SkippedNegativeInvoices);
         var skipped = Assert.Single(result.Issues, issue => issue.Code == "INVOICE_NEGATIVE_SKIPPED");
@@ -688,7 +701,10 @@ public sealed class InvoiceWorkbookImporterTests : IDisposable
         var result = await Import(sheet => sheet.Cell(2, InvoiceSheet.Quantity, -22m));
 
         Assert.Equal(1, result.SkippedNegativeInvoices);
-        Assert.DoesNotContain(result.Invoices, invoice => invoice.Identity.Number == "1000");
+        var invoice = Assert.Single(result.Invoices, item => item.Identity.Number == "1000");
+        Assert.Single(invoice.Lines);
+        Assert.Equal("Hesman 60WG 18g", invoice.Lines[0].Name);
+        Assert.False(invoice.IsBlocked);
         Assert.True(Has(result.Issues, "INVOICE_NEGATIVE_SKIPPED", IssueSeverity.Info));
     }
 

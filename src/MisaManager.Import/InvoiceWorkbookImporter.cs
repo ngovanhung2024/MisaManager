@@ -199,12 +199,40 @@ public sealed class InvoiceWorkbookImporter(WorkbookReader reader, bool purchase
                     $"Bỏ qua {services.Count:N0} hóa đơn dịch vụ/chi phí (xem tab Dịch vụ).", sheet.Name,
                     Resolution: "Chỉ hàng hóa được nhập vào Mua hàng nhập kho. Nếu tool nhận nhầm, sửa cột 'Phân loại' thành 'Hàng hóa' rồi nạp lại."));
         }
-        // Negative lines are adjustments/returns, which are not entered: the whole invoice is left out.
         var negative = built.Where(invoice => invoice.Lines.Any(line => line.Quantity < 0 || line.AmountBeforeTax < 0)).ToArray();
-        var invoices = built.Except(negative).ToImmutableArray();
+
+        var invoices = built.Select(invoice =>
+        {
+            var removed = invoice.Lines.Where(line => line.Quantity < 0 || line.AmountBeforeTax < 0).ToArray();
+            if (removed.Length == 0) return invoice;
+            var kept = invoice.Lines.Where(line => line.Quantity >= 0 && line.AmountBeforeTax >= 0).ToImmutableArray();
+            if (kept.Length == 0) return null;
+            var keptAmounts = kept.Select(line => line.AmountBeforeTax).ToArray();
+            var keptTaxes = kept.Select(line => line.TaxAmount).ToArray();
+            var keptTotals = kept.Select(line => line.TotalWithTax).ToArray();
+            var subtotal = keptAmounts.All(value => value is not null) ? keptAmounts.Sum(value => value!.Value) : invoice.Subtotal;
+            var taxTotal = keptTaxes.All(value => value is not null) ? keptTaxes.Sum(value => value!.Value) : invoice.TaxTotal;
+            var grandTotal = keptTotals.All(value => value is not null) ? keptTotals.Sum(value => value!.Value)
+                : subtotal is decimal subtotalValue && taxTotal is decimal taxValue ? subtotalValue + taxValue : invoice.GrandTotal;
+            var removedIds = removed.Select(line => line.LineId).ToHashSet(StringComparer.Ordinal);
+            var notice = new ImportIssue("INVOICE_NEGATIVE_LINE_SKIPPED", IssueSeverity.Info,
+                $"Bỏ qua {removed.Length:N0} dòng âm trong hóa đơn {invoice.Identity.Number}; giữ lại các dòng dương.", invoice.Source.Worksheet,
+                InvoiceId: invoice.InvoiceId, Resolution: "Hóa đơn điều chỉnh/trả hàng không nhập bằng tool.");
+            var adjusted = invoice with
+            {
+                Lines = kept,
+                Subtotal = subtotal,
+                TaxTotal = taxTotal,
+                GrandTotal = grandTotal,
+                Issues = [.. invoice.Issues.Where(issue => issue.LineId is null || !removedIds.Contains(issue.LineId)), notice],
+                SourceIssues = [.. invoice.SourceIssues.Where(issue => issue.LineId is null || !removedIds.Contains(issue.LineId))]
+            };
+            return adjusted with { Fingerprint = InvoiceFingerprint.Compute(adjusted) };
+        }).OfType<InvoiceDocument>().ToImmutableArray();
         if (negative.Length > 0)
             issues.Add(new("INVOICE_NEGATIVE_SKIPPED", IssueSeverity.Info,
-                $"Bỏ qua {negative.Length:N0} hóa đơn có số lượng/thành tiền âm (HĐ {string.Join(", ", negative.Take(10).Select(invoice => invoice.Identity.Number))}{(negative.Length > 10 ? ", …" : "")}).",
+                $"Bỏ qua {negative.Select(invoice => invoice.Lines.Count(line => line.Quantity < 0 || line.AmountBeforeTax < 0)).Sum():N0} dòng có số lượng/thành tiền âm trong {negative.Length:N0} hóa đơn"
+                + $" (HĐ {string.Join(", ", negative.Take(10).Select(invoice => invoice.Identity.Number))}{(negative.Length > 10 ? ", …" : "")}); các hóa đơn còn dòng dương được giữ lại.",
                 sheet.Name, Resolution: "Hóa đơn điều chỉnh/trả hàng không nhập bằng tool."));
         if (invoices.Length == 0 && services.Count == 0) issues.Add(new("NO_INVOICES", IssueSeverity.Blocking, "Worksheet không có dòng hóa đơn.", sheet.Name));
         return new ImportResult(source, sheets.Select(item => item.Name).ToArray(), invoices, issues.Concat(invoices.SelectMany(item => item.Issues)).ToArray(),
