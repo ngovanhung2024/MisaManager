@@ -15,6 +15,7 @@ public sealed class MainWindow : Window, IGridSource
     private readonly string[] listKeys;
     private readonly string listScreen;
     private readonly bool purchase;
+    private string invoiceFilter = "";
 
     public MainWindow(FakeProfile profile, Scenario scenario, FakeStore store)
     {
@@ -100,7 +101,18 @@ public sealed class MainWindow : Window, IGridSource
             _ => profile.Column(listScreen, "vouchers", key)
         };
         double ColumnWidth(string key) => key switch { "customer" => 170, "description" => 120, "template" => 60, _ => 82 };
-        list = new FakeGrid(profile.GridId(listScreen, "vouchers"), 420);
+        list = new FakeGrid(profile.GridId(listScreen, "vouchers"), 420) { ShowFilters = true };
+        list.FilterCommitted += (_, filter) =>
+        {
+            if (filter.Key != "number") return;
+            invoiceFilter = filter.Text.Trim();
+            list.Refresh(force: true);
+        };
+        list.RowDoubleClicked += (_, row) =>
+        {
+            var filtered = FilteredVouchers();
+            if (row >= 0 && row < filtered.Count) OpenExistingVoucher(filtered[row]);
+        };
         list.Bind([.. listKeys.Select(key => new GridColumn(key, Caption(key), ColumnWidth(key)))], this);
         content.Children.Add(list);
         scope.Children.Add(content);
@@ -111,11 +123,14 @@ public sealed class MainWindow : Window, IGridSource
 
     public FakeStore Store => store;
 
-    int IGridSource.RowCount => store.Vouchers.Count;
+    private IReadOnlyList<SavedVoucher> FilteredVouchers()
+        => invoiceFilter.Length == 0 ? store.Vouchers : store.Vouchers.Where(voucher => voucher.InvoiceNumber.Contains(invoiceFilter, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+    int IGridSource.RowCount => FilteredVouchers().Count;
 
     string IGridSource.Value(int row, string key)
     {
-        var voucher = store.Vouchers[row];
+        var voucher = FilteredVouchers()[row];
         return key switch
         {
             "posted_date" => voucher.PostedDate,
@@ -139,5 +154,11 @@ public sealed class MainWindow : Window, IGridSource
     {
         if (OwnedWindows.OfType<VoucherWindow>().Any()) return;
         new VoucherWindow(profile, scenario, store, this, Company).Show();
+    }
+
+    private void OpenExistingVoucher(SavedVoucher voucher)
+    {
+        if (OwnedWindows.OfType<VoucherWindow>().Any()) return;
+        new VoucherWindow(profile, scenario, store, this, Company, voucher).Show();
     }
 }

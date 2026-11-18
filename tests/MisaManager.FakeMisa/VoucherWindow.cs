@@ -20,6 +20,7 @@ public sealed class LineModel
     public decimal Amount { get; set; }
     public string TaxRate { get; set; } = "";
     public decimal TaxAmount { get; set; }
+    public string CostItem { get; set; } = "";
 }
 
 /// <summary>
@@ -54,9 +55,12 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly Button save;
     private readonly Button post;
     private readonly List<Button> readOnlyCommands = [];
+    private Button? edit;
     private bool saveProofDelayed;
     private IReadOnlyList<GridColumn> itemLayout = [];
     private IReadOnlyList<GridColumn> taxLayout = [];
+    private IReadOnlyList<GridColumn> statisticsLayout = [];
+    private readonly SavedVoucher? existingVoucher;
     private bool dirty;
     private bool saved;
     private bool busyAfterQuantityClickShown;
@@ -64,7 +68,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private static int vouchersOpened;
     private readonly bool firstVoucher = Interlocked.Increment(ref vouchersOpened) == 1;
 
-    public VoucherWindow(FakeProfile profile, Scenario scenario, FakeStore store, MainWindow main, string company)
+    public VoucherWindow(FakeProfile profile, Scenario scenario, FakeStore store, MainWindow main, string company, SavedVoucher? existingVoucher = null)
     {
         this.profile = profile;
         this.scenario = scenario;
@@ -73,6 +77,8 @@ public sealed class VoucherWindow : Window, IGridSource
         this.store = store;
         this.main = main;
         this.company = company;
+        this.existingVoucher = existingVoucher;
+        if (existingVoucher is not null) expense = string.Equals(existingVoucher.VoucherType, "expense", StringComparison.Ordinal);
         if (!scenario.EditorUnowned) Owner = main;
         Loaded += (_, _) => RememberVoucherType();
         Ui.Id(this, profile.ScopeId(screen));
@@ -96,12 +102,32 @@ public sealed class VoucherWindow : Window, IGridSource
         header["payment"] = purchase ? "Chưa thanh toán" : "Tiền mặt";
         foreach (var key in new[] { "customer", "customer_name", "address", "customer_tax", "payer", "buyer", "template" }) header[key] = "";
         header["reason"] = (purchase ? "Mua hàng theo hóa đơn " : "Thu tiền bán hàng theo hóa đơn ") + header["number"];
+        if (existingVoucher is not null)
+        {
+            saved = true;
+            header["voucher_number"] = existingVoucher.VoucherNumber;
+            header["number"] = existingVoucher.InvoiceNumber;
+            header["series"] = existingVoucher.Series;
+            header["customer"] = existingVoucher.CustomerCode;
+            header["customer_name"] = existingVoucher.CustomerName;
+            header["customer_tax"] = existingVoucher.CustomerTaxCode;
+            header["posted_date"] = existingVoucher.PostedDate;
+            header["voucher_date"] = existingVoucher.VoucherDate;
+            header["issued_date"] = existingVoucher.IssuedDate;
+            lines.AddRange(existingVoucher.Lines.Select(line => new LineModel
+            {
+                Code = line.Code, Name = line.Name, Unit = line.Unit, Stock = line.Stock,
+                DebitAccount = line.DebitAccount, RevenueAccount = line.RevenueAccount, CreditAccount = line.CreditAccount,
+                Quantity = line.Quantity, UnitPrice = line.UnitPrice, Amount = line.Amount, TaxRate = line.TaxRate,
+                TaxAmount = line.TaxAmount, CostItem = line.CostItem
+            }));
+        }
 
         var root = new DockPanel();
         var toolbar = new WrapPanel { Background = Brushes.White };
         Button Command(string caption, bool enabled, Action? action = null, bool editOnly = false)
         {
-            var element = profile.Caption(screen, "save") == caption ? "save"
+            var element = caption == "Sửa" ? "edit" : profile.Caption(screen, "save") == caption ? "save"
                 : profile.Caption(screen, "close") == caption ? "close" : null;
             var button = Ui.Button(caption, enabled, element is null ? "" : profile.Id(screen, element));
             if (action is not null) button.Click += (_, _) => action();
@@ -110,8 +136,8 @@ public sealed class VoucherWindow : Window, IGridSource
             return button;
         }
         Command("Trước", false); Command("Sau", false);
-        Command("Thêm", false, editOnly: true); Command("Sửa", false, editOnly: true); Command("Sửa nhanh", false);
-        save = Command(profile.Caption(screen, "save"), true, Save);
+        Command("Thêm", false, editOnly: true); edit = Command("Sửa", existingVoucher is not null, BeginEdit, editOnly: true); Command("Sửa nhanh", false);
+        save = Command(profile.Caption(screen, "save"), existingVoucher is null, Save);
         Command("Xóa", false); Command("Hoãn", true); post = Command("Ghi sổ", false); Command("Lập phiếu xuất", false);
         Command("Nạp", false); Command("Tiện ích", true); Command("Mẫu", true); Command("In", false);
         Command("Gửi email, Zalo", false); Command("Giúp", true);
@@ -160,7 +186,7 @@ public sealed class VoucherWindow : Window, IGridSource
         DockPanel.SetDock(totals, Dock.Bottom);
         root.Children.Add(totals);
 
-        foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", "4. Thống kê", "5. Khác" })
+        foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", profile.Tab(screen, "statistics"), "4. Khác" })
             detailTabs.Items.Add(new TabItem { Header = caption });
         detailTabs.SelectedIndex = 0;
         detailTabs.SelectionChanged += (_, e) => { if (e.Source == detailTabs) OnDetailTabChanged(); };
@@ -231,6 +257,7 @@ public sealed class VoucherWindow : Window, IGridSource
         BuildLayouts();
         BindLayout();
         SyncHeader();
+        foreach (var (box, _) in bound) box.IsReadOnly = saved;
     }
 
     private string Column(string key) => profile.Column(screen, "items", key);
@@ -242,35 +269,42 @@ public sealed class VoucherWindow : Window, IGridSource
         [
             new("code", Column("code"), 110, CellKind.Edit), new("name", Column("name"), 200, CellKind.Edit),
             new("debit_account", Column("expense_account"), 80, CellKind.Edit), new("credit_account", Column("credit_account"), 80, CellKind.Edit),
-            new("unit", Column("unit"), 60, CellKind.Combo, store.Units), new("quantity", Column("quantity"), 80, CellKind.Edit),
+            new("unit", Column("unit"), 60, CellKind.Combo, [.. store.Units]), new("quantity", Column("quantity"), 80, CellKind.Edit),
             new("unit_price", Column("unit_price"), 90, CellKind.Edit), new("amount", Column("amount"), 100, CellKind.Edit)
         ]
         : purchase
         ?
         [
             new("code", Column("code"), 110, CellKind.Edit), new("name", Column("name"), 200, CellKind.Edit),
-            new("stock", Column("stock"), 60, CellKind.Combo, store.Stocks),
+            new("stock", Column("stock"), 60, CellKind.Combo, [.. store.Stocks]),
             new("debit_account", Column("debit_account"), 70, CellKind.Edit), new("credit_account", Column("credit_account"), 80, CellKind.Edit),
-            new("unit", Column("unit"), 60, CellKind.Combo, store.Units), new("quantity", Column("quantity"), 80, CellKind.Edit),
+            new("unit", Column("unit"), 60, CellKind.Combo, [.. store.Units]), new("quantity", Column("quantity"), 80, CellKind.Edit),
             new("unit_price", Column("unit_price"), 90, CellKind.Edit), new("amount", Column("amount"), 100, CellKind.Edit)
         ]
         :
         [
             new("code", Column("code"), 110, CellKind.Edit), new("name", Column("name"), 220, CellKind.Edit),
             new("debit_account", Column("debit_account"), 90, CellKind.Edit), new("revenue_account", "TK doanh thu", 80, CellKind.Edit),
-            new("unit", Column("unit"), 70, CellKind.Combo, store.Units), new("quantity", Column("quantity"), 80, CellKind.Edit),
+            new("unit", Column("unit"), 70, CellKind.Combo, [.. store.Units]), new("quantity", Column("quantity"), 80, CellKind.Edit),
             new("unit_price", Column("unit_price"), 90, CellKind.Edit), new("amount", Column("amount"), 100, CellKind.Edit),
             new("discount_rate", "Tỷ lệ CK (%)", 80)
         ];
         taxLayout =
         [
             new("code", Column("code"), 110, CellKind.Edit), new("name", Column("name"), 220),
-            new("tax_description", "Diễn giải thuế", 170), new("tax_rate", Column("tax_rate"), 90, CellKind.Combo, store.TaxRates),
+            new("tax_description", "Diễn giải thuế", 170), new("tax_rate", Column("tax_rate"), 90, CellKind.Combo, [.. store.TaxRates]),
             new("tax_amount", Column("tax_amount"), 110, CellKind.Edit), new("tax_account", "TK thuế GTGT", 90)
+        ];
+        statisticsLayout =
+        [
+            new("code", Column("code"), 110), new("name", Column("name"), 220),
+            new("cost_item", Column("cost_item"), 130, CellKind.Combo), new("unit", "Đơn vị", 70),
+            new("cost_object", "Đối tượng THCP", 130), new("project", "Công trình", 100)
         ];
     }
 
-    private void BindLayout() => grid.Bind(detailTabs.SelectedIndex == 1 ? taxLayout : itemLayout, this);
+    private void BindLayout() => grid.Bind(detailTabs.SelectedIndex == 1 ? taxLayout
+        : detailTabs.SelectedIndex == 3 ? statisticsLayout : itemLayout, this);
 
     private void UpdateInactiveGrid()
     {
@@ -321,6 +355,9 @@ public sealed class VoucherWindow : Window, IGridSource
             "tax_rate" => line.TaxRate,
             "tax_amount" => Ui.Money(line.TaxAmount),
             "tax_account" => "33311",
+            "cost_item" => line.CostItem,
+            "cost_object" => "",
+            "project" => "",
             _ => ""
         };
     }
@@ -659,6 +696,7 @@ public sealed class VoucherWindow : Window, IGridSource
                     Recalculate(line);
                     break;
                 case "tax_amount" when Ui.TryNumber(text, out var tax): line.TaxAmount = tax; break;
+                case "cost_item": line.CostItem = text; break;
             }
         }
         else return;
@@ -779,6 +817,18 @@ public sealed class VoucherWindow : Window, IGridSource
 
     // ---------- commands ----------
 
+    private void BeginEdit()
+    {
+        if (!saved) return;
+        saved = false;
+        dirty = false;
+        if (edit is not null) edit.IsEnabled = false;
+        save.IsEnabled = true;
+        foreach (var (box, _) in bound) box.IsReadOnly = false;
+        grid.Refresh(force: true);
+        FakeLog.Write("Sửa chứng từ đã có");
+    }
+
     private void Save()
     {
         FakeLog.Write($"Cất (saved={saved}, lines={lines.Count}, customer='{header["customer"]}', number='{header["number"]}')");
@@ -812,7 +862,7 @@ public sealed class VoucherWindow : Window, IGridSource
             prompt.ShowDialog();
             if (prompt.Adjust) lines[0].TaxAmount += difference;
         }
-        if (store.InvoiceExists(header["series"], header["number"]))
+        if (existingVoucher is null && store.InvoiceExists(header["series"], header["number"]))
         {
             var answer = MessageBox.Show(this,
                 $"Hóa đơn có ký hiệu {header["series"]}, số hóa đơn {header["number"]} đã tồn tại. Bạn có muốn chương trình tự động tăng số hóa đơn không?",
@@ -833,7 +883,7 @@ public sealed class VoucherWindow : Window, IGridSource
             if (answer != MessageBoxResult.Yes) return;
         }
         var savedLines = lines.Select(line => new SavedLine(line.Code, line.Name, line.Unit, line.DebitAccount, line.RevenueAccount,
-            line.Quantity, line.UnitPrice, line.Amount, line.TaxRate, line.TaxAmount, line.Stock, line.CreditAccount)).ToArray();
+            line.Quantity, line.UnitPrice, line.Amount, line.TaxRate, line.TaxAmount, line.Stock, line.CreditAccount, line.CostItem)).ToArray();
         var amount = lines.Sum(line => line.Amount);
         var tax = lines.Sum(line => line.TaxAmount);
         store.Save(new SavedVoucher(header["voucher_number"], header["number"], header["series"], header["customer"], header["customer_name"],
@@ -890,6 +940,7 @@ public sealed class VoucherWindow : Window, IGridSource
         }
         if (scenario.SaveClosesEditor) { Close(); return; }
         save.IsEnabled = scenario.SaveKeepsCatEnabled;
+        if (edit is not null) edit.IsEnabled = true;
         // R20 turns "Ghi sổ" into an enabled "Bỏ ghi" once the voucher is saved and posted.
         post.Content = profile.Caption(screen, "unpost");
         post.IsEnabled = true;

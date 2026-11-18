@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Collections.Immutable;
 using System.ComponentModel;
 using System.IO;
@@ -84,6 +84,8 @@ public partial class MainWindow : Window
     private bool Purchase => mode == VoucherKind.Purchase;
     private bool switchingMode;
     private bool exportingPendingHtml;
+    private bool fuelCostMode;
+    private IReadOnlyList<InvoiceDocument> loadedFuelCostInvoices = [];
 
     public MainWindow()
     {
@@ -258,9 +260,57 @@ public partial class MainWindow : Window
         await OpenWorkbookAsync(workbookPath);
     }
 
-    /// <summary>Reads the workbook, lets the user pick the sheet when there are several, then imports it like any invoice file.</summary>
-    private async Task OpenWorkbookAsync(string workbookPath)
+    private async void FuelCost_Click(object sender, RoutedEventArgs e)
     {
+        if (fuelCostMode || importModel.IsBusy || workflow.IsRunning) return;
+        if (!Purchase || ((App)Application.Current).Services.Company.FuelRule() is null)
+        {
+            StatusLabel.Text = "Chức năng CP xăng chỉ khả dụng khi đang chọn công ty có quy tắc xăng dầu.";
+            return;
+        }
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Hóa đơn mua vào (*.zip;*.html)|*.zip;*.html;*.htm",
+            CheckFileExists = true,
+            Multiselect = false,
+            Title = "Chọn ZIP hóa đơn mua vào để lọc hóa đơn chỉ có xăng/nhớt"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        try
+        {
+            var workbookPath = dialog.FileName;
+            if (!workbookPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+            {
+                if (await ConvertArchiveAsync(workbookPath, purchase: true) is not { } converted) return;
+                workbookPath = converted;
+            }
+            await OpenWorkbookAsync(workbookPath, forFuelCost: true);
+            var targets = loadedFuelCostInvoices;
+            if (targets.Count == 0)
+            {
+                StatusLabel.Text = "Không tìm thấy hóa đơn chỉ có xăng/nhớt trong ZIP.";
+                return;
+            }
+            var services = ((App)Application.Current).Services;
+            var result = await services.UpdatePurchaseCostsAsync(targets,
+                progress: message => Dispatcher.Invoke(() => StatusLabel.Text = message));
+            StatusLabel.Text = result.Failed.Count == 0
+                ? $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0} hóa đơn xăng."
+                : $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0}; lỗi {result.Failed.Count:N0} hóa đơn: {string.Join("; ", result.Failed.Take(3))}";
+        }
+        catch (Exception error)
+        {
+            fuelCostMode = false;
+            StatusLabel.Text = "Không cập nhật được CPBH.XANG: " + error.Message;
+        }
+        finally { fuelCostMode = false; }
+    }
+
+    /// <summary>Reads the workbook, lets the user pick the sheet when there are several, then imports it like any invoice file.</summary>
+    private async Task OpenWorkbookAsync(string workbookPath, bool forFuelCost = false)
+    {
+        fuelCostMode = forFuelCost;
+        loadedFuelCostInvoices = [];
         var work = BeginImport();
         ResetMapping();
         updatingSheet = true;
@@ -397,6 +447,7 @@ public partial class MainWindow : Window
             : "Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập";
         ExportPendingHtmlItem.Header = Purchase ? "Xuất hóa đơn mua vào chưa nhập ra ZIP…" : "Xuất hóa đơn bán ra chưa nhập ra ZIP…";
         ExportPendingHtmlItem.ToolTip = "Chọn zip HTML gốc để lọc toàn bộ hóa đơn còn lại trong danh sách (không cần tick) rồi lưu thành một zip mới";
+        FuelCostMenuItem.Visibility = Purchase && fuel is not null ? Visibility.Visible : Visibility.Collapsed;
         ServicesTab.Visibility = Purchase ? Visibility.Visible : Visibility.Collapsed;
         if (!Purchase && ServicesTab.IsSelected) WorkspaceTabs.SelectedIndex = 0;
         if (invoices.Count == 0)
@@ -1097,6 +1148,15 @@ public partial class MainWindow : Window
                 .ToImmutableDictionary(row => row.Key, row => row.SelectedColumn!.Value, StringComparer.Ordinal) : null;
             var imported = await importModel.ImportAsync(sheet, columnMap, work.Token);
             if (!IsCurrent(work)) return;
+            if (fuelCostMode)
+            {
+                var rule = ((App)Application.Current).Services.Company.FuelRule()
+                    ?? throw new InvalidOperationException("Công ty đang chọn chưa có quy tắc xăng dầu.");
+                ShowImported(imported, null);
+                loadedFuelCostInvoices = imported.Invoices.Where(invoice => FuelPurchases.IsGasolineOnly(invoice, rule)).ToArray();
+                StatusLabel.Text = $"Đã lọc {loadedFuelCostInvoices.Count:N0} hóa đơn chỉ có xăng/nhớt từ ZIP.";
+                return;
+            }
             var summary = ShowImported(imported, null);
             SaveImportSession(source.FilePath, sheet, imported);
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
@@ -1111,7 +1171,7 @@ public partial class MainWindow : Window
         catch (Exception error) { if (IsCurrent(work)) ShowImportError(error); }
         finally { EndImport(work); }
         // Sales are balanced against stock right away; the balanced workbook replaces the source in the list.
-        if (toBalance is not null && await AutoBalanceStockAsync(toBalance) is { } note) StatusLabel.Text += " · " + note;
+        if (!fuelCostMode && toBalance is not null && await AutoBalanceStockAsync(toBalance) is { } note) StatusLabel.Text += " · " + note;
     }
 
     /// <summary>Lists the invoices not yet posted in MISA and returns a status line saying what was left out.</summary>

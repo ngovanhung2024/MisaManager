@@ -32,6 +32,7 @@ public sealed partial class AppServices : IAsyncDisposable
     public StateMigrationCoordinator Migrations { get; }
     public WorkflowProfile WorkflowProfile { get; } = WorkflowProfile.Load();
     public WorkflowProfile PurchaseProfile { get; } = WorkflowProfile.Load(kind: VoucherKind.Purchase);
+    public PurchaseCostUpdater PurchaseCostUpdater { get; }
     private readonly NativeWorkflowGateway workflowGateway;
     public WorkflowActivity? Activity => workflowGateway.Activity;
     public WorkflowRunner Workflow { get; }
@@ -151,6 +152,7 @@ public sealed partial class AppServices : IAsyncDisposable
         Migrations = new StateMigrationCoordinator(MigrationRegistry, Generations);
         Native = new(nativeOwner);
         Input = new(nativeOwner);
+        PurchaseCostUpdater = new(Windows, Input, PurchaseProfile);
         LogRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "logs");
         eventStore = new RunEventStore(LogRoot);
         workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile, PurchaseProfile);
@@ -382,6 +384,19 @@ public sealed partial class AppServices : IAsyncDisposable
     {
         await workflowGate.WaitAsync(token);
         try { return await workflowGateway.CompareOpenVoucherAsync(candidates, window, token); }
+        finally { workflowGate.Release(); }
+    }
+
+    public async Task<PurchaseCostUpdateResult> UpdatePurchaseCostsAsync(IReadOnlyList<InvoiceDocument> invoices,
+        CancellationToken token = default, Action<string>? progress = null)
+    {
+        await workflowGate.WaitAsync(token);
+        try
+        {
+            await EnsureInitializedAsync(token);
+            var rule = Company.FuelRule() ?? throw new InvalidOperationException("Công ty đang chọn chưa có quy tắc xăng dầu.");
+            return await PurchaseCostUpdater.UpdateAsync(invoices, rule, token, progress);
+        }
         finally { workflowGate.Release(); }
     }
 

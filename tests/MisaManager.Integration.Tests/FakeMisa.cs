@@ -10,7 +10,7 @@ using MisaManager.Automation;
 namespace MisaManager.Integration.Tests;
 
 public sealed record FakeLine(string Code, string Name, string Unit, string DebitAccount, string RevenueAccount,
-    decimal Quantity, decimal UnitPrice, decimal Amount, string TaxRate, decimal TaxAmount, string Stock = "", string CreditAccount = "");
+    decimal Quantity, decimal UnitPrice, decimal Amount, string TaxRate, decimal TaxAmount, string Stock = "", string CreditAccount = "", string CostItem = "");
 
 public sealed record FakeVoucher(string VoucherNumber, string InvoiceNumber, string Series, string CustomerCode,
     string CustomerName, string CustomerTaxCode, string PostedDate, string VoucherDate, string IssuedDate, string Payment,

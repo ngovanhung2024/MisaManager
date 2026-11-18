@@ -4,6 +4,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls.Primitives;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -12,7 +13,57 @@ namespace MisaManager.FakeMisa;
 public enum CellKind { ReadOnly, Edit, Combo }
 
 public sealed record GridColumn(string Key, string Caption, double Width, CellKind Kind = CellKind.ReadOnly,
-    IReadOnlyList<string>? Options = null);
+    IReadOnlyList<object>? Options = null);
+
+internal sealed record CostItemOption(string Code, string Name, string Unit = "", string CostObject = "", string Project = "", int Level = 0)
+{
+    public string DisplayCode => new string(' ', Level * 2) + Code;
+    public override string ToString() => Code;
+}
+
+internal static class CostItemCatalog
+{
+    public static IReadOnlyList<object> Options { get; } =
+    [
+        new CostItemOption("CPSX", "Chi phí sản xuất", Level: 0),
+        new CostItemOption("MTC", "Chi phí sử dụng máy thi công", Level: 1),
+        new CostItemOption("MTC.DCSX", "Chi phí dụng cụ sản xuất", Level: 2),
+        new CostItemOption("MTC.K", "Chi phí bằng tiền khác", Level: 2),
+        new CostItemOption("MTC.KH", "Chi phí khấu hao máy thi công", Level: 2),
+        new CostItemOption("MTC.MN", "Chi phí dịch vụ mua ngoài", Level: 2),
+        new CostItemOption("MTC.NC", "Chi phí nhân công", Level: 2),
+        new CostItemOption("MTC.VL", "Chi phí vật liệu", Level: 2),
+        new CostItemOption("NCTT", "Chi phí nhân công trực tiếp", Level: 0),
+        new CostItemOption("NVLTT", "Chi phí nguyên liệu, vật liệu trực tiếp", Level: 0),
+        new CostItemOption("SXC", "Chi phí sản xuất chung", Level: 0),
+        new CostItemOption("CPBH.VC", "Chi phí vận chuyển", Level: 2),
+        new CostItemOption("CPBH.XANG", "Chi phí xăng", Level: 2),
+        new CostItemOption("SXC.NUOC", "Chi phí nước", Level: 2),
+        new CostItemOption("SXC.BD", "Chi phí bảo dưỡng", Level: 2),
+        new CostItemOption("SXC.DCSX", "Chi phí dụng cụ sản xuất", Level: 2),
+        new CostItemOption("SXC.DIEN", "Chi phí điện", Level: 2)
+    ];
+
+    public static DataTemplate Template { get; } = CreateTemplate();
+
+    private static DataTemplate CreateTemplate()
+    {
+        var row = new FrameworkElementFactory(typeof(StackPanel));
+        row.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        AddText(row, nameof(CostItemOption.DisplayCode), 145);
+        AddText(row, nameof(CostItemOption.Name), 220);
+        return new DataTemplate { VisualTree = row };
+    }
+
+    private static void AddText(FrameworkElementFactory row, string property, double width)
+    {
+        var text = new FrameworkElementFactory(typeof(TextBlock));
+        text.SetValue(FrameworkElement.WidthProperty, width);
+        text.SetValue(TextBlock.PaddingProperty, new Thickness(3, 1, 3, 1));
+        text.SetBinding(TextBlock.TextProperty, new Binding(property));
+        row.AppendChild(text);
+    }
+}
 
 /// <summary>A row value source: <c>null</c> row index means the "Bấm vào đây để thêm mới" insertion row.</summary>
 public interface IGridSource
@@ -39,6 +90,7 @@ public sealed class FakeGrid : Border
 {
     private const double RowHeight = 21;
     private readonly StackPanel headerPanel = new() { Orientation = Orientation.Horizontal };
+    private readonly StackPanel filterPanel = new() { Orientation = Orientation.Horizontal, Visibility = Visibility.Collapsed };
     private readonly StackPanel rowPanel = new() { Orientation = Orientation.Vertical };
     private readonly ShadowRegion shadow = new();
     private readonly StackPanel ghostHost = new() { Orientation = Orientation.Vertical };
@@ -61,9 +113,11 @@ public sealed class FakeGrid : Border
         Background = Brushes.White;
         var dock = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(headerPanel, Dock.Top);
+        DockPanel.SetDock(filterPanel, Dock.Top);
         FooterBar = new Border { Background = new SolidColorBrush(Color.FromRgb(0xE8, 0xEC, 0xF5)), Child = footer };
         DockPanel.SetDock(FooterBar, Dock.Bottom);
         dock.Children.Add(headerPanel);
+        dock.Children.Add(filterPanel);
         DockPanel.SetDock(shadow, Dock.Top);
         dock.Children.Add(shadow);
         DockPanel.SetDock(ghostHost, Dock.Top);
@@ -74,6 +128,7 @@ public sealed class FakeGrid : Border
     }
 
     public bool ShowInsertionRow { get; set; }
+    public bool ShowFilters { get; set; }
     /// <summary>
     /// R20 unit cells (report 0.2.172, HĐ 151/164): the "ĐVT" combo exposes an invokable "[Editor] dropdown button"; while
     /// its list is closed it still exposes the list's items, with bounds over the next grid row; the first opening of a
@@ -136,9 +191,12 @@ public sealed class FakeGrid : Border
 
     public int FooterCountOffset { get; set; }
     public event EventHandler<CellCommitEventArgs>? CellCommitted;
+    public event EventHandler<(string Key, string Text)>? FilterCommitted;
     /// <summary>A real mouse click landed on a cell (row index or null for the insertion row, column key).</summary>
     public event EventHandler<(int? Row, string Key)>? CellClicked;
+    public event EventHandler<int>? RowDoubleClicked;
     internal void RaiseCellClicked(int? row, string key) => CellClicked?.Invoke(this, (row, key));
+    internal void RaiseRowDoubleClicked(int row) => RowDoubleClicked?.Invoke(this, row);
 
     /// <summary>
     /// A second enabled provider ("-1") of a row lying exactly over the visible row with a copy of its values, until the
@@ -179,6 +237,20 @@ public sealed class FakeGrid : Border
         headerPanel.Children.Clear();
         foreach (var column in columns)
             headerPanel.Children.Add(new HeaderCell(column.Caption, column.Width));
+        filterPanel.Children.Clear();
+        filterPanel.Visibility = ShowFilters ? Visibility.Visible : Visibility.Collapsed;
+        if (ShowFilters)
+            foreach (var column in columns)
+            {
+                var filter = new TextBox { Width = column.Width, Height = RowHeight, Tag = column.Key, FontSize = 11 };
+                filter.PreviewKeyDown += (_, e) =>
+                {
+                    if (e.Key is not (Key.Enter or Key.Tab)) return;
+                    FilterCommitted?.Invoke(this, (column.Key, filter.Text));
+                    if (e.Key == Key.Enter) e.Handled = true;
+                };
+                filterPanel.Children.Add(filter);
+            }
         Rebuild();
     }
 
@@ -274,6 +346,9 @@ public sealed class FakeGrid : Border
             var children = new List<AutomationPeer>();
             foreach (var header in owner.HeaderCells)
                 if (UIElementAutomationPeer.CreatePeerForElement(header) is { } peer) children.Add(peer);
+            if (owner.ShowFilters)
+                foreach (var filter in owner.filterPanel.Children.OfType<UIElement>())
+                    if (UIElementAutomationPeer.CreatePeerForElement(filter) is { } filterPeer) children.Add(filterPeer);
             if (owner.shadow.Count > 0 && UIElementAutomationPeer.CreatePeerForElement(owner.shadow) is { } shadowPeer)
                 children.Add(shadowPeer);
             // Before the real rows, so a reader taking the first match would bind the copy.
@@ -452,6 +527,7 @@ internal sealed class R20UnitCombo : ComboBox
 
         protected override List<AutomationPeer> GetChildrenCore()
         {
+            if (owner.IsDropDownOpen) stale = null;
             var children = base.GetChildrenCore() ?? [];
             if (!owner.IsDropDownOpen)
             {
@@ -532,6 +608,10 @@ internal sealed class GridRow : StackPanel
         this.grid = grid;
         this.columns = columns;
         Index = index;
+        PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2 && Index is { } row) grid.RaiseRowDoubleClicked(row);
+        };
         Orientation = Orientation.Horizontal;
         Height = height;
         AutomationProperties.SetAutomationId(this, index?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-1");
@@ -574,7 +654,9 @@ internal sealed class GridRow : StackPanel
                 case TextBox text when force || !text.IsKeyboardFocusWithin || text.IsReadOnly: text.Text = value; break;
                 case ComboBox combo when force || !combo.IsKeyboardFocusWithin:
                     combo.Text = value;
-                    combo.SelectedItem = combo.Items.Cast<object>().FirstOrDefault(item => Equals(item, value));
+                    combo.SelectedItem = combo.Items.Cast<object>().FirstOrDefault(item => item is CostItemOption option
+                        ? string.Equals(option.Code, value, StringComparison.OrdinalIgnoreCase)
+                        : Equals(item, value));
                     break;
             }
         }
@@ -599,13 +681,18 @@ internal sealed class GridRow : StackPanel
 
     private ComboBox CreateCombo(GridColumn column)
     {
-        var combo = grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
+        var combo = column.Key == "cost_item" || grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
             : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick,
                 grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault, grid.TaxRateStatusStaleWhileOpen,
                 grid.TaxRateListTextAccessible, grid.TaxRateEditorOutsideCellTree) : new ComboBox();
         combo.IsEditable = true;
         combo.FontSize = 11;
-        combo.ItemsSource = column.Options ?? [];
+        combo.ItemsSource = column.Key == "cost_item" ? CostItemCatalog.Options : column.Options ?? Array.Empty<object>();
+        if (column.Key == "cost_item")
+        {
+            combo.ItemTemplate = CostItemCatalog.Template;
+            combo.MaxDropDownHeight = 190;
+        }
         combo.PreviewMouseLeftButtonDown += (_, _) => grid.RaiseCellClicked(Index, column.Key);
         combo.PreviewKeyDown += (_, e) => OnKey(column.Key,
             combo is KeyedTaxRateCombo keyed && grid.TaxRateRequiresKeyboardText && !keyed.ReceivedKeyboardText
@@ -614,8 +701,9 @@ internal sealed class GridRow : StackPanel
         {
             if (combo is KeyedTaxRateCombo && grid.TaxRateRequiresKeyboardText) return;
             if (combo is KeyedTaxRateCombo { HidesList: true, IsDropDownOpen: true }) return;
-            if (combo.IsKeyboardFocusWithin && combo.SelectedItem is string chosen)
-                grid.RaiseCommit(Index, column.Key, chosen, Key.None);
+            if (!combo.IsKeyboardFocusWithin) return;
+            var chosen = combo.SelectedItem is CostItemOption option ? option.Code : combo.SelectedItem as string;
+            if (chosen is not null) grid.RaiseCommit(Index, column.Key, chosen, Key.None);
         };
         // R20 takes the rate highlighted in its open list when the list closes.
         if (combo is KeyedTaxRateCombo { HidesList: true })

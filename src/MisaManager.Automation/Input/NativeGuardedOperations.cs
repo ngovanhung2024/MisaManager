@@ -829,6 +829,25 @@ public sealed partial class NativeInputService
                 Thread.Sleep(50);
             }
             var optionPopup = ListPopupAt(cellBounds, gridWindow);
+            if (string.Equals(expected, "CPBH.XANG", StringComparison.OrdinalIgnoreCase) && optionPopup != nint.Zero)
+            {
+                var popupBounds = automation.FromHandle(optionPopup).BoundingRectangle;
+                if (popupBounds.Width > 0 && popupBounds.Height > 0)
+                {
+                    // The real MISA list requires the operator to scroll before the lower CPBH entries appear.
+                    options = [];
+                    for (var scrollAttempt = 0; scrollAttempt < 8 && options.Length == 0; scrollAttempt++)
+                    {
+                        NativeKeyboard.ScrollOpenListDown(
+                            (int)(popupBounds.Left + popupBounds.Width / 2),
+                            (int)(popupBounds.Top + popupBounds.Height / 2),
+                            identity!.ProcessId,
+                            hit => (nint)PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT) == optionPopup);
+                        Thread.Sleep(100);
+                        options = DrawnOptionLabels(cellBounds, gridWindow, expectedName);
+                    }
+                }
+            }
             if (!allowMissing && options.Length == 0 && optionPopup != nint.Zero)
             {
                 options = DrawnOptionLabels(cellBounds, gridWindow, expectedName);
@@ -901,7 +920,7 @@ public sealed partial class NativeInputService
                         "Registered unit list remained open after Escape and close-toggle.", true);
                 return Capture();
             }
-            if (drawnWithoutItems && !allowMissing)
+            if ((drawnWithoutItems || options.Length == 0) && !allowMissing)
             {
                 // The list is open but unreadable: step through it with the arrow keys, reading the cell after every key.
                 System.Diagnostics.Trace.TraceInformation($"Danh sách ô '{cell.Column}' mở nhưng không đọc được mục; chọn '{expected}' bằng phím mũi tên. "

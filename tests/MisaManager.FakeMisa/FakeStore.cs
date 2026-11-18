@@ -112,7 +112,10 @@ public sealed class FakeStore(Scenario scenario, string? statePath)
 
     public void Save(SavedVoucher voucher)
     {
-        Vouchers.Add(voucher);
+        var index = Vouchers.FindIndex(existing => string.Equals(existing.InvoiceNumber, voucher.InvoiceNumber, StringComparison.Ordinal)
+            && string.Equals(existing.Series, voucher.Series, StringComparison.Ordinal));
+        if (index >= 0) Vouchers[index] = voucher;
+        else Vouchers.Add(voucher);
         Persist();
     }
 

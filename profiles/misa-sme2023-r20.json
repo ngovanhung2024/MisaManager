@@ -90,9 +90,10 @@
     "purchase_voucher": {
       "title": "Chứng từ mua hàng (Mua hàng trong nước nhập kho chưa thanh toán)",
       "scope": { "automationId": "frmPUVoucherDetail" },
-      "tabs": { "receipt": "Phiếu nhập", "expense_receipt": "Chứng từ ghi nợ", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế" },
+      "tabs": { "receipt": "Phiếu nhập", "expense_receipt": "Chứng từ ghi nợ", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế", "statistics": "3. Thống kê" },
       "elements": {
         "save": { "name": "Cất", "controlType": "Button" },
+        "edit": { "name": "Sửa", "controlType": "Button", "required": false, "description": "Bật chế độ sửa chứng từ mua hàng đã có trong MISA" },
         "unpost": { "name": "Bỏ ghi", "controlType": "Button", "required": false, "description": "Chỉ hiện (bật) sau khi Cất xong: bằng chứng chứng từ đã ghi sổ" },
         "close": { "name": "Đóng", "controlType": "Button" },
         "voucher_type": { "label": "Chứng từ mua hàng", "controlType": "ComboBox", "required": false, "description": "Loại chứng từ cạnh tiêu đề 'Chứng từ mua hàng' (1. nhập kho / 2. không qua kho). Chỉ đổi cho hóa đơn xăng/nhớt của công ty nhập xăng dầu (Lộc Thủy)" },
@@ -125,7 +126,8 @@
             "unit_price": "Đơn giá",
             "amount": "Thành tiền",
             "tax_rate": "% thuế GTGT",
-            "tax_amount": "Tiền thuế GTGT"
+            "tax_amount": "Tiền thuế GTGT",
+            "cost_item": "Khoản mục CP"
           }
         }
       },
