@@ -53,6 +53,18 @@ public sealed class SalesVoucherTests : UiTest
     }, new FakeScenario(EditorUnowned: true));
 
     [Fact]
+    public Task CustomerFocusReactivatesAnUnownedVoucherCoveredByTheMainWindow() => WithFakeAsync(async (misa, harness, token) =>
+    {
+        var invoice = Invoices.Build(TempDirectory(misa), "1001", Invoices.AV,
+            Invoices.Line(0, "HH_06", "Rồng đỏ 200SL - Chai 100ml", "Chai", 1, 10_000, "5%"));
+
+        var result = await harness.RunAsync(invoice, misa, token);
+
+        Assert.True(result.Outcome == "saved", Describe(result));
+        Assert.Single(misa.State().Vouchers);
+    }, new FakeScenario(EditorUnowned: true, MainCoversVoucherOnCustomerFocus: true));
+
+    [Fact]
     public Task MultiLineInvoiceWithDifferentUnitsAndRatesIsSaved() => WithFakeAsync(async (misa, harness, token) =>
     {
         // HH_08 is 5% in the catalog: the source 10% must be typed on the "2. Thuế" tab.

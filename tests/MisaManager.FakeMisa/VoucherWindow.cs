@@ -64,6 +64,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private bool dirty;
     private bool saved;
     private bool busyAfterQuantityClickShown;
+    private bool mainCoveredVoucher;
 
     private static int vouchersOpened;
     private readonly bool firstVoucher = Interlocked.Increment(ref vouchersOpened) == 1;
@@ -129,7 +130,7 @@ public sealed class VoucherWindow : Window, IGridSource
         {
             var element = caption == "Sửa" ? "edit" : profile.Caption(screen, "save") == caption ? "save"
                 : profile.Caption(screen, "close") == caption ? "close" : null;
-            var button = Ui.Button(caption, enabled, element is null ? "" : profile.Id(screen, element));
+            var button = Ui.Button(caption, enabled, element is null || element == "edit" ? "" : profile.Id(screen, element));
             if (action is not null) button.Click += (_, _) => action();
             if (editOnly) readOnlyCommands.Add(button);
             toolbar.Children.Add(button);
@@ -186,7 +187,7 @@ public sealed class VoucherWindow : Window, IGridSource
         DockPanel.SetDock(totals, Dock.Bottom);
         root.Children.Add(totals);
 
-        foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", profile.Tab(screen, "statistics"), "4. Khác" })
+        foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", "4. Thống kê", "5. Khác" })
             detailTabs.Items.Add(new TabItem { Header = caption });
         detailTabs.SelectedIndex = 0;
         detailTabs.SelectionChanged += (_, e) => { if (e.Source == detailTabs) OnDetailTabChanged(); };
@@ -298,7 +299,7 @@ public sealed class VoucherWindow : Window, IGridSource
         statisticsLayout =
         [
             new("code", Column("code"), 110), new("name", Column("name"), 220),
-            new("cost_item", Column("cost_item"), 130, CellKind.Combo), new("unit", "Đơn vị", 70),
+            new("cost_item", "Khoản mục CP", 130, CellKind.Combo), new("unit", "Đơn vị", 70),
             new("cost_object", "Đối tượng THCP", 130), new("project", "Công trình", 100)
         ];
     }
@@ -376,6 +377,15 @@ public sealed class VoucherWindow : Window, IGridSource
             box.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
         };
         box.LostKeyboardFocus += (_, _) => CommitField(key, box.Text);
+        if (key == "customer" && scenario.MainCoversVoucherOnCustomerFocus)
+            box.GotKeyboardFocus += (_, _) =>
+            {
+                if (mainCoveredVoucher) return;
+                mainCoveredVoucher = true;
+                FakeLog.Write("main window covers voucher after customer focus");
+                main.Topmost = true;
+                _ = Task.Delay(100).ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => { main.Topmost = false; main.Hide(); main.Show(); })));
+            };
         return box;
     }
 

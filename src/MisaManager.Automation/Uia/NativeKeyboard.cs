@@ -179,22 +179,29 @@ internal static class NativeKeyboard
 
     internal static void Click(int x, int y, nint windowHandle, int processId, nint targetHandle = default)
     {
-        Activate(targetHandle == nint.Zero ? windowHandle : targetHandle, windowHandle, processId);
-        WaitForUserButtonsReleased();
-        if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới ô MISA.");
-        // A topmost window (toast, this tool's own rail) over the point would receive the click instead of MISA.
-        var hit = WindowFromPoint(new PointStruct { X = x, Y = y });
-        uint hitProcess = 0;
-        if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out hitProcess) == 0 || hitProcess != processId)
-            throw new AutomationException("FOCUS_LOST", hit != nint.Zero && hitProcess == Environment.ProcessId
-                ? "Cửa sổ của MISA Manager (đối chiếu/tool) đang che nút MISA cần bấm; không click."
-                : "Có cửa sổ khác che ô MISA cần click; không click.");
-        // Report 0.2.190, HĐ 205: with the voucher form a separate top-level window, MISA's main window covered the point
-        // and took the click. A click for a control lands only in that control's own window.
-        if (targetHandle != nint.Zero && PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT)
-                != PInvoke.GetAncestor((HWND)targetHandle, GET_ANCESTOR_FLAGS.GA_ROOT))
-            throw new AutomationException("FOCUS_LOST", "Cửa sổ MISA khác đang che ô cần click; không click.");
-        SendClick(x, y);
+        for (var attempt = 0; ; attempt++)
+        {
+            Activate(targetHandle == nint.Zero ? windowHandle : targetHandle, windowHandle, processId);
+            WaitForUserButtonsReleased();
+            if (!PInvoke.SetCursorPos(x, y)) throw new AutomationException("FOCUS_FAILED", "Không đưa được con trỏ tới ô MISA.");
+            // A topmost window (toast, this tool's own rail) over the point would receive the click instead of MISA.
+            var hit = WindowFromPoint(new PointStruct { X = x, Y = y });
+            uint hitProcess = 0;
+            if (hit == nint.Zero || PInvoke.GetWindowThreadProcessId((HWND)hit, out hitProcess) == 0 || hitProcess != processId)
+                throw new AutomationException("FOCUS_LOST", hit != nint.Zero && hitProcess == Environment.ProcessId
+                    ? "Cửa sổ của MISA Manager (đối chiếu/tool) đang che nút MISA cần bấm; không click."
+                    : "Có cửa sổ khác che ô MISA cần click; không click.");
+            // Re-activate an unowned voucher if MISA's main window rose after focus; no click was sent yet.
+            if (targetHandle != nint.Zero && PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT)
+                    != PInvoke.GetAncestor((HWND)targetHandle, GET_ANCESTOR_FLAGS.GA_ROOT))
+            {
+                if (attempt >= 2) throw new AutomationException("FOCUS_LOST", "Cửa sổ MISA khác đang che ô cần click; không click.");
+                Thread.Sleep(40);
+                continue;
+            }
+            SendClick(x, y);
+            return;
+        }
     }
 
     internal static void DoubleClick(int x, int y, nint windowHandle, int processId, nint targetHandle = default)
