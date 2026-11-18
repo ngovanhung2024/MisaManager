@@ -241,8 +241,11 @@ Mục tiêu: sau khi nhập hết bán ra, **không mã hàng nào âm kho** ở
 3. Ở **Bán hàng**, mở Excel bán ra như bình thường: tool **tự cân đối** (không cần chọn menu) với hóa đơn mua vào của phiên Mua
    hàng gần nhất, ghi cạnh file bán ra `<tên>_can_doi_kho.xlsx` (thêm cột **Mã hàng**, các cột "… trên hóa đơn" giữ giá trị
    gốc khi phải đổi) và `<tên>_bao_cao_ton_kho.xlsx` (tồn theo mã, dòng đổi mã, nhóm cùng mặt hàng, cảnh báo), rồi nạp luôn
-   file đã cân đối vào danh sách. Dòng trạng thái báo số mã còn âm; rê chuột lên đó để xem tóm tắt. Thiếu danh mục, tồn đầu kỳ
+   file đã cân đối vào danh sách. Dòng trạng thái báo số dòng bị bỏ qua vì thiếu tồn hoặc không quy đổi được; rê chuột lên đó để xem tóm tắt. Thiếu danh mục, tồn đầu kỳ
    hoặc hóa đơn mua vào thì tool nạp file gốc và ghi rõ lý do chưa cân đối.
+
+Dòng hóa đơn có số lượng/thành tiền âm được lọc riêng, không làm mất các dòng dương khác trong cùng hóa đơn. Nếu không có mã tương thích đủ tồn tại ngày bán,
+   dòng bán được ghi trong báo cáo nhưng không đưa vào file cân đối, để không tạo âm kho; cần dò lại hóa đơn hoặc bổ sung tồn trước khi nhập thực tế.
 
 Cách chọn mã cho từng dòng bán (theo ngày; cùng ngày thì hàng mua vào tính trước; không tách dòng):
 

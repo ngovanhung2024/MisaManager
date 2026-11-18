@@ -115,7 +115,7 @@ public sealed class StockBalanceTests : IDisposable
     }
 
     [Fact]
-    public void SaleBeforeThePurchaseBorrowsAndAShortageStaysOnItsOwnCode()
+    public void InsufficientStockIsSkippedInsteadOfCreatingNegativeBalance()
     {
         var catalog = Catalog(new("HH_88", "Fuamy 40EC - 450ml (ĐN)", "Chai"), new("HH_344", "Fu-army 40EC 450ml (ĐN)", "Chai"),
             new("HH_159", "Marvel 30SL - 7ml", "Gói"));
@@ -128,12 +128,12 @@ public sealed class StockBalanceTests : IDisposable
 
         var plan = StockBalancer.Plan(catalog, [Opening("HH_159", 528)], null, purchases, sales);
 
-        Assert.Equal([("HH_344", StockAllocationKind.Borrowed, 30m), ("HH_88", StockAllocationKind.Shortage, 60m),
-            ("HH_159", StockAllocationKind.Shortage, 49m)], plan.Sales.Select(line => (line.Code!, line.Kind, line.Missing)));
-        var negative = plan.NegativeCodes.ToDictionary(code => code.Code);
-        Assert.Equal((-30m, Day.AddDays(5), 50m), (negative["HH_344"].Lowest, negative["HH_344"].LowestOn!.Value, negative["HH_344"].Closing));
-        Assert.Equal(-60m, negative["HH_88"].Closing);
-        Assert.Equal(-49m, negative["HH_159"].Closing);
+        Assert.Equal(
+            [(null, StockAllocationKind.Skipped), ("HH_344", StockAllocationKind.Similar), (null, StockAllocationKind.Skipped)],
+            plan.Sales.Select(line => (line.Code, line.Kind)));
+        Assert.Equal([30m, 0m, 49m], plan.Sales.Select(line => line.Missing));
+        Assert.Empty(plan.NegativeCodes);
+        Assert.All(plan.Codes, code => Assert.True(code.Lowest >= 0));
     }
 
     [Fact]

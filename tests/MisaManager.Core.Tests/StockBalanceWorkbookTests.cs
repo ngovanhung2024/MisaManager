@@ -82,15 +82,14 @@ public sealed class StockBalanceWorkbookTests : IDisposable
         var again = await new InvoiceWorkbookImporter(reader).ImportAsync(balanced, null, Token);
 
         Assert.DoesNotContain(again.Issues, issue => issue.Severity == IssueSeverity.Blocking);
-        Assert.Equal(imported.Invoices.Count, again.Invoices.Count);
+        Assert.Single(again.Invoices);
         Assert.All(again.Invoices, invoice => Assert.False(invoice.IsBlocked));
         var lines = again.Invoices.SelectMany(invoice => invoice.Lines).ToArray();
         Assert.Equal(("HH_327", "Newcate 2.5WP - 1kg", "Gói", 30m, 300_000m),
             (lines[0].ItemCode, lines[0].Name, lines[0].Unit, lines[0].Quantity!.Value, lines[0].AmountBeforeTax!.Value));
         Assert.Equal(("HH_69", "Chani 300EC - 100ml (ĐN Nicotex)", "Chai", 10m), (lines[1].ItemCode, lines[1].Name, lines[1].Unit, lines[1].Quantity!.Value));
-        // No catalog code and no stock: left without a code, the tool resolves (or creates) it at entry as before.
-        Assert.Equal("", lines[2].ItemCode);
-        Assert.Equal(imported.Invoices.Select(invoice => invoice.Issued), again.Invoices.Select(invoice => invoice.Issued));
+        Assert.Equal(2, lines.Length);
+        Assert.Equal(day, again.Invoices.Single().Issued);
         var copy = (await reader.ReadAsync(balanced, Token)).Sheets.Single();
         Assert.Equal("Newcat 2.5WP - 1kg", copy.Rows.Single(row => row.Number == 2).Cells.Values
             .Single(cell => cell.Column == InvoiceSheet.Headers.Length + 2).ParsedValue);
@@ -133,7 +132,7 @@ public sealed class StockBalanceWorkbookTests : IDisposable
     }
 
     [Fact]
-    public async Task ReportListsStockChangedLinesGroupsAndWarnings()
+    public async Task ReportListsSkippedLinesGroupsAndWarnings()
     {
         var catalog = new ItemCatalogStore(temp.Combine("state", "item-catalog.json"));
         catalog.Import([new("HH_69", "Chani 300EC - 100ml (ĐN)", "Chai"), new("HH_339", "Chani 300EC - 100ml (ĐN Nicotex)", "Chai")],
@@ -146,9 +145,9 @@ public sealed class StockBalanceWorkbookTests : IDisposable
 
         var report = await new WorkbookReader().ReadAsync(path, Token);
         Assert.Equal(["Tồn kho theo mã", "Dòng bán ra đổi mã", "Nhóm cùng mặt hàng", "Cảnh báo"], report.Sheets.Select(sheet => sheet.Name));
-        var stock = report.Sheets[0].Rows.Single(row => row.Cells.Values.Any(cell => cell.ParsedValue == "HH_339"));
-        Assert.Contains(stock.Cells.Values, cell => cell.ParsedValue == "Âm kho");
-        Assert.Contains(report.Sheets[1].Rows.SelectMany(row => row.Cells.Values), cell => cell.ParsedValue?.StartsWith("Thiếu tồn 70", StringComparison.Ordinal) == true);
+        var stock = report.Sheets[0].Rows.Single(row => row.Cells.Values.Any(cell => cell.ParsedValue == "HH_69"));
+        Assert.DoesNotContain(stock.Cells.Values, cell => cell.ParsedValue == "Âm kho");
+        Assert.Contains(report.Sheets[1].Rows.SelectMany(row => row.Cells.Values), cell => cell.ParsedValue?.StartsWith("Bỏ qua dòng", StringComparison.Ordinal) == true);
         Assert.Equal(3, report.Sheets[2].Rows.Length);
     }
 }

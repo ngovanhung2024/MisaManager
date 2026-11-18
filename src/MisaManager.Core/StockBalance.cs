@@ -168,13 +168,15 @@ public enum StockAllocationKind
     /// <summary>No code of these goods has enough stock, even counting later purchases.</summary>
     Shortage,
     /// <summary>No catalog code at all: the tool would create one with no stock.</summary>
-    Unmatched
+    Unmatched,
+    /// <summary>The sales line is excluded because no compatible code has enough stock at the sale date.</summary>
+    Skipped = 7
 }
 
 /// <param name="MatchedCode">Code chosen from the name alone (what the tool did before balancing).</param>
 /// <param name="Name">Name, unit, quantity and unit price to enter for <paramref name="Code"/>; converted when its unit differs.</param>
 /// <param name="StockQuantity">Quantity in the main unit of <paramref name="Code"/>.</param>
-/// <param name="Missing">Stock the code lacked at the sale date (Borrowed/Shortage).</param>
+/// <param name="Missing">Stock the code lacked at the sale date (Borrowed/Shortage/Skipped).</param>
 /// <param name="NewItem">
 /// <paramref name="Code"/> is a provisional "(mới n)" for goods bought without a catalog code: the sales file leaves the code empty
 /// and carries the purchase name so MISA gets the code the purchase import creates.
@@ -221,13 +223,26 @@ public static class StockBalancer
         foreach (var entry in opening.Where(entry => entry.Code.Trim().Length > 0))
         {
             var code = entry.Code.Trim();
-            openingQuantity[code] = openingQuantity.GetValueOrDefault(code) + entry.Quantity;
+            if (entry.Quantity < -Tolerance)
+            {
+                warnings.Add($"Bỏ qua tồn đầu kỳ âm của mã {code}: {entry.Quantity.ToString("0.###", CultureInfo.InvariantCulture)} {entry.Unit.Trim()}.");
+                continue;
+            }
             if (byCode.TryGetValue(code, out var item))
             {
-                if (entry.Unit.Trim().Length > 0 && ItemCatalogStore.NameKey(entry.Unit) != ItemCatalogStore.NameKey(item.Unit))
+                var sourceUnit = entry.Unit.Trim();
+                var factor = sourceUnit.Length == 0 ? 1m : StockUnits.Factor(sourceUnit, entry.Name, item);
+                if (factor is null)
+                {
+                    warnings.Add($"Bỏ qua tồn đầu kỳ mã {code}: ĐVT '{entry.Unit}' không quy đổi được sang ĐVT '{item.Unit}'.");
+                    continue;
+                }
+                openingQuantity[code] = openingQuantity.GetValueOrDefault(code) + entry.Quantity * factor.Value;
+                if (sourceUnit.Length > 0 && ItemCatalogStore.NameKey(entry.Unit) != ItemCatalogStore.NameKey(item.Unit))
                     warnings.Add($"Mã {code}: ĐVT tồn đầu kỳ '{entry.Unit}' khác ĐVT chính trong danh mục '{item.Unit}'.");
                 continue;
             }
+            openingQuantity[code] = openingQuantity.GetValueOrDefault(code) + entry.Quantity;
             missingOpening.Add(code);
             byCode[code] = new ItemCatalogEntry(code, entry.Name, entry.Unit);
             items.Add(byCode[code]);
@@ -295,14 +310,9 @@ public static class StockBalancer
             catch (AutomationException) { return null; }
         }
 
-        var received = receipts.GroupBy(receipt => receipt.Code, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Sum(receipt => receipt.Quantity), StringComparer.OrdinalIgnoreCase);
         var available = new Dictionary<string, decimal>(openingQuantity, StringComparer.OrdinalIgnoreCase);
-        var remaining = items.Select(item => item.Code).Concat(received.Keys).Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(code => code, code => openingQuantity.GetValueOrDefault(code) + received.GetValueOrDefault(code), StringComparer.OrdinalIgnoreCase);
         var issues = new List<(DateOnly Date, string Code, decimal Quantity)>();
 
-        // ---- sales, day by day; the same day's purchases come first ----
         var lines = new List<(InvoiceDocument Invoice, InvoiceLine Line, int Index, DateOnly Date)>();
         foreach (var invoice in sales)
         {
@@ -316,7 +326,7 @@ public static class StockBalancer
             .ThenBy(entry => entry.Invoice.Identity.Number, StringComparer.Ordinal).ThenBy(entry => entry.Index)];
         var arrivals = receipts.OrderBy(receipt => receipt.Date).ToArray();
         var next = 0;
-        var candidates = new Dictionary<string, (ItemCatalogEntry? Own, ItemCatalogEntry[] Family, ItemCatalogEntry[] Similar)>(StringComparer.Ordinal);
+        var skippedSales = new List<string>();
         var assignments = new List<StockLineAssignment>();
         foreach (var (invoice, line, _, date) in lines)
         {
@@ -325,61 +335,56 @@ public static class StockBalancer
             var quantity = line.Quantity!.Value;
             StockLineAssignment Assign(ItemCatalogEntry? matched, ItemCatalogEntry item, Entry entry, StockAllocationKind kind)
             {
-                var missing = Math.Max(0, entry.StockQuantity - available.GetValueOrDefault(item.Code));
-                available[item.Code] = available.GetValueOrDefault(item.Code) - entry.StockQuantity;
-                remaining[item.Code] = remaining.GetValueOrDefault(item.Code) - entry.StockQuantity;
+                available[item.Code] = Math.Max(0, available.GetValueOrDefault(item.Code) - entry.StockQuantity);
                 issues.Add((date, item.Code, entry.StockQuantity));
                 var name = matched is not null && string.Equals(matched.Code, item.Code, StringComparison.OrdinalIgnoreCase)
                     || ItemCatalogStore.SameItemName(line.Name, item.Name) ? line.Name : item.Name;
                 return new(invoice.InvoiceId, line.LineId, invoice.Identity.Number, date, line.Name, line.Unit, quantity, line.UnitPrice,
                     matched?.Code, item.Code, name, entry.Unit, entry.Quantity, entry.UnitPrice, entry.StockQuantity, kind,
-                    missing > Tolerance ? missing : 0, IsNew(item));
+                    0, IsNew(item));
             }
-            if (line.ItemCode.Trim() is { Length: > 0 } fixedCode)
+
+            StockLineAssignment Skip(ItemCatalogEntry? matched, decimal missing)
             {
-                if (byCode.GetValueOrDefault(fixedCode) is { } item && EntryFor(line, item) is { } entry)
-                    assignments.Add(Assign(item, item, entry, StockAllocationKind.Fixed));
-                else
-                    assignments.Add(new(invoice.InvoiceId, line.LineId, invoice.Identity.Number, date, line.Name, line.Unit, quantity,
-                        line.UnitPrice, fixedCode, fixedCode, line.Name, line.Unit, quantity, line.UnitPrice, quantity, StockAllocationKind.Fixed));
-                continue;
+                var fixedCode = line.ItemCode.Trim();
+                var matchedCode = matched?.Code ?? (fixedCode.Length == 0 ? null : fixedCode);
+                skippedSales.Add($"HĐ {invoice.Identity.Number}: {line.Name.Trim()} ({line.Unit.Trim()}) {quantity.ToString("0.###", CultureInfo.InvariantCulture)}");
+                return new(invoice.InvoiceId, line.LineId, invoice.Identity.Number, date, line.Name, line.Unit, quantity, line.UnitPrice,
+                    matchedCode, null, line.Name, line.Unit, 0, null, 0, StockAllocationKind.Skipped, missing > Tolerance ? missing : 0);
             }
-            var signature = ItemCatalogStore.NameKey(line.Name) + "\u0001" + ItemCatalogStore.NameKey(line.Unit);
-            if (!candidates.TryGetValue(signature, out var found))
-            {
-                var own = Match(line);
-                var profile = ItemFamilies.Profile(line.Name, line.Unit);
-                var ownProfile = own is null ? null : profiles.GetValueOrDefault(own.Code) ?? ItemFamilies.Profile(own.Name, own.Unit);
-                var keys = new HashSet<string>(StringComparer.Ordinal) { profile.Key };
-                if (ownProfile is not null) keys.Add(ownProfile.Key);
-                var family = keys.SelectMany(key => families.GetValueOrDefault(key) ?? []).Append(own).OfType<ItemCatalogEntry>()
-                    .DistinctBy(item => item.Code, StringComparer.OrdinalIgnoreCase).ToArray();
-                var similar = items.Where(item => !family.Any(member => string.Equals(member.Code, item.Code, StringComparison.OrdinalIgnoreCase))
-                    && (ItemFamilies.Similar(profile, profiles[item.Code])
-                        || ownProfile is not null && ItemFamilies.Similar(ownProfile, profiles[item.Code]))).ToArray();
-                found = (own, Ordered(family, own, Original), Ordered(similar, null, Original));
-                candidates[signature] = found;
-            }
-            var options = found.Family.Select(item => (Item: item, Entry: EntryFor(line, item), Kind: StockAllocationKind.Family))
-                .Concat(found.Similar.Select(item => (Item: item, Entry: EntryFor(line, item), Kind: StockAllocationKind.Similar)))
+
+            var fixedCode = line.ItemCode.Trim();
+            var own = fixedCode.Length > 0 ? byCode.GetValueOrDefault(fixedCode) : Match(line);
+            var profile = ItemFamilies.Profile(line.Name, line.Unit);
+            var ownProfile = own is null ? null : profiles.GetValueOrDefault(own.Code) ?? ItemFamilies.Profile(own.Name, own.Unit);
+            var keys = new HashSet<string>(StringComparer.Ordinal) { profile.Key };
+            if (ownProfile is not null) keys.Add(ownProfile.Key);
+            var family = Ordered(keys.SelectMany(key => families.GetValueOrDefault(key) ?? []).Append(own).OfType<ItemCatalogEntry>()
+                .DistinctBy(item => item.Code, StringComparer.OrdinalIgnoreCase), own, Original);
+            var similar = Ordered(items.Where(item => !family.Any(member => string.Equals(member.Code, item.Code, StringComparison.OrdinalIgnoreCase))
+                && (ItemFamilies.Similar(profile, profiles[item.Code])
+                    || ownProfile is not null && ItemFamilies.Similar(ownProfile, profiles[item.Code]))), own, Original);
+            var options = family.Select(item => (Item: item, Entry: EntryFor(line, item), Kind: StockAllocationKind.Family))
+                .Concat(similar.Select(item => (Item: item, Entry: EntryFor(line, item), Kind: StockAllocationKind.Similar)))
                 .Where(option => option.Entry is not null).Select(option => (option.Item, Entry: option.Entry!, option.Kind)).ToArray();
             var chosen = options.Where(option => available.GetValueOrDefault(option.Item.Code) + Tolerance >= option.Entry.StockQuantity)
-                .Select(option => (option.Item, option.Entry, Kind: string.Equals(option.Item.Code, found.Own?.Code, StringComparison.OrdinalIgnoreCase)
-                    ? StockAllocationKind.Matched : option.Kind))
-                .Concat(options.Where(option => remaining.GetValueOrDefault(option.Item.Code) + Tolerance >= option.Entry.StockQuantity)
-                    .Select(option => (option.Item, option.Entry, Kind: StockAllocationKind.Borrowed)))
+                .Select(option => (option.Item, option.Entry, Kind: fixedCode.Length > 0 && string.Equals(option.Item.Code, fixedCode, StringComparison.OrdinalIgnoreCase)
+                    ? StockAllocationKind.Fixed
+                    : string.Equals(option.Item.Code, own?.Code, StringComparison.OrdinalIgnoreCase)
+                        ? StockAllocationKind.Matched : option.Kind))
                 .Cast<(ItemCatalogEntry Item, Entry Entry, StockAllocationKind Kind)?>().FirstOrDefault();
-            if (chosen is { } pick) { assignments.Add(Assign(found.Own, pick.Item, pick.Entry, pick.Kind)); continue; }
-            // Not enough anywhere: the line stays on its own code (or the first of its goods) and that code goes negative.
-            var fallback = options.FirstOrDefault(option => string.Equals(option.Item.Code, found.Own?.Code, StringComparison.OrdinalIgnoreCase));
-            if (fallback.Item is null && options.Length > 0) fallback = options[0];
-            if (fallback.Item is not null) assignments.Add(Assign(found.Own, fallback.Item, fallback.Entry, StockAllocationKind.Shortage));
-            else
-                assignments.Add(new(invoice.InvoiceId, line.LineId, invoice.Identity.Number, date, line.Name, line.Unit, quantity, line.UnitPrice,
-                    found.Own?.Code, found.Own?.Code, line.Name, line.Unit, quantity, line.UnitPrice, quantity,
-                    found.Own is null ? StockAllocationKind.Unmatched : StockAllocationKind.Shortage, found.Own is null ? 0 : quantity));
+            if (chosen is { } pick)
+            {
+                assignments.Add(Assign(own, pick.Item, pick.Entry, pick.Kind));
+                continue;
+            }
+            var missing = options.Length == 0
+                ? quantity
+                : options.Min(option => Math.Max(0, option.Entry.StockQuantity - available.GetValueOrDefault(option.Item.Code)));
+            assignments.Add(Skip(own, missing));
         }
-
+        if (skippedSales.Count > 0)
+            warnings.Add($"Bỏ qua {skippedSales.Count} dòng bán ra vì không đủ tồn thực có tại ngày bán hoặc không quy đổi được ({List(skippedSales)}).");
         var balances = Balances(byCode, openingQuantity, receipts, issues, opening);
         var groups = families.Values.Where(group => group.Length > 1)
             .Select(group => (IReadOnlyList<ItemCatalogEntry>)group.OrderBy(item => item.Code, ItemCatalogStore.CodeOrder).ToArray())
