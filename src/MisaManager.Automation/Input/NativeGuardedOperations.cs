@@ -1304,7 +1304,8 @@ public sealed partial class NativeInputService
     private CustomGridLayout ReadCustomGridLayout(AutomationElement grid, CancellationToken token,
         IReadOnlyList<string>? requestedColumns = null, NativeCell? rowTarget = null,
         bool waitForCode = false, bool requireEmptyCode = false,
-        bool dataRowsOnly = false, bool onscreenOnly = false, bool allowEmpty = false)
+        bool dataRowsOnly = false, bool onscreenOnly = false, bool allowEmpty = false,
+        bool mapCells = true)
     {
         var headers = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.HeaderItem),
                 identity!.ProcessId, enabled: false, onscreen: false))
@@ -1341,7 +1342,8 @@ public sealed partial class NativeInputService
             throw new AutomationException("GRID_ROWS_INVALID", "Không có dòng native của bảng.");
         if (rowTarget is not null)
             rows = [SelectCustomRow(grid, rows, headers, rowTarget, waitForCode, requireEmptyCode, token)];
-        return new CustomGridLayout(headers, rows.Select(row => new CustomRow(row, MapCustomCells(grid, row, headers, token))).ToArray());
+        return new CustomGridLayout(headers, rows.Select(row => new CustomRow(row,
+            mapCells ? MapCustomCells(grid, row, headers, token) : [])).ToArray());
     }
 
     private static bool IsLogicalCustomRow(ElementSnapshot row)

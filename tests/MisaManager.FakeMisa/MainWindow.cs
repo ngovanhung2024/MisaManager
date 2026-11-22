@@ -103,6 +103,7 @@ public sealed class MainWindow : Window, IGridSource
         };
         double ColumnWidth(string key) => key switch { "customer" => 170, "description" => 120, "template" => 60, _ => 82 };
         list = new FakeGrid(profile.GridId(listScreen, "vouchers"), 420) { ShowFilters = true };
+        list.CellsUseCustomProvider = purchase && scenario.PurchaseListCellsUseCustomProvider;
         list.FilterCommitted += (_, filter) =>
         {
             if (filter.Key != "number") return;

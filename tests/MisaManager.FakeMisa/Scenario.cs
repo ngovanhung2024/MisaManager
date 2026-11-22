@@ -185,6 +185,8 @@ public sealed record Scenario
     public string InitialInvoiceFilter { get; init; } = "";
     /// <summary>Leaves the old filtered rows visible after Enter, reproducing a stale R20 filter.</summary>
     public bool IgnoreInvoiceFilterCommit { get; init; }
+    /// <summary>R20 can expose register cells as custom providers, so the row must be selected with the mouse.</summary>
+    public bool PurchaseListCellsUseCustomProvider { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

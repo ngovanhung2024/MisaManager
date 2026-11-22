@@ -129,6 +129,8 @@ public sealed class FakeGrid : Border
 
     public bool ShowInsertionRow { get; set; }
     public bool ShowFilters { get; set; }
+    /// <summary>Leaves visible register cells focusable but exposes them as custom providers, like the failing R20 grid.</summary>
+    public bool CellsUseCustomProvider { get; set; }
     /// <summary>
     /// R20 unit cells (report 0.2.172, HĐ 151/164): the "ĐVT" combo exposes an invokable "[Editor] dropdown button"; while
     /// its list is closed it still exposes the list's items, with bounds over the next grid row; the first opening of a
@@ -770,6 +772,14 @@ internal sealed class GridRow : StackPanel
             if (!IsEnabled() || Cell.IsReadOnly) throw new ElementNotEnabledException();
             Cell.Text = value;
         }
+
+        protected override AutomationControlType GetAutomationControlTypeCore()
+            => grid.CellsUseCustomProvider && row.Index is not null
+                ? AutomationControlType.Custom
+                : base.GetAutomationControlTypeCore();
+
+        protected override string GetNameCore()
+            => grid.CellsUseCustomProvider && row.Index is not null ? Cell.Text : base.GetNameCore();
     }
 
     private sealed class RowPeer(GridRow owner) : FrameworkElementAutomationPeer(owner)
