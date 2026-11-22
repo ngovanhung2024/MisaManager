@@ -1215,14 +1215,14 @@ public sealed partial class NativeInputService
         return ReadNativeText(DisplayCell(cell));
     }
 
-    private AutomationElement SelectCustomRow(IReadOnlyList<AutomationElement> rows,
+    private AutomationElement SelectCustomRow(AutomationElement grid, IReadOnlyList<AutomationElement> rows,
         IReadOnlyList<CustomColumn> columns, NativeCell cell, bool waitForCode, bool requireEmptyCode, CancellationToken token)
     {
         var codeColumn = columns[FindCustomColumn(columns, cell.CodeColumn)];
         string Code(AutomationElement candidate)
         {
             token.ThrowIfCancellationRequested();
-            return ReadNativeText(MapCustomCells(candidate, [codeColumn], token)[0]).Value.Trim();
+            return ReadNativeText(MapCustomCells(grid, candidate, [codeColumn], token)[0]).Value.Trim();
         }
         AutomationElement? row = null;
         // Infragistics repeats AutomationId across rows. Resolve by the
@@ -1340,8 +1340,8 @@ public sealed partial class NativeInputService
         if (rows.Length == 0 && !allowEmpty)
             throw new AutomationException("GRID_ROWS_INVALID", "Không có dòng native của bảng.");
         if (rowTarget is not null)
-            rows = [SelectCustomRow(rows, headers, rowTarget, waitForCode, requireEmptyCode, token)];
-        return new CustomGridLayout(headers, rows.Select(row => new CustomRow(row, MapCustomCells(row, headers, token))).ToArray());
+            rows = [SelectCustomRow(grid, rows, headers, rowTarget, waitForCode, requireEmptyCode, token)];
+        return new CustomGridLayout(headers, rows.Select(row => new CustomRow(row, MapCustomCells(grid, row, headers, token))).ToArray());
     }
 
     private static bool IsLogicalCustomRow(ElementSnapshot row)
@@ -1352,13 +1352,20 @@ public sealed partial class NativeInputService
         return row.AutomationId != "-1" || row.Enabled;
     }
 
-    private IReadOnlyList<AutomationElement> MapCustomCells(AutomationElement row,
+    private IReadOnlyList<AutomationElement> MapCustomCells(AutomationElement grid, AutomationElement row,
         IReadOnlyList<CustomColumn> columns, CancellationToken token)
     {
         var cells = Snapshots(row, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
                 row.Properties.ProcessId.ValueOrDefault, enabled: false, onscreen: false))
             .Where(element => element.HasArea)
             .GroupBy(element => element.Bounds)
+            .Select(group => group.First()).ToArray();
+        var rowBounds = row.BoundingRectangle;
+        var gridCells = Snapshots(grid, Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text),
+                identity!.ProcessId, enabled: false, onscreen: false))
+            .Where(item => item.HasArea && item.Bounds.Top < rowBounds.Bottom && item.Bounds.Bottom > rowBounds.Top
+                && item.Bounds.Left >= rowBounds.Left - 4 && item.Bounds.Right <= rowBounds.Right + 4)
+            .GroupBy(item => item.Bounds)
             .Select(group => group.First()).ToArray();
         return columns.Select(column =>
         {
@@ -1373,6 +1380,16 @@ public sealed partial class NativeInputService
                 .ThenByDescending(item => item.overlap)
                 .ThenBy(item => Math.Abs(item.cell.Bounds.X - column.Left))
                 .ToArray();
+            if (matches.Length == 0)
+            {
+                matches = gridCells.Select(cell => (cell, overlap: HorizontalOverlap(cell.Bounds.X,
+                        cell.Bounds.X + cell.Bounds.Width, column.Left, column.Right)))
+                    .Where(item => item.overlap > 0)
+                    .OrderByDescending(item => Math.Round(item.overlap / Math.Max(1, item.cell.Bounds.Width), 2))
+                    .ThenByDescending(item => item.overlap)
+                    .ThenBy(item => Math.Abs(item.cell.Bounds.X - column.Left))
+                    .ToArray();
+            }
             if (matches.Length == 0)
                 throw new AutomationException("GRID_COLUMNS_INVALID", "Không ánh xạ được ô native cho cột " + column.Name);
             return matches[0].cell.Element;
