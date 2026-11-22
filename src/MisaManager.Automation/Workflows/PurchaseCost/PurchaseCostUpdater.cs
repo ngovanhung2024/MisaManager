@@ -39,6 +39,10 @@ public sealed class PurchaseCostUpdater
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 failed.Add(invoice.Identity.Number + ": " + error.Message);
+                // A failed filter/open leaves the MISA list in an unknown state.
+                // Do not replace the number with the next invoice and risk
+                // editing the wrong voucher.
+                break;
             }
         }
         return new(targets.Length, updated, failed);
@@ -50,46 +54,82 @@ public sealed class PurchaseCostUpdater
         input.UseProfile(profile);
         var listProfile = profile.Screen(WorkflowProfile.PurchaseList);
         var voucherProfile = profile.Screen(WorkflowProfile.PurchaseVoucher);
-        var list = await MisaScreen.OpenAsync(input, window, listProfile, token, profile.Culture);
-        var listGrid = list.Grid("vouchers");
-        list.Track(await input.WriteGridFilterAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
-        var rows = await listGrid.ReadRowsAsync(["number"], token);
-        if (rows.Count != 1 || !string.Equals(rows[0].GetValueOrDefault("number")?.Trim(), number.Trim(), StringComparison.Ordinal))
-            throw new AutomationException("PURCHASE_NOT_FOUND", $"Không lọc được duy nhất hóa đơn số '{number}'.");
-        list.Track(await input.DoubleClickGridRowAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
-
-        var voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
-        await voucher.ClickAsync("edit", token: token);
-        await voucher.SelectTabAsync("statistics", token);
-        var detail = voucher.Grid("items");
-        var detailRows = await detail.ReadRowsAsync(["code", "name"], token);
-        if (detailRows.Count == 0) throw new AutomationException("PURCHASE_LINES_MISSING", "Hóa đơn không có dòng hàng để gán khoản mục CP.");
-        for (var row = 0; row < detailRows.Count; row++)
+        var editorOpened = false;
+        var saveAttempted = false;
+        var saved = false;
+        var closed = false;
+        try
         {
-            token.ThrowIfCancellationRequested();
-            var code = detailRows[row].GetValueOrDefault("code")?.Trim() ?? "";
-            var name = detailRows[row].GetValueOrDefault("name")?.Trim() ?? "";
-            if (code.Length == 0 && name.Length == 0) continue;
-            await detail.SelectOptionAsync(row, "cost_item", "code", code, CostItem, token: token);
+            var list = await MisaScreen.OpenAsync(input, window, listProfile, token, profile.Culture);
+            var listGrid = list.Grid("vouchers");
+            list.Track(await input.WriteGridFilterAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
+            var rows = await NativeWait.UntilAsync(
+                () => listGrid.ReadRowsAsync(["number"], token),
+                read => read.Count == 1 && string.Equals(read[0].GetValueOrDefault("number")?.Trim(), number.Trim(), StringComparison.Ordinal),
+                "PURCHASE_NOT_FOUND", $"Không lọc được duy nhất hóa đơn số '{number}'.", token,
+                timeoutMilliseconds: 10000, returnLastMismatch: true);
+            if (rows.Count != 1 || !string.Equals(rows[0].GetValueOrDefault("number")?.Trim(), number.Trim(), StringComparison.Ordinal))
+                throw new AutomationException("PURCHASE_NOT_FOUND", $"Không lọc được duy nhất hóa đơn số '{number}'.");
+            list.Track(await input.DoubleClickGridRowAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
+            editorOpened = true;
+
+            var voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
+            await voucher.ClickAsync("edit", token: token);
+            await voucher.SelectTabAsync("statistics", token);
+            var detail = voucher.Grid("items");
+            var detailRows = await detail.ReadRowsAsync(["code", "name"], token);
+            if (detailRows.Count == 0) throw new AutomationException("PURCHASE_LINES_MISSING", "Hóa đơn không có dòng hàng để gán khoản mục CP.");
+            for (var row = 0; row < detailRows.Count; row++)
+            {
+                token.ThrowIfCancellationRequested();
+                var code = detailRows[row].GetValueOrDefault("code")?.Trim() ?? "";
+                var name = detailRows[row].GetValueOrDefault("name")?.Trim() ?? "";
+                if (code.Length == 0 && name.Length == 0) continue;
+                await detail.SelectOptionAsync(row, "cost_item", "code", code, CostItem, token: token);
+            }
+            var verify = await detail.ReadRowsAsync(["code", "name", "cost_item"], token);
+            if (verify.Any(row => (row.GetValueOrDefault("name")?.Trim().Length ?? 0) > 0
+                    && !string.Equals(row.GetValueOrDefault("cost_item")?.Trim(), CostItem, StringComparison.Ordinal)))
+                throw new AutomationException("COST_ITEM_READBACK_MISMATCH", $"MISA chưa đọc lại đủ khoản mục '{CostItem}'.");
+
+            saveAttempted = true;
+            await voucher.ClickAsync("save", token: token);
+            var remains = await NativeWait.UntilAsync(async () =>
+            {
+                if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return false;
+                var frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
+                return frame is not null && await input.CommandEnabledNowAsync(voucherProfile.Element("edit").Selector, token);
+            }, ready: savedEditor => savedEditor, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
+                timeoutMilliseconds: 15000, returnLastMismatch: true);
+            if (!remains)
+            {
+                closed = !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
+                return;
+            }
+            saved = true;
+            voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
+            await voucher.ClickAsync("close", leavesScope: true, token: token);
+            closed = true;
+            await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
+                exists => !exists, "PURCHASE_CLOSE_PENDING", "Hóa đơn chưa đóng sau khi Cất.", token, timeoutMilliseconds: 15000);
         }
-        var verify = await detail.ReadRowsAsync(["code", "name", "cost_item"], token);
-        if (verify.Any(row => (row.GetValueOrDefault("name")?.Trim().Length ?? 0) > 0
-                && !string.Equals(row.GetValueOrDefault("cost_item")?.Trim(), CostItem, StringComparison.Ordinal)))
-            throw new AutomationException("COST_ITEM_READBACK_MISMATCH", $"MISA chưa đọc lại đủ khoản mục '{CostItem}'.");
-
-        await voucher.ClickAsync("save", token: token);
-        var remains = await NativeWait.UntilAsync(async () =>
+        finally
         {
-            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return false;
-            var frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
-            return frame is not null && await input.CommandEnabledNowAsync(voucherProfile.Element("edit").Selector, token);
-        }, ready: saved => saved, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
-            timeoutMilliseconds: 15000, returnLastMismatch: true);
-        if (!remains) return;
-        voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
-        await voucher.ClickAsync("close", leavesScope: true, token: token);
-        await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
-            exists => !exists, "PURCHASE_CLOSE_PENDING", "Hóa đơn chưa đóng sau khi Cất.", token, timeoutMilliseconds: 15000);
+            if (editorOpened && !closed && !(saveAttempted && !saved))
+            {
+                try
+                {
+                    var frame = await input.CaptureAsync(token);
+                    await input.InvokeWorkflowAsync(frame, voucherProfile.Element("close").Selector, token,
+                        leavesScope: true, discardChanges: !saved);
+                    closed = true;
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Không đóng được hóa đơn mua hàng {0} sau lỗi: {1}", number, error.Message);
+                }
+            }
+        }
     }
 
     private async Task<WindowIdentity> FindSessionAsync(CancellationToken token)

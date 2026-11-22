@@ -181,6 +181,10 @@ public sealed record Scenario
     public int BusyAfterQuantityClickMilliseconds { get; init; }
     /// <summary>The main MISA window rises after the customer editor receives focus, covering an unowned voucher form.</summary>
     public bool MainCoversVoucherOnCustomerFocus { get; init; }
+    /// <summary>Existing number left in the register filter when a new lookup starts.</summary>
+    public string InitialInvoiceFilter { get; init; } = "";
+    /// <summary>Leaves the old filtered rows visible after Enter, reproducing a stale R20 filter.</summary>
+    public bool IgnoreInvoiceFilterCommit { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

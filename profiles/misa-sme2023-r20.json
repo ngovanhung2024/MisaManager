@@ -90,7 +90,7 @@
     "purchase_voucher": {
       "title": "Chứng từ mua hàng (Mua hàng trong nước nhập kho chưa thanh toán)",
       "scope": { "automationId": "frmPUVoucherDetail" },
-      "tabs": { "receipt": "Phiếu nhập", "expense_receipt": "Chứng từ ghi nợ", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế", "statistics": "3. Thống kê" },
+      "tabs": { "receipt": "Phiếu nhập", "expense_receipt": "Chứng từ ghi nợ", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế", "statistics": "4. Thống kê" },
       "elements": {
         "save": { "name": "Cất", "controlType": "Button" },
         "edit": { "name": "Sửa", "controlType": "Button", "required": false, "description": "Bật chế độ sửa chứng từ mua hàng đã có trong MISA" },

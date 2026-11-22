@@ -187,7 +187,7 @@ public sealed class VoucherWindow : Window, IGridSource
         DockPanel.SetDock(totals, Dock.Bottom);
         root.Children.Add(totals);
 
-        foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", "4. Thống kê", "5. Khác" })
+        foreach (var caption in new[] { profile.Tab(screen, "items"), profile.Tab(screen, "tax"), "3. Giá vốn", profile.Tab(screen, "statistics"), "5. Khác" })
             detailTabs.Items.Add(new TabItem { Header = caption });
         detailTabs.SelectedIndex = 0;
         detailTabs.SelectionChanged += (_, e) => { if (e.Source == detailTabs) OnDetailTabChanged(); };

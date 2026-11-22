@@ -24,6 +24,7 @@ public sealed class MainWindow : Window, IGridSource
         this.store = store;
         purchase = scenario.Purchase;
         listScreen = scenario.ListScreen;
+        invoiceFilter = scenario.InitialInvoiceFilter.Trim();
         Title = profile.VersionTitle + " - " + Company;
         var area = SystemParameters.WorkArea;
         // Fixed geometry for the whole run: the automation rejects frames whose bounds/DPI changed.
@@ -105,6 +106,7 @@ public sealed class MainWindow : Window, IGridSource
         list.FilterCommitted += (_, filter) =>
         {
             if (filter.Key != "number") return;
+            if (scenario.IgnoreInvoiceFilterCommit) return;
             invoiceFilter = filter.Text.Trim();
             list.Refresh(force: true);
         };
@@ -159,6 +161,7 @@ public sealed class MainWindow : Window, IGridSource
     private void OpenExistingVoucher(SavedVoucher voucher)
     {
         if (OwnedWindows.OfType<VoucherWindow>().Any()) return;
+        FakeLog.Write("open existing voucher " + voucher.InvoiceNumber);
         new VoucherWindow(profile, scenario, store, this, Company, voucher).Show();
     }
 }

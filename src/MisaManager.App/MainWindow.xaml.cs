@@ -296,14 +296,21 @@ public partial class MainWindow : Window
                 progress: message => Dispatcher.Invoke(() => StatusLabel.Text = message));
             StatusLabel.Text = result.Failed.Count == 0
                 ? $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0} hóa đơn xăng."
-                : $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0}; lỗi {result.Failed.Count:N0} hóa đơn: {string.Join("; ", result.Failed.Take(3))}";
+                : $"Đã dừng ở hóa đơn lỗi sau khi gán {result.Updated:N0}/{result.Requested:N0}: {string.Join("; ", result.Failed.Take(1))}";
         }
         catch (Exception error)
         {
             fuelCostMode = false;
             StatusLabel.Text = "Không cập nhật được CPBH.XANG: " + error.Message;
         }
-        finally { fuelCostMode = false; }
+        finally
+        {
+            fuelCostMode = false;
+            // CPBH.XANG uses its own updater, so refresh the shared connection badge
+            // after it exits instead of leaving the startup "Đang kết nối…" state.
+            try { await workflow.ProbeConnectionAsync(); }
+            catch (Exception error) { StatusLabel.Text = "Không kiểm tra lại được kết nối MISA: " + error.Message; }
+        }
     }
 
     /// <summary>Reads the workbook, lets the user pick the sheet when there are several, then imports it like any invoice file.</summary>
@@ -1414,6 +1421,14 @@ public partial class MainWindow : Window
             var now = DateTimeOffset.UtcNow;
             editorProbeDue = connectionProbeDue = now.AddSeconds(3);
             StatusLabel.Text = "Lỗi cập nhật trạng thái (sẽ tự thử lại): " + error.Message;
+            // A presentation error must not prevent the connection probe from
+            // resolving the initial Unknown state on the next tick.
+            try
+            {
+                await workflow.ProbeConnectionAsync();
+                RefreshStateBadge();
+            }
+            catch (Exception probeError) { StatusLabel.Text += " " + probeError.Message; }
         }
     }
 
