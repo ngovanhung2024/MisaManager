@@ -294,6 +294,12 @@ public partial class MainWindow : Window
             var services = ((App)Application.Current).Services;
             var result = await services.UpdatePurchaseCostsAsync(targets,
                 progress: message => Dispatcher.Invoke(() => StatusLabel.Text = message));
+            if (result.Failed.Count > 0)
+            {
+                var message = "Gán CPBH.XANG thất bại: " + result.Failed[0];
+                Workflow_ErrorRaised(this, new WorkflowErrorEventArgs(message,
+                    string.Join(Environment.NewLine, result.Failed), DateTimeOffset.Now));
+            }
             StatusLabel.Text = result.Failed.Count == 0
                 ? $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0} hóa đơn xăng."
                 : $"Đã dừng ở hóa đơn lỗi sau khi gán {result.Updated:N0}/{result.Requested:N0}: {string.Join("; ", result.Failed.Take(1))}";
@@ -301,6 +307,8 @@ public partial class MainWindow : Window
         catch (Exception error)
         {
             fuelCostMode = false;
+            Workflow_ErrorRaised(this, new WorkflowErrorEventArgs(
+                "Gán CPBH.XANG thất bại: " + error.Message, error.ToString(), DateTimeOffset.Now));
             StatusLabel.Text = "Không cập nhật được CPBH.XANG: " + error.Message;
         }
         finally

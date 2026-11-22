@@ -38,7 +38,8 @@ public sealed class PurchaseCostUpdater
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                failed.Add(invoice.Identity.Number + ": " + error.Message);
+                var code = error is AutomationException automation ? automation.Code + ": " : "";
+                failed.Add(invoice.Identity.Number + ": " + code + error.Message);
                 // A failed filter/open leaves the MISA list in an unknown state.
                 // Do not replace the number with the next invoice and risk
                 // editing the wrong voucher.

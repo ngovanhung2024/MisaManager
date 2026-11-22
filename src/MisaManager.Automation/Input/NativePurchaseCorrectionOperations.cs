@@ -20,10 +20,16 @@ public sealed partial class NativeInputService
             if (headers.Length != 1)
                 throw new AutomationException("GRID_COLUMN_AMBIGUOUS", $"Không xác định duy nhất cột lọc '{column}'.");
             var header = headers[0].Bounds;
-            var editors = Snapshots(grid, Live(AnyControlType(FlaUI.Core.Definitions.ControlType.ComboBox,
+            var candidates = Snapshots(grid, Live(AnyControlType(FlaUI.Core.Definitions.ControlType.ComboBox,
                     FlaUI.Core.Definitions.ControlType.Edit), identity!.ProcessId, enabled: false, onscreen: false))
-                .Where(item => item.HasArea && item.Bounds.Left < header.Right && item.Bounds.Right > header.Left
-                    && item.Bounds.Top >= header.Bottom - 2)
+                .Where(item => item.HasArea && item.Bounds.Top >= header.Bottom - 2)
+                .ToArray();
+            var centered = candidates.Where(item =>
+            {
+                var center = item.Bounds.Left + item.Bounds.Width / 2;
+                return center >= header.Left - 2 && center <= header.Right + 2;
+            }).ToArray();
+            var editors = (centered.Length > 0 ? centered : candidates)
                 // R20 exposes the register filter as a ComboBox with an embedded
                 // Edit. Use the parent when available so Enter reaches the grid
                 // filter, rather than only the child editor.
