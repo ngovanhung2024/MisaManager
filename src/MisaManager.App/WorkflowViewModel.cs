@@ -90,7 +90,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
                 Status = current.Snapshot.LastMessage ?? $"Đã khôi phục phiên {current.Invoice.Identity.Number}: {current.Snapshot.Status}.";
             NotifyWorkflowChanged();
         }
-        catch (Exception error) { Status = "Không đọc được phiên trước: " + error.Message; }
+        catch (Exception error)
+        {
+            // A damaged or legacy history entry must not leave every invoice in
+            // the indefinite "Đang tải lịch sử…" state.
+            HistoryLoaded = true;
+            Status = "Không đọc được một phần lịch sử cũ: " + error.Message;
+            NotifyWorkflowChanged();
+        }
     }
 
     /// <summary>

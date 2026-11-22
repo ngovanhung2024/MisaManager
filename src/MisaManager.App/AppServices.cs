@@ -237,7 +237,14 @@ public sealed partial class AppServices : IAsyncDisposable
         Generations.Retain(maximumGenerations: 2, minimumAge: TimeSpan.FromDays(30),
             hasUnresolvedRun: Generations.HasUnresolvedRun);
         await Workflow.InitializeAsync();
-        await Task.Run(() => eventStore.Prune());
+        // Audit retention can inspect hundreds of old event files and generations.
+        // It must not delay the history list or leave every invoice showing
+        // "Đang tải lịch sử…" during startup.
+        _ = Task.Run(() =>
+        {
+            try { eventStore.Prune(); }
+            catch (Exception error) { System.Diagnostics.Trace.TraceWarning("Audit retention failed: {0}", error.Message); }
+        });
     }
 
     private async Task EnsureInitializedAsync(CancellationToken token)
