@@ -64,13 +64,10 @@ public sealed class PurchaseCostUpdater
             var list = await MisaScreen.OpenAsync(input, window, listProfile, token, profile.Culture);
             var listGrid = list.Grid("vouchers");
             list.Track(await input.WriteGridFilterAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
-            var rows = await NativeWait.UntilAsync(
-                () => listGrid.ReadRowsAsync(["number"], token),
-                read => read.Count == 1 && string.Equals(read[0].GetValueOrDefault("number")?.Trim(), number.Trim(), StringComparison.Ordinal),
-                "PURCHASE_NOT_FOUND", $"Không lọc được duy nhất hóa đơn số '{number}'.", token,
-                timeoutMilliseconds: 10000, returnLastMismatch: true);
-            if (rows.Count != 1 || !string.Equals(rows[0].GetValueOrDefault("number")?.Trim(), number.Trim(), StringComparison.Ordinal))
-                throw new AutomationException("PURCHASE_NOT_FOUND", $"Không lọc được duy nhất hóa đơn số '{number}'.");
+            // DoubleClickGridRowAsync performs the authoritative row readback
+            // against the filtered column. Avoid a second generic table read,
+            // which can map R20's custom-grid providers to the wrong cell even
+            // while the visible row is already the requested invoice.
             list.Track(await input.DoubleClickGridRowAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
             editorOpened = true;
 
