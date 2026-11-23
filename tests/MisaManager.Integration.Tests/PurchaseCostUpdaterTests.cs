@@ -6,7 +6,7 @@ namespace MisaManager.Integration.Tests;
 public sealed class PurchaseCostUpdaterTests : UiTest
 {
     [Fact]
-    public Task UnreadableCostItemListPreservesFailureEvidence()
+    public Task HiddenCostItemListAcceptsDirectText()
     {
         var existing = new FakeVoucher("MH00197", "205", "C26MPD", "NCC_PBH", Invoices.Supplier.Name,
             Invoices.Supplier.TaxCode, "02/01/2026", "02/01/2026", "02/01/2026", InvoiceKinds.PurchasePayment,
@@ -20,14 +20,11 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
                 Invoices.Line(0, "VT0005", "Xăng RON 95 Mức 3", "Lít", 17.49m, 17_738.708m, "8%"));
             var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
-            var observed = 0;
-            updater.FailureObserver = (_, _, _) => { observed++; return Task.CompletedTask; };
-
             var result = await updater.UpdateAsync([invoice], rule, token);
 
-            var error = Assert.Single(result.Failed);
-            Assert.Contains("205: INPUT_UNCERTAIN", error);
-            Assert.Equal(1, observed);
+            Assert.Equal((1, 1), (result.Requested, result.Updated));
+            Assert.Empty(result.Failed);
+            Assert.Equal("CPBH.XANG", Assert.Single(misa.State().Vouchers).Lines[0].CostItem);
         }, scenario);
     }
 

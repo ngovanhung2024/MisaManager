@@ -99,7 +99,8 @@ public sealed class PurchaseCostUpdater
                 var code = detailRows[row].GetValueOrDefault("code")?.Trim() ?? "";
                 var name = detailRows[row].GetValueOrDefault("name")?.Trim() ?? "";
                 if (code.Length == 0 && name.Length == 0) continue;
-                await detail.SelectOptionAsync(row, "cost_item", "code", code, CostItem, token: token);
+                await detail.WriteCellAsync(row, "cost_item", "code", code, CostItem, CostItem,
+                    NativeValueKind.Text, "Tab", profile.Culture, token, keyboardText: true);
             }
             var verify = await detail.ReadRowsAsync(["code", "name", "cost_item"], token);
             if (verify.Any(row => (row.GetValueOrDefault("name")?.Trim().Length ?? 0) > 0

@@ -121,10 +121,10 @@ public sealed class MisaGrid
 
     public async Task<string?> WriteCellAsync(int row, string column, string codeColumn, string expectedCode, string text,
         string? expected = null, NativeValueKind kind = NativeValueKind.Text, string commitKey = "Tab", string culture = "vi-VN",
-        CancellationToken token = default)
+        CancellationToken token = default, bool keyboardText = false)
         => screen.Track(await input.WriteCellAsync(screen.Frame,
             new NativeCell(Profile.AutomationId, row, Column(column), Column(codeColumn), expectedCode),
-            text, expected ?? text, kind, culture, token, commitKey)).Value;
+            text, expected ?? text, kind, culture, token, commitKey, keyboardText)).Value;
 
     public async Task<string?> SelectOptionAsync(int row, string column, string codeColumn, string expectedCode, string option,
         string culture = "vi-VN", CancellationToken token = default)
