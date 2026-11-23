@@ -637,10 +637,10 @@
       </DockPanel>
     </Border>
 
-    <Border x:Name="ErrorPopup" Grid.RowSpan="6" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="8" Padding="10,8" VerticalAlignment="Top" Margin="0,24,0,0">
+    <Border x:Name="ErrorPopup" Grid.RowSpan="6" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="8" Padding="10,8" VerticalAlignment="Top" MaxHeight="520" Margin="0,24,0,0">
       <Border.Effect><DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.18" Color="#7F1D1D"/></Border.Effect>
       <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <DockPanel>
           <Button DockPanel.Dock="Right" Content="×" AutomationProperties.Name="Đóng thông báo lỗi" Click="CloseErrorPopup_Click" Width="24" Height="22" Padding="0" FontSize="14" Style="{StaticResource RailButton}" ToolTip="Đóng thông báo lỗi"/>
           <TextBlock x:Name="ErrorPopupTitle" Text="Lỗi khi thêm vào MISA" FontWeight="SemiBold" FontSize="13.5" Foreground="#991B1B" VerticalAlignment="Center" TextWrapping="Wrap"/>
@@ -650,7 +650,7 @@
           <TextBlock x:Name="ErrorPopupHint" TextWrapping="Wrap" Foreground="#78350F" FontSize="12"/>
         </Border>
         <Border Grid.Row="3" x:Name="ErrorPopupDetailsBox" Background="#FEF2F2" BorderBrush="#FECACA" BorderThickness="1" CornerRadius="5" Padding="6,4">
-          <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <TextBox x:Name="ErrorPopupDetails" TextWrapping="Wrap" Foreground="#450A0A" FontSize="12" IsReadOnly="True" BorderThickness="0" Background="Transparent"/>
           </ScrollViewer>
         </Border>
