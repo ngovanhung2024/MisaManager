@@ -655,7 +655,7 @@
           </ScrollViewer>
         </Border>
         <StackPanel Grid.RowSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                    Background="White" Panel.ZIndex="10" Margin="0,6,0,0" Padding="0,4,0,0">
+                    Background="White" Panel.ZIndex="10" Margin="0,6,0,0">
           <Button Content="Xuất báo cáo" Click="ExportErrorReport_Click" Style="{StaticResource RailButton}" ToolTip="Lưu ZIP gồm chẩn đoán, ảnh lúc lỗi, UIA và log" Margin="0,0,6,0"/>
           <Button Content="Copy lỗi" Click="CopyError_Click" Style="{StaticResource RailButton}" ToolTip="Copy đầy đủ exception, vị trí mã nguồn, nguồn mã hàng, readback và timeline"/>
         </StackPanel>
