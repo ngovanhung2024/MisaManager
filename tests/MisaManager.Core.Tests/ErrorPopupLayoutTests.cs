@@ -19,7 +19,7 @@ public sealed class ErrorPopupLayoutTests
         Assert.Equal("*", (string?)rows[3].Attribute("Height"));
 
         var actions = popup.Descendants().Single(element => element.Name.LocalName == "StackPanel"
-            && (string?)element.Attribute("Grid.RowSpan") == "5");
+            && (string?)element.Attribute("DockPanel.Dock") == "Right");
         Assert.Contains(actions.Descendants().Where(element => element.Name.LocalName == "Button"),
             button => (string?)button.Attribute("Content") == "Copy lỗi");
         Assert.Contains(actions.Descendants().Where(element => element.Name.LocalName == "Button"),
