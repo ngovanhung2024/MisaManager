@@ -72,20 +72,26 @@ public sealed partial class AppServices
         var screenshot = await ScreenCapture.CaptureVirtualScreenAsync();
         var ui = new UiFailureSnapshot(0, "", [], [], [], DateTimeOffset.UtcNow,
             Error: "Không tìm thấy cửa sổ MISA để chụp UI lỗi CPBH.XANG.");
-        try
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        for (var attempt = 0; attempt < 12 && !timeout.IsCancellationRequested; attempt++)
         {
-            var windows = await Native.FindCandidatesAsync(token);
-            var session = windows.FirstOrDefault(window => window.Title.StartsWith(WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal));
-            if (session is not null)
+            try
             {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-                timeout.CancelAfter(TimeSpan.FromSeconds(8));
-                ui = await Native.InspectFailureAsync(session.WindowHandle, [], timeout.Token);
+                var windows = await Native.FindCandidatesAsync(timeout.Token);
+                var session = windows.FirstOrDefault(window => window.Title.StartsWith(WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal));
+                if (session is not null)
+                {
+                    ui = await Native.InspectFailureAsync(session.WindowHandle, [], timeout.Token);
+                    break;
+                }
             }
-        }
-        catch (Exception captureError) when (captureError is not OperationCanceledException)
-        {
-            ui = ui with { Error = captureError.Message };
+            catch (Exception captureError) when (captureError is not OperationCanceledException)
+            {
+                ui = ui with { Error = captureError.Message };
+            }
+            try { await Task.Delay(250, timeout.Token); }
+            catch (OperationCanceledException) { break; }
         }
         lock (reportGate)
             lastStandaloneFailure = new(invoiceNumber, error.Message, DateTimeOffset.UtcNow, ui, screenshot);
