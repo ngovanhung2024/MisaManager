@@ -7,14 +7,18 @@ using MisaManager.Core;
 namespace MisaManager.Automation;
 
 public sealed record UiElementSummary(string AutomationId, string Name, string ControlType, string? Value,
-    string ClassName, bool Enabled, bool Offscreen, bool Focused, Bounds Bounds, string Path);
+    string ClassName, bool Enabled, bool Offscreen, bool Focused, Bounds Bounds, string Path,
+    long NativeHandle = 0, IReadOnlyList<string>? Patterns = null, string? Text = null,
+    string FrameworkType = "", string HelpText = "", string RuntimeId = "",
+    bool KeyboardFocusable = false, bool ContentElement = false, bool ControlElement = false,
+    string ItemStatus = "");
 public sealed record UiDialogSummary(long Handle, string Title, string AutomationId, string ClassName, bool Modal,
-    IReadOnlyList<string> Texts, IReadOnlyList<string> Buttons);
+    IReadOnlyList<string> Texts, IReadOnlyList<string> Buttons, IReadOnlyList<UiElementSummary>? Elements = null);
 public sealed record UiFindResult(long WindowHandle, string WindowTitle, IReadOnlyList<UiElementSummary> Elements,
     int Visited, bool Truncated, DateTimeOffset ObservedAt);
 public sealed record UiFailureSnapshot(long WindowHandle, string WindowTitle, IReadOnlyList<UiDialogSummary> Dialogs,
     IReadOnlyList<UiElementSummary> FocusPath, IReadOnlyList<UiElementSummary> Targets, DateTimeOffset ObservedAt,
-    string? Error = null);
+    string? Error = null, NativeObservation? NativeTree = null, string? NativeTreeError = null);
 
 // Compact, read-only inspection used by the failure report. Each element costs several
 // cross-process UIA calls, so results stay small and bounded by default.
@@ -80,7 +84,18 @@ public sealed partial class UiaReadbackProvider
             }
             catch (Exception) { /* Target vanished; dialogs and focus remain useful. */ }
         }
-        return new(frame.Window.WindowHandle, frame.Window.Title, dialogs, focus, targets, DateTimeOffset.UtcNow);
+        NativeObservation? nativeTree = null;
+        string? nativeTreeError = null;
+        try
+        {
+            const int maxElements = 4000;
+            const int maxVisited = 9000;
+            var elements = Observe(frame, null, null, maxElements, maxVisited);
+            nativeTree = new(frame, elements, LastVisitedCount, LastObservationTruncated, null, null);
+        }
+        catch (Exception error) { nativeTreeError = error.Message; }
+        return new(frame.Window.WindowHandle, frame.Window.Title, dialogs, focus, targets, DateTimeOffset.UtcNow,
+            NativeTree: nativeTree, NativeTreeError: nativeTreeError);
     }
 
     private AutomationElement ResolveScope(NativeFrame frame, string? scopeAutomationId)
@@ -123,10 +138,11 @@ public sealed partial class UiaReadbackProvider
                 var className = window.Properties.ClassName.ValueOrDefault ?? "";
                 var modal = window.Patterns.Window.IsSupported && window.Patterns.Window.Pattern.IsModal.ValueOrDefault;
                 var messageLike = modal || className == "#32770" || LooksLikeMessage(id) || LooksLikeMessage(title);
+                var dialogElements = ReadWindowElements(window, title);
                 if (!messageLike)
                 {
                     if (!window.Properties.IsOffscreen.ValueOrDefault)
-                        result.Add(new(handle, Clip(title)!, id, className, false, [], []));
+                        result.Add(new(handle, Clip(title)!, id, className, false, [], [], dialogElements));
                     continue;
                 }
                 var texts = new List<string>();
@@ -147,10 +163,25 @@ public sealed partial class UiaReadbackProvider
                 }
                 result.Add(new(handle, Clip(title)!, id, className, modal,
                     texts.Distinct(StringComparer.Ordinal).Take(30).ToArray(),
-                    buttons.Distinct(StringComparer.Ordinal).Take(10).ToArray()));
+                    buttons.Distinct(StringComparer.Ordinal).Take(10).ToArray(), dialogElements));
             }
             catch (Exception) { /* A dialog closing during enumeration is not an error. */ }
         }
+        return result;
+    }
+
+    private static IReadOnlyList<UiElementSummary> ReadWindowElements(AutomationElement window, string title)
+    {
+        var result = new List<UiElementSummary>();
+        try
+        {
+            foreach (var element in window.FindAllDescendants().Take(1200))
+            {
+                if (Summarize(element, "window:" + title) is { } summary)
+                    result.Add(summary);
+            }
+        }
+        catch (Exception) { /* A popup may close while its evidence is being read. */ }
         return result;
     }
 
@@ -181,11 +212,33 @@ public sealed partial class UiaReadbackProvider
             var bounds = element.BoundingRectangle;
             string? value = null;
             if (element.Patterns.Value.IsSupported) value = element.Patterns.Value.Pattern.Value.ValueOrDefault;
+            string? text = null;
+            if (element.Patterns.Text.IsSupported) text = Clip(element.Patterns.Text.Pattern.DocumentRange.GetText(MaxText));
+            var patterns = new[]
+            {
+                element.Patterns.Value.IsSupported ? "Value" : "",
+                element.Patterns.Text.IsSupported ? "Text" : "",
+                element.Patterns.Invoke.IsSupported ? "Invoke" : "",
+                element.Patterns.SelectionItem.IsSupported ? "SelectionItem" : "",
+                element.Patterns.Grid.IsSupported ? "Grid" : "",
+                element.Patterns.GridItem.IsSupported ? "GridItem" : "",
+                element.Patterns.Scroll.IsSupported ? "Scroll" : "",
+                element.Patterns.ExpandCollapse.IsSupported ? "ExpandCollapse" : "",
+                element.Patterns.Toggle.IsSupported ? "Toggle" : ""
+            }.Where(item => item.Length > 0).ToArray();
             return new(element.Properties.AutomationId.ValueOrDefault ?? "", Clip(element.Properties.Name.ValueOrDefault ?? "")!,
                 element.Properties.ControlType.ValueOrDefault.ToString(), Clip(value),
                 element.Properties.ClassName.ValueOrDefault ?? "", element.Properties.IsEnabled.ValueOrDefault,
                 element.Properties.IsOffscreen.ValueOrDefault, element.Properties.HasKeyboardFocus.ValueOrDefault,
-                new(bounds.X, bounds.Y, bounds.Width, bounds.Height), path);
+                new(bounds.X, bounds.Y, bounds.Width, bounds.Height), path,
+                element.Properties.NativeWindowHandle.ValueOrDefault.ToInt64(), patterns, text,
+                element.FrameworkType.ToString(), Clip(element.Properties.HelpText.ValueOrDefault) ?? "",
+                element.Properties.RuntimeId.ValueOrDefault is { Length: > 0 } runtimeId
+                    ? string.Join(".", runtimeId) : "",
+                element.Properties.IsKeyboardFocusable.ValueOrDefault,
+                element.Properties.IsContentElement.ValueOrDefault,
+                element.Properties.IsControlElement.ValueOrDefault,
+                Clip(element.Properties.ItemStatus.ValueOrDefault) ?? "");
         }
         catch (Exception) { return null; }
     }

@@ -280,6 +280,8 @@ public sealed partial class AppServices
             if (failure is not null)
             {
                 Text(zip, "ui-at-failure.json", Clean(JsonSerializer.Serialize(new { failure.RunId, failure.Step, failure.At, failure.Ui }, ReportJson)));
+                if (failure.Ui.NativeTree is { } nativeTree)
+                    Text(zip, "ui-tree.json", Clean(JsonSerializer.Serialize(nativeTree, ReportJson)));
                 if (failure.Screenshot is { } shot) Bytes(zip, "screen-at-failure.png", shot);
             }
             Text(zip, "ui-now.json", Clean(JsonSerializer.Serialize(new { ui = uiNow, error = uiNowError }, ReportJson)));
@@ -328,7 +330,8 @@ public sealed partial class AppServices
         |---|---|
         | `summary.json` | Phiên bản app/profile, lỗi + chuỗi exception, bước đang chạy (`error.failedStep`), checkpoint workflow, dữ liệu hóa đơn mong đợi, dòng hàng đang nhập, giá trị đã đọc từ MISA, kết quả đối chiếu, timeline từng bước. |
         | `diagnostic.txt` | Báo cáo bằng văn bản như Copy lỗi: mã lỗi, file:dòng, nguồn mã hàng, mã ứng viên, readback và trạng thái an toàn. |
-        | `ui-at-failure.json` | Cây UIA rút gọn **ngay lúc lỗi** (trước khi tool Bỏ chứng từ): hộp thoại đang mở, đường focus, control đích. |
+        | `ui-at-failure.json` | Bằng chứng UIA **ngay lúc lỗi** (trước khi tool Bỏ chứng từ), gồm focus, target và popup/hộp thoại. |
+        | `ui-tree.json` | Cây UIA chính được tách riêng để AI dễ lọc: phần tử, cha, HWND, bounds, AutomationId, ControlType, Name, Value/Text, patterns, focus và giới hạn/trạng thái đầy đủ. |
         | `screen-at-failure.png` | Ảnh chụp toàn màn hình ngay lúc lỗi. |
         | `ui-now.json`, `screen-now.png` | Trạng thái hiện tại khi xuất báo cáo. |
         | `screen-check.json` | Kết quả kiểm tra selector của profile (`profiles/misa-sme2023-r20.json`) trên các màn hình MISA đang mở: selector nào không tìm thấy/không duy nhất. |

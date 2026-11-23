@@ -6,6 +6,20 @@ namespace MisaManager.Integration.Tests;
 public sealed class ScreenTests : UiTest
 {
     [Fact]
+    public Task FailureInspectionExportsNativeTreeAndPatterns() => WithFakeAsync(async (misa, _, token) =>
+    {
+        await using var observation = new NativeObservationService();
+
+        var snapshot = await observation.InspectFailureAsync(misa.Window.WindowHandle, [], token);
+
+        Assert.Null(snapshot.NativeTreeError);
+        Assert.NotNull(snapshot.NativeTree);
+        Assert.NotEmpty(snapshot.NativeTree!.Elements);
+        Assert.Contains(snapshot.NativeTree.Elements, element => element.AutomationId == "grdList");
+        Assert.Contains(snapshot.NativeTree.Elements, element => element.Patterns is { Length: > 0 });
+    });
+
+    [Fact]
     public Task ScreenCheckResolvesEveryProfileSelectorOnTheOpenScreens() => WithFakeAsync(async (misa, harness, token) =>
     {
         var list = await harness.Input.CheckScreensAsync(misa.Window, harness.Profile.Screens, token);
