@@ -154,22 +154,56 @@ public sealed partial class NativeInputService
     private AutomationElement[] DrawnOptionLabels(Rectangle cellBounds, nint gridWindow, string expectedName)
     {
         var popup = ListPopupAt(cellBounds, gridWindow);
-        if (popup == nint.Zero) return [];
-        var labels = Snapshots(automation.FromHandle(popup), Live(
-                AnyControlType(ControlType.ListItem, ControlType.Text, ControlType.Custom, ControlType.DataItem), identity!.ProcessId))
-            .Where(item => item.HasArea && NormalizeOptionName(item.Name) == expectedName
+        var gridRoot = RootWindow(gridWindow);
+        var candidates = popup != nint.Zero
+            ? Snapshots(automation.FromHandle(popup), Live(TrueCondition.Default, identity!.ProcessId))
+            : ProcessSnapshots(identity!.WindowHandle, identity.ProcessId, Live(TrueCondition.Default, identity.ProcessId));
+        var labels = candidates
+            .Where(item => item.HasArea && item.Bounds.Height > 4
+                && OptionTextMatches(item.Element, item.Name, expectedName)
                 && !item.Bounds.IntersectsWith(cellBounds)
                 && item.Bounds.Left < cellBounds.Right && item.Bounds.Right > cellBounds.Left
-                && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420
-                && (nint)PInvoke.GetAncestor((HWND)NativeKeyboard.WindowAt(
-                    item.Bounds.X + item.Bounds.Width / 2, item.Bounds.Y + item.Bounds.Height / 2),
-                    GET_ANCESTOR_FLAGS.GA_ROOT) == popup)
+                && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420)
+            .Where(item =>
+            {
+                var hit = NativeKeyboard.WindowAt(item.Bounds.X + item.Bounds.Width / 2,
+                    item.Bounds.Y + item.Bounds.Height / 2);
+                if (hit == nint.Zero) return false;
+                PInvoke.GetWindowThreadProcessId((HWND)hit, out var processId);
+                if (processId != identity.ProcessId) return false;
+                var root = RootWindow(hit);
+                return popup != nint.Zero ? root == popup : root == gridRoot;
+            })
             .ToArray();
         // A text child and its containing row describe one choice. Separate rows with the same label are ambiguous.
         return labels.Where(item => !labels.Any(other => other.Bounds != item.Bounds
                 && item.Bounds.Contains(other.Bounds)))
             .GroupBy(item => item.Bounds).Select(group => group.First().Element).ToArray();
     }
+
+    private static bool OptionTextMatches(AutomationElement element, string name, string expectedName)
+    {
+        static bool Matches(string? value, string expected)
+        {
+            var text = TextKey.Canonical(value);
+            return text == expected || text.Contains(expected, StringComparison.Ordinal);
+        }
+
+        if (Matches(name, expectedName)) return true;
+        try
+        {
+            if (element.Patterns.Value.IsSupported && Matches(element.Patterns.Value.Pattern.Value.ValueOrDefault, expectedName))
+                return true;
+            if (element.Patterns.Text.IsSupported
+                && Matches(element.Patterns.Text.Pattern.DocumentRange.GetText(512), expectedName))
+                return true;
+        }
+        catch (Exception error) when (error is COMException or TimeoutException or ElementNotAvailableException) { }
+        return false;
+    }
+
+    private static nint RootWindow(nint handle)
+        => handle == nint.Zero ? nint.Zero : (nint)PInvoke.GetAncestor((HWND)handle, GET_ANCESTOR_FLAGS.GA_ROOT);
 
     // Report 0.2.203, HĐ 18534: R20's "% thuế GTGT" list was drawn open but UIA gave none of its items. The open list
     // is a top-level popup of MISA drawn against the cell (above it when there is no room below).

@@ -609,11 +609,16 @@ internal sealed class R20UnitCombo : ComboBox
         protected override AutomationPeer OnCreateAutomationPeer() => new DrawnCostItemPeer(this);
     }
 
-    private sealed class DrawnCostItemPeer(DrawnCostItem owner) : FrameworkElementAutomationPeer(owner)
+    private sealed class DrawnCostItemPeer(DrawnCostItem owner) : FrameworkElementAutomationPeer(owner), IValueProvider
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Custom;
-        protected override string GetNameCore() => owner.Content is CostItemOption option ? option.Code : owner.Content?.ToString() ?? "";
+        protected override string GetNameCore() => "";
         protected override List<AutomationPeer> GetChildrenCore() => [];
+        public override object? GetPattern(PatternInterface patternInterface)
+            => patternInterface == PatternInterface.Value ? this : null;
+        bool IValueProvider.IsReadOnly => true;
+        string IValueProvider.Value => owner.Content is CostItemOption option ? option.Code : owner.Content?.ToString() ?? "";
+        void IValueProvider.SetValue(string value) => throw new ElementNotEnabledException();
     }
 }
 

@@ -830,22 +830,34 @@ public sealed partial class NativeInputService
                 Thread.Sleep(50);
             }
             var optionPopup = ListPopupAt(cellBounds, gridWindow);
-            if (string.Equals(expected, "CPBH.XANG", StringComparison.OrdinalIgnoreCase) && optionPopup != nint.Zero)
+            var sameRootDrawnOption = false;
+            if (string.Equals(expected, "CPBH.XANG", StringComparison.OrdinalIgnoreCase))
             {
-                var popupBounds = automation.FromHandle(optionPopup).BoundingRectangle;
-                if (popupBounds.Width > 0 && popupBounds.Height > 0)
+                // MISA can paint the open ValueList inside the voucher window. Find a visible row before
+                // scrolling so a wheel event cannot pass over CPBH.XANG after it is already on screen.
+                options = DrawnOptionLabels(cellBounds, gridWindow, expectedName);
+                if (options.Length == 1 && optionPopup == nint.Zero)
                 {
+                    optionPopup = RootWindow(gridWindow);
+                    sameRootDrawnOption = optionPopup != nint.Zero;
+                }
+                if (options.Length == 0 && optionPopup != nint.Zero)
+                {
+                    var popupBounds = automation.FromHandle(optionPopup).BoundingRectangle;
                     // The real MISA list requires the operator to scroll before the lower CPBH entries appear.
-                    options = [];
-                    for (var scrollAttempt = 0; scrollAttempt < 8 && options.Length == 0; scrollAttempt++)
+                    if (popupBounds.Width > 0 && popupBounds.Height > 0)
                     {
-                        NativeKeyboard.ScrollOpenListDown(
-                            (int)(popupBounds.Left + popupBounds.Width / 2),
-                            (int)(popupBounds.Top + popupBounds.Height / 2),
-                            identity!.ProcessId,
-                            hit => (nint)PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT) == optionPopup);
-                        Thread.Sleep(100);
-                        options = DrawnOptionLabels(cellBounds, gridWindow, expectedName);
+                        options = [];
+                        for (var scrollAttempt = 0; scrollAttempt < 8 && options.Length == 0; scrollAttempt++)
+                        {
+                            NativeKeyboard.ScrollOpenListDown(
+                                (int)(popupBounds.Left + popupBounds.Width / 2),
+                                (int)(popupBounds.Top + popupBounds.Height / 2),
+                                identity!.ProcessId,
+                                hit => (nint)PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT) == optionPopup);
+                            Thread.Sleep(100);
+                            options = DrawnOptionLabels(cellBounds, gridWindow, expectedName);
+                        }
                     }
                 }
             }
@@ -1009,7 +1021,9 @@ public sealed partial class NativeInputService
                 GuardWorkflow(Capture(), forInput: true);
                 ThrowIfBlockingDialog();
                 if (ResolveCell(cell, preserveComboBox: true).BoundingRectangle != cellBounds
-                    || optionPopup == nint.Zero || ListPopupAt(cellBounds, gridWindow) != optionPopup)
+                    || optionPopup == nint.Zero
+                    || !sameRootDrawnOption && ListPopupAt(cellBounds, gridWindow) != optionPopup
+                    || sameRootDrawnOption && DrawnOptionLabels(cellBounds, gridWindow, expectedName).Length != 1)
                     throw new AutomationException("INPUT_UNCERTAIN", "Ô hoặc danh sách đã đổi trước khi chọn mục.", true);
                 token.ThrowIfCancellationRequested();
                 MarkWorkflowInput();
@@ -1019,7 +1033,7 @@ public sealed partial class NativeInputService
                 // The list can close between the poll and the click; never click through it onto the grid.
                 NativeKeyboard.ClickOpenList(optionBounds.X + optionBounds.Width / 2,
                     optionBounds.Y + optionBounds.Height / 2, identity!.ProcessId,
-                    hit => OutsideGrid(hit, gridWindow)
+                    hit => (!sameRootDrawnOption || hit != gridWindow) && (sameRootDrawnOption || OutsideGrid(hit, gridWindow))
                         && (nint)PInvoke.GetAncestor((HWND)hit, GET_ANCESTOR_FLAGS.GA_ROOT) == optionPopup);
                 epoch++;
                 for (var wait = 0; wait < 24 && ListDrawnAt(cellBounds, gridWindow); wait++)
