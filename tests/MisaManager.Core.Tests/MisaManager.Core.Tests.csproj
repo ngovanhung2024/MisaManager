@@ -17,4 +17,7 @@
     <ProjectReference Include="../../src/MisaManager.Core/MisaManager.Core.csproj" />
     <ProjectReference Include="../../src/MisaManager.Import/MisaManager.Import.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="../../src/MisaManager.App/MainWindow.xaml" Link="MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
