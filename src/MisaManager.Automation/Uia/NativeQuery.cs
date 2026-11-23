@@ -299,6 +299,7 @@ public sealed partial class NativeInputService
 
     private string UnitColumnCaption => profile?.Columns.GetValueOrDefault("unit") ?? "ĐVT";
     private string? TaxRateColumnCaption => profile?.Columns.GetValueOrDefault("tax_rate");
+    private string CostItemColumnCaption => profile?.Columns.GetValueOrDefault("cost_item") ?? "Khoản mục CP";
 
     // Win32 modal dialogs and message boxes are visible, enabled top-level
     // windows owned by the MISA host. When Win32 reports none besides the
