@@ -297,8 +297,10 @@ public partial class MainWindow : Window
             if (result.Failed.Count > 0)
             {
                 var message = "Gán CPBH.XANG thất bại: " + result.Failed[0];
+                var evidence = ((App)Application.Current).Services.PurchaseCostErrorDetails(
+                    string.Join(Environment.NewLine, result.Failed));
                 Workflow_ErrorRaised(this, new WorkflowErrorEventArgs(message,
-                    string.Join(Environment.NewLine, result.Failed), DateTimeOffset.Now));
+                    evidence, DateTimeOffset.Now));
             }
             StatusLabel.Text = result.Failed.Count == 0
                 ? $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0} hóa đơn xăng."

@@ -153,6 +153,7 @@ public sealed partial class AppServices : IAsyncDisposable
         Native = new(nativeOwner);
         Input = new(nativeOwner);
         PurchaseCostUpdater = new(Windows, Input, PurchaseProfile);
+        PurchaseCostUpdater.FailureObserver = CapturePurchaseCostFailureUiAsync;
         LogRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), ProductIdentity.TechnicalName, "logs");
         eventStore = new RunEventStore(LogRoot);
         workflowGateway = new NativeWorkflowGateway(Windows, Input, WorkflowProfile, PurchaseProfile);

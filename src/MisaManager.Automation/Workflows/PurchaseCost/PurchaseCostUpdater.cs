@@ -12,6 +12,9 @@ public sealed class PurchaseCostUpdater
     private readonly NativeInputService input;
     private readonly WorkflowProfile profile;
 
+    /// <summary>Called before the failed voucher is closed so diagnostics capture the real popup and focus.</summary>
+    public Func<string, Exception, CancellationToken, Task>? FailureObserver { get; set; }
+
     public PurchaseCostUpdater(MisaWindowDiscovery windows, NativeInputService input, WorkflowProfile profile)
     {
         this.windows = windows;
@@ -126,6 +129,13 @@ public sealed class PurchaseCostUpdater
             closed = true;
             await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
                 exists => !exists, "PURCHASE_CLOSE_PENDING", "Hóa đơn chưa đóng sau khi Cất.", token, timeoutMilliseconds: 15000);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            try { if (FailureObserver is not null) await FailureObserver(number, error, token); }
+            catch (Exception observeError) when (observeError is not OperationCanceledException)
+            { System.Diagnostics.Trace.TraceWarning("Không chụp được UI lỗi CPBH.XANG {0}: {1}", number, observeError.Message); }
+            throw;
         }
         finally
         {

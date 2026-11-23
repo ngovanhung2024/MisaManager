@@ -20,11 +20,14 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
                 Invoices.Line(0, "VT0005", "Xăng RON 95 Mức 3", "Lít", 17.49m, 17_738.708m, "8%"));
             var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
+            var observed = 0;
+            updater.FailureObserver = (_, _, _) => { observed++; return Task.CompletedTask; };
 
             var result = await updater.UpdateAsync([invoice], rule, token);
 
             var error = Assert.Single(result.Failed);
             Assert.Contains("205: INPUT_UNCERTAIN", error);
+            Assert.Equal(1, observed);
         }, scenario);
     }
 
