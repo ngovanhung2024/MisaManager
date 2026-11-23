@@ -20,18 +20,21 @@ public sealed partial class AppServices
     private sealed record FailureCapture(string RunId, string Step, DateTimeOffset At, UiFailureSnapshot Ui,
         byte[]? Screenshot, IReadOnlyList<WorkflowStepTiming> Steps, WorkflowContext Context,
         ItemResolutionDiagnostic? ItemResolution);
+    private sealed record StandaloneFailureCapture(string InvoiceNumber, string Message, DateTimeOffset At,
+        UiFailureSnapshot Ui, byte[]? Screenshot);
 
     private static readonly JsonSerializerOptions ReportJson = new(ContractJson.Options) { WriteIndented = true };
     private readonly object reportGate = new();
     private UiErrorRecord? lastUiError;
     private FailureCapture? lastFailure;
+    private StandaloneFailureCapture? lastStandaloneFailure;
     private string? batchInvoice;
     private DateTimeOffset? batchStartedAt;
     private string? batchOutcome;
 
     public void BeginUiBatch(string invoiceNumber)
     {
-        lock (reportGate) { batchInvoice = invoiceNumber; batchStartedAt = DateTimeOffset.UtcNow; batchOutcome = null; lastUiError = null; }
+        lock (reportGate) { batchInvoice = invoiceNumber; batchStartedAt = DateTimeOffset.UtcNow; batchOutcome = null; lastUiError = null; lastStandaloneFailure = null; }
     }
 
     public void EndUiBatch(string outcome)
@@ -62,6 +65,46 @@ public sealed partial class AppServices
         var item = workflowGateway.LastItemResolution is { } resolution && resolution.RunId == context.Snapshot.RunId
             ? resolution : null;
         lock (reportGate) lastFailure = new(context.Snapshot.RunId, step, DateTimeOffset.UtcNow, ui, screenshot, steps, current, item);
+    }
+
+    private async Task CapturePurchaseCostFailureUiAsync(string invoiceNumber, Exception error, CancellationToken token)
+    {
+        var screenshot = await ScreenCapture.CaptureVirtualScreenAsync();
+        var ui = new UiFailureSnapshot(0, "", [], [], [], DateTimeOffset.UtcNow,
+            Error: "Không tìm thấy cửa sổ MISA để chụp UI lỗi CPBH.XANG.");
+        try
+        {
+            var windows = await Native.FindCandidatesAsync(token);
+            var session = windows.FirstOrDefault(window => window.Title.StartsWith(WorkflowProfile.VersionTitle + " - ", StringComparison.Ordinal));
+            if (session is not null)
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(8));
+                ui = await Native.InspectFailureAsync(session.WindowHandle, [], timeout.Token);
+            }
+        }
+        catch (Exception captureError) when (captureError is not OperationCanceledException)
+        {
+            ui = ui with { Error = captureError.Message };
+        }
+        lock (reportGate)
+            lastStandaloneFailure = new(invoiceNumber, error.Message, DateTimeOffset.UtcNow, ui, screenshot);
+    }
+
+    internal string PurchaseCostErrorDetails(string details)
+    {
+        StandaloneFailureCapture? capture;
+        lock (reportGate) capture = lastStandaloneFailure;
+        if (capture is null) return details;
+        var evidence = JsonSerializer.Serialize(new
+        {
+            invoiceNumber = capture.InvoiceNumber,
+            capturedAt = capture.At,
+            error = capture.Message,
+            uiAtFailure = capture.Ui
+        }, ReportJson);
+        return details + Environment.NewLine + Environment.NewLine
+            + "CHỨNG CỨ UIA CPBH.XANG TẠI THỜI ĐIỂM LỖI" + Environment.NewLine + evidence;
     }
 
     private object FailureData(WorkflowContext context, LiveVerificationRecord? verification = null, string? message = null)
@@ -166,10 +209,12 @@ public sealed partial class AppServices
         var createdAt = DateTimeOffset.Now;
         var current = Workflow.Current;
         FailureCapture? failure;
+        StandaloneFailureCapture? standaloneFailure;
         UiErrorRecord? uiError;
         lock (reportGate)
         {
             failure = lastFailure;
+            standaloneFailure = lastStandaloneFailure;
             uiError = uiMessage is null ? lastUiError : new(uiMessage, uiDetails ?? "", createdAt);
         }
         JsonObject? evidence = null;
@@ -263,6 +308,7 @@ public sealed partial class AppServices
             comparison = verification,
             steps = failure?.Steps,
             metrics = workflowGateway.Metrics,
+            purchaseCostFailure = standaloneFailure,
             misaWindows = windows?.Select(window => window with { Title = MisaWindowDiscovery.ProductTitle(window.Title) }).ToArray()
         };
 
@@ -283,6 +329,13 @@ public sealed partial class AppServices
                 if (failure.Ui.NativeTree is { } nativeTree)
                     Text(zip, "ui-tree.json", Clean(JsonSerializer.Serialize(nativeTree, ReportJson)));
                 if (failure.Screenshot is { } shot) Bytes(zip, "screen-at-failure.png", shot);
+            }
+            if (standaloneFailure is not null)
+            {
+                Text(zip, "purchase-cost-ui-at-failure.json", Clean(JsonSerializer.Serialize(standaloneFailure, ReportJson)));
+                if (standaloneFailure.Ui.NativeTree is { } nativeTree)
+                    Text(zip, "purchase-cost-ui-tree.json", Clean(JsonSerializer.Serialize(nativeTree, ReportJson)));
+                if (standaloneFailure.Screenshot is { } shot) Bytes(zip, "purchase-cost-screen-at-failure.png", shot);
             }
             Text(zip, "ui-now.json", Clean(JsonSerializer.Serialize(new { ui = uiNow, error = uiNowError }, ReportJson)));
             if (screens is not null) Text(zip, "screen-check.json", Clean(JsonSerializer.Serialize(screens, ReportJson)));
