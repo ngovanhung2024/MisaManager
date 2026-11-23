@@ -13,7 +13,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             [new FakeLine("VT0005", "Xăng RON 95 Mức 3", "Lít", "154", "", 17.49m, 17_738.708m, 310_250, "8%", 24_820)],
             310_250, 24_820, 335_070, "expense");
         var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [existing],
-            PurchaseListCellsUseCustomProvider: true, CostItemListHiddenFromUia: true);
+            PurchaseListCellsUseCustomProvider: true, CostItemListDrawnAsCustomText: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
@@ -22,7 +22,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
             var result = await updater.UpdateAsync([invoice], rule, token);
 
-            Assert.Equal((1, 1), (result.Requested, result.Updated));
+            Assert.True((1, 1) == (result.Requested, result.Updated), string.Join(" | ", result.Failed));
             Assert.Empty(result.Failed);
             Assert.Equal("CPBH.XANG", Assert.Single(misa.State().Vouchers).Lines[0].CostItem);
         }, scenario);

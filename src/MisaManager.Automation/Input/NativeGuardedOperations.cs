@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Conditions;
 using FlaUI.Core.Definitions;
 using MisaManager.Core;
 using Windows.Win32;
@@ -1201,6 +1202,22 @@ public sealed partial class NativeInputService
     private (string Value, string Source) ReadCustomCellText(AutomationElement cell, string column)
     {
         var unit = string.Equals(column, UnitColumnCaption, StringComparison.Ordinal);
+        var costItem = string.Equals(column, CostItemColumnCaption, StringComparison.Ordinal);
+        if (costItem)
+        {
+            var bounds = cell.BoundingRectangle;
+            var label = ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
+                    Live(TrueCondition.Default, identity.ProcessId, enabled: false, onscreen: false))
+                .Where(item => item.ControlType == ControlType.DataItem && item.HasArea
+                    && item.Bounds.Height == bounds.Height
+                    && item.Bounds.Contains(bounds)
+                    && !string.IsNullOrWhiteSpace(item.Name)
+                    && !item.Name.StartsWith("Row ", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(item => item.Bounds.Width)
+                .FirstOrDefault();
+            if (label is not null)
+                return (label.Name.Trim(), "UIA3.DataItem.DisplayName");
+        }
         // Value-list cells give their data value through ValuePattern: a GUID for ĐVT, and for "% thuế GTGT" a number
         // that reads like the rate except for KCT/KKKNT (report 0.2.200, HĐ 18523). The label shown is in DisplayText.
         if (unit || string.Equals(column, TaxRateColumnCaption, StringComparison.Ordinal))

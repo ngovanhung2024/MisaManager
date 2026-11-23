@@ -627,8 +627,10 @@ internal sealed class R20UnitCombo : ComboBox
 
     private sealed class DrawnCostItemPeer(DrawnCostItem owner, bool hiddenOptions) : FrameworkElementAutomationPeer(owner), IValueProvider
     {
-        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Custom;
-        protected override string GetNameCore() => "";
+        protected override AutomationControlType GetAutomationControlTypeCore()
+            => hiddenOptions ? AutomationControlType.Custom : AutomationControlType.DataItem;
+        protected override string GetNameCore()
+            => hiddenOptions ? "" : owner.Content is CostItemOption option ? option.Code : owner.Content?.ToString() ?? "";
         protected override List<AutomationPeer> GetChildrenCore() => [];
         public override object? GetPattern(PatternInterface patternInterface)
             => !hiddenOptions && patternInterface == PatternInterface.Value ? this : null;
