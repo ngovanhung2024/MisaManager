@@ -215,6 +215,7 @@ public sealed class VoucherWindow : Window, IGridSource
             ShowInsertionRow = true, Margin = new Thickness(4, 0, 4, 0), FooterCountOffset = scenario.GridFooterCountOffset,
             R20UnitList = scenario.R20UnitList, UnitListOpenDelayMilliseconds = scenario.R20UnitList ? 800 : 0,
             CostItemListDrawnAsCustomText = scenario.CostItemListDrawnAsCustomText,
+            CostItemListHiddenFromUia = scenario.CostItemListHiddenFromUia,
             TaxRateValueIsKey = scenario.TaxRateValueIsKey, TaxRateListOpensOnClick = scenario.TaxRateListOpensOnClick,
             TaxRateListHiddenFromUia = scenario.TaxRateListHiddenFromUia, TaxRateListKeyFault = scenario.TaxRateListKeyFault,
             TaxRateStatusStaleWhileOpen = scenario.TaxRateStatusStaleWhileOpen,

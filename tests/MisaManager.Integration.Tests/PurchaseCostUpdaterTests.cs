@@ -6,6 +6,29 @@ namespace MisaManager.Integration.Tests;
 public sealed class PurchaseCostUpdaterTests : UiTest
 {
     [Fact]
+    public Task UnreadableCostItemListPreservesFailureEvidence()
+    {
+        var existing = new FakeVoucher("MH00197", "205", "C26MPD", "NCC_PBH", Invoices.Supplier.Name,
+            Invoices.Supplier.TaxCode, "02/01/2026", "02/01/2026", "02/01/2026", InvoiceKinds.PurchasePayment,
+            [new FakeLine("VT0005", "Xăng RON 95 Mức 3", "Lít", "154", "", 17.49m, 17_738.708m, 310_250, "8%", 24_820)],
+            310_250, 24_820, 335_070, "expense");
+        var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [existing],
+            PurchaseListCellsUseCustomProvider: true, CostItemListHiddenFromUia: true);
+        return WithFakeAsync(async (misa, harness, token) =>
+        {
+            var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
+            var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
+                Invoices.Line(0, "VT0005", "Xăng RON 95 Mức 3", "Lít", 17.49m, 17_738.708m, "8%"));
+            var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
+
+            var result = await updater.UpdateAsync([invoice], rule, token);
+
+            var error = Assert.Single(result.Failed);
+            Assert.Contains("205: INPUT_UNCERTAIN", error);
+        }, scenario);
+    }
+
+    [Fact]
     public Task ExistingGasolineVoucherGetsCostItem()
     {
         var existing = new FakeVoucher("MH00429", "12730", "C26MLV", "NCC_PBH", Invoices.Supplier.Name,

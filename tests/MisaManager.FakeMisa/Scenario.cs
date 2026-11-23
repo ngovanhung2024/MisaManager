@@ -195,6 +195,7 @@ public sealed record Scenario
     public bool PurchaseRowOpenIgnored { get; init; }
     /// <summary>The CPBH list draws visible rows as custom text without exposing ListItem/SelectionItem through UIA.</summary>
     public bool CostItemListDrawnAsCustomText { get; init; }
+    public bool CostItemListHiddenFromUia { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

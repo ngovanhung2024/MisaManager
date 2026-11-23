@@ -50,7 +50,7 @@ public sealed record FakeScenario(bool SaveClosesEditor = true, IReadOnlyList<Fa
     string InitialInvoiceFilter = "", bool IgnoreInvoiceFilterCommit = false,
     bool PurchaseListCellsUseCustomProvider = false, bool PurchaseEditUsesCustomProvider = false,
     bool PurchaseEditInitiallyDisabled = false, bool PurchaseRowOpenIgnored = false,
-    bool CostItemListDrawnAsCustomText = false);
+    bool CostItemListDrawnAsCustomText = false, bool CostItemListHiddenFromUia = false);
 
 
 /// <summary>One fake MISA process per test, with its own scenario and state file.</summary>

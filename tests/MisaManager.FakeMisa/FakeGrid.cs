@@ -140,6 +140,7 @@ public sealed class FakeGrid : Border
     public int UnitListOpenDelayMilliseconds { get; set; }
     /// <summary>Exposes cost-item rows as drawn custom text, without SelectionItem, like some R20 builds.</summary>
     public bool CostItemListDrawnAsCustomText { get; set; }
+    public bool CostItemListHiddenFromUia { get; set; }
     /// <summary>"% thuế GTGT" cells answer ValuePattern with the list's data value (KKKNT → "-2"); see <see cref="KeyedTaxRateCombo"/>.</summary>
     public bool TaxRateValueIsKey { get; set; }
     public bool TaxRateListOpensOnClick { get; set; }
@@ -494,12 +495,27 @@ internal sealed class R20UnitCombo : ComboBox
 {
     private readonly FakeGrid grid;
     private readonly bool textOnlyList;
+    private readonly bool hiddenOptions;
     private bool openedOnce;
 
-    public R20UnitCombo(FakeGrid grid, bool textOnlyList = false)
+    public R20UnitCombo(FakeGrid grid, bool textOnlyList = false, bool hiddenOptions = false)
     {
         this.grid = grid;
         this.textOnlyList = textOnlyList;
+        this.hiddenOptions = hiddenOptions;
+        if (hiddenOptions)
+        {
+            DropDownOpened += (_, _) => FakeLog.Write("cost item list opened");
+            DropDownClosed += (_, _) => FakeLog.Write("cost item list closed");
+            PreviewKeyDown += (_, e) =>
+            {
+                if (IsDropDownOpen && e.Key is (Key.Up or Key.Down))
+                {
+                    FakeLog.Write("cost item list ignored " + e.Key);
+                    e.Handled = true;
+                }
+            };
+        }
         // R20's value list closes as soon as the voucher window loses activation (Alt key, foreground switch).
         Loaded += (_, _) =>
         {
@@ -527,7 +543,7 @@ internal sealed class R20UnitCombo : ComboBox
     protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
 
     protected override DependencyObject GetContainerForItemOverride()
-        => textOnlyList ? new DrawnCostItem() : base.GetContainerForItemOverride();
+        => textOnlyList || hiddenOptions ? new DrawnCostItem(hiddenOptions) : base.GetContainerForItemOverride();
 
     private sealed class Peer(R20UnitCombo owner) : ComboBoxAutomationPeer(owner)
     {
@@ -604,18 +620,18 @@ internal sealed class R20UnitCombo : ComboBox
         void ISelectionItemProvider.Select() { }
     }
 
-    private sealed class DrawnCostItem : ComboBoxItem
+    private sealed class DrawnCostItem(bool hiddenOptions) : ComboBoxItem
     {
-        protected override AutomationPeer OnCreateAutomationPeer() => new DrawnCostItemPeer(this);
+        protected override AutomationPeer OnCreateAutomationPeer() => new DrawnCostItemPeer(this, hiddenOptions);
     }
 
-    private sealed class DrawnCostItemPeer(DrawnCostItem owner) : FrameworkElementAutomationPeer(owner), IValueProvider
+    private sealed class DrawnCostItemPeer(DrawnCostItem owner, bool hiddenOptions) : FrameworkElementAutomationPeer(owner), IValueProvider
     {
         protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Custom;
         protected override string GetNameCore() => "";
         protected override List<AutomationPeer> GetChildrenCore() => [];
         public override object? GetPattern(PatternInterface patternInterface)
-            => patternInterface == PatternInterface.Value ? this : null;
+            => !hiddenOptions && patternInterface == PatternInterface.Value ? this : null;
         bool IValueProvider.IsReadOnly => true;
         string IValueProvider.Value => owner.Content is CostItemOption option ? option.Code : owner.Content?.ToString() ?? "";
         void IValueProvider.SetValue(string value) => throw new ElementNotEnabledException();
@@ -708,7 +724,8 @@ internal sealed class GridRow : StackPanel
     private ComboBox CreateCombo(GridColumn column)
     {
         var combo = column.Key == "cost_item" || grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid,
-                textOnlyList: column.Key == "cost_item" && grid.CostItemListDrawnAsCustomText)
+                textOnlyList: column.Key == "cost_item" && grid.CostItemListDrawnAsCustomText,
+                hiddenOptions: column.Key == "cost_item" && grid.CostItemListHiddenFromUia)
             : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick,
                 grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault, grid.TaxRateStatusStaleWhileOpen,
                 grid.TaxRateListTextAccessible, grid.TaxRateEditorOutsideCellTree) : new ComboBox();

@@ -228,16 +228,43 @@ public sealed partial class NativeInputService
     private string DescribeListItems(Rectangle cellBounds, nint gridWindow)
     {
         var items = ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
-                Live(automation.ConditionFactory.ByControlType(ControlType.ListItem), identity.ProcessId, enabled: false, onscreen: false))
-            .Where(item => Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420)
+                Live(TrueCondition.Default, identity.ProcessId, enabled: false, onscreen: false))
+            .Where(item => item.HasArea && item.Bounds.Height > 0
+                && item.Bounds.Left < cellBounds.Right && item.Bounds.Right > cellBounds.Left
+                && Math.Abs(item.Bounds.Top - cellBounds.Bottom) < 420)
+            .Take(80)
             .ToArray();
-        if (items.Length == 0) return "UIA không có mục danh sách nào gần ô";
-        return $"UIA có {items.Length} mục gần ô: " + string.Join("; ", items.Take(10).Select(item =>
-            $"'{item.Name.Trim()}' {item.Bounds.X},{item.Bounds.Y} {item.Bounds.Width}x{item.Bounds.Height}"
+        if (items.Length == 0) return "UIA không có control nào gần ô";
+        return $"UIA có {items.Length} control gần ô: " + string.Join("; ", items.Take(30).Select(item =>
+            $"'{item.Name.Trim()}' value='{OptionValue(item.Element)}' type={item.ControlType} id='{item.AutomationId}' "
+            + $"hwnd={item.NativeWindowHandle} class='{item.Element.Properties.ClassName.ValueOrDefault ?? ""}' "
+            + $"{item.Bounds.X},{item.Bounds.Y} {item.Bounds.Width}x{item.Bounds.Height}"
             + $"{(item.Offscreen ? " offscreen" : "")}{(item.Enabled ? "" : " disabled")}"
-            + $"{(item.HasArea && DrawnOutside(item.Bounds, gridWindow) ? "" : " trong-grid")}"
-            + $"{(item.Element.Patterns.SelectionItem.IsSupported ? "" : " no-select")}"));
+            + $"{(DrawnOutside(item.Bounds, gridWindow) ? "" : " trong-grid")}"
+            + $" patterns={string.Join(",", Patterns(item.Element))}"));
     }
+
+    private static string OptionValue(AutomationElement element)
+    {
+        try
+        {
+            if (element.Patterns.Value.IsSupported) return element.Patterns.Value.Pattern.Value.ValueOrDefault ?? "";
+            if (element.Patterns.Text.IsSupported) return element.Patterns.Text.Pattern.DocumentRange.GetText(256).Trim();
+        }
+        catch (Exception error) when (error is COMException or TimeoutException or ElementNotAvailableException) { }
+        return "";
+    }
+
+    private static string[] Patterns(AutomationElement element)
+        => new[]
+        {
+            element.Patterns.Value.IsSupported ? "Value" : "",
+            element.Patterns.Text.IsSupported ? "Text" : "",
+            element.Patterns.SelectionItem.IsSupported ? "SelectionItem" : "",
+            element.Patterns.Invoke.IsSupported ? "Invoke" : "",
+            element.Patterns.GridItem.IsSupported ? "GridItem" : "",
+            element.Patterns.Scroll.IsSupported ? "Scroll" : ""
+        }.Where(value => value.Length > 0).ToArray();
 
     private static bool OutsideGrid(nint hit, nint gridWindow)
         => hit != nint.Zero && hit != gridWindow && !PInvoke.IsChild((HWND)gridWindow, (HWND)hit);
