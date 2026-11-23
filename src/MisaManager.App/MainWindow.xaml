@@ -637,7 +637,7 @@
       </DockPanel>
     </Border>
 
-    <Border x:Name="ErrorPopup" Grid.RowSpan="6" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="8" Padding="10,8" VerticalAlignment="Top" MaxHeight="520" Margin="0,24,0,0">
+    <Border x:Name="ErrorPopup" Grid.RowSpan="6" Panel.ZIndex="20" Visibility="Collapsed" Background="White" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="8" Padding="10,8" VerticalAlignment="Top" Height="520" ClipToBounds="True" Margin="0,24,0,0">
       <Border.Effect><DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.18" Color="#7F1D1D"/></Border.Effect>
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
