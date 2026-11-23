@@ -1209,8 +1209,11 @@ public sealed partial class NativeInputService
             var label = ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
                     Live(TrueCondition.Default, identity.ProcessId, enabled: false, onscreen: false))
                 .Where(item => item.ControlType == ControlType.DataItem && item.HasArea
-                    && item.Bounds.Height == bounds.Height
-                    && item.Bounds.Contains(bounds)
+                    && Math.Abs(item.Bounds.Height - bounds.Height) <= 3
+                    && item.Bounds.Top <= bounds.Top + 3
+                    && item.Bounds.Bottom >= bounds.Bottom - 3
+                    && item.Bounds.Left <= bounds.Left + 4
+                    && item.Bounds.Right >= bounds.Right - 4
                     && !string.IsNullOrWhiteSpace(item.Name)
                     && !item.Name.StartsWith("Row ", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(item => item.Bounds.Width)
