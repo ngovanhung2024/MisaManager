@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using FlaUI.Core.AutomationElements;
-using FlaUI.Core.Conditions;
 using FlaUI.Core.Definitions;
 using MisaManager.Core;
 using Windows.Win32;
@@ -1203,27 +1202,10 @@ public sealed partial class NativeInputService
     {
         var unit = string.Equals(column, UnitColumnCaption, StringComparison.Ordinal);
         var costItem = string.Equals(column, CostItemColumnCaption, StringComparison.Ordinal);
-        if (costItem)
-        {
-            var bounds = cell.BoundingRectangle;
-            var label = ProcessSnapshots(identity!.WindowHandle, identity.ProcessId,
-                    Live(TrueCondition.Default, identity.ProcessId, enabled: false, onscreen: false))
-                .Where(item => item.ControlType == ControlType.DataItem && item.HasArea
-                    && Math.Abs(item.Bounds.Height - bounds.Height) <= 3
-                    && item.Bounds.Top <= bounds.Top + 3
-                    && item.Bounds.Bottom >= bounds.Bottom - 3
-                    && item.Bounds.Left <= bounds.Left + 4
-                    && item.Bounds.Right >= bounds.Right - 4
-                    && !string.IsNullOrWhiteSpace(item.Name)
-                    && !item.Name.StartsWith("Row ", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(item => item.Bounds.Width)
-                .FirstOrDefault();
-            if (label is not null)
-                return (label.Name.Trim(), "UIA3.DataItem.DisplayName");
-        }
-        // Value-list cells give their data value through ValuePattern: a GUID for ĐVT, and for "% thuế GTGT" a number
-        // that reads like the rate except for KCT/KKKNT (report 0.2.200, HĐ 18523). The label shown is in DisplayText.
-        if (unit || string.Equals(column, TaxRateColumnCaption, StringComparison.Ordinal))
+        // Value-list cells give their data value through ValuePattern: a GUID for ĐVT and Khoản mục CP, and for
+        // "% thuế GTGT" a number that can differ from the displayed rate. The label shown to the user is in
+        // DisplayText for all three columns. Read it first so a row DataItem name cannot be mistaken for the cell.
+        if (unit || costItem || string.Equals(column, TaxRateColumnCaption, StringComparison.Ordinal))
         {
             var status = cell.Properties.ItemStatus.ValueOrDefault ?? string.Empty;
             const string marker = "DisplayText^IG_TOKEN_SEPERATOR^";
