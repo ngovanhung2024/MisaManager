@@ -149,14 +149,14 @@ public sealed partial class NativeInputService
     private static bool DrawnOutside(Rectangle bounds, nint gridWindow)
         => OutsideGrid(NativeKeyboard.WindowAt(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2), gridWindow);
 
-    // Some value lists expose text labels without ListItem/SelectionItem. Clicking a drawn label needs neither pattern.
+    // Some value lists expose text labels as Text/Custom/DataItem without ListItem/SelectionItem. Clicking a drawn label needs neither pattern.
     // Scope every candidate to the one popup beside this cell; never infer an option from its row number.
     private AutomationElement[] DrawnOptionLabels(Rectangle cellBounds, nint gridWindow, string expectedName)
     {
         var popup = ListPopupAt(cellBounds, gridWindow);
         if (popup == nint.Zero) return [];
         var labels = Snapshots(automation.FromHandle(popup), Live(
-                AnyControlType(ControlType.ListItem, ControlType.Text), identity!.ProcessId))
+                AnyControlType(ControlType.ListItem, ControlType.Text, ControlType.Custom, ControlType.DataItem), identity!.ProcessId))
             .Where(item => item.HasArea && NormalizeOptionName(item.Name) == expectedName
                 && !item.Bounds.IntersectsWith(cellBounds)
                 && item.Bounds.Left < cellBounds.Right && item.Bounds.Right > cellBounds.Left

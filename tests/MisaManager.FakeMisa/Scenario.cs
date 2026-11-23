@@ -193,6 +193,8 @@ public sealed record Scenario
     public bool PurchaseEditInitiallyDisabled { get; init; }
     /// <summary>The register consumes the double-click without opening an existing purchase voucher.</summary>
     public bool PurchaseRowOpenIgnored { get; init; }
+    /// <summary>The CPBH list draws visible rows as custom text without exposing ListItem/SelectionItem through UIA.</summary>
+    public bool CostItemListDrawnAsCustomText { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

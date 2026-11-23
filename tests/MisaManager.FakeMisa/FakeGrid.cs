@@ -138,6 +138,8 @@ public sealed class FakeGrid : Border
     /// </summary>
     public bool R20UnitList { get; set; }
     public int UnitListOpenDelayMilliseconds { get; set; }
+    /// <summary>Exposes cost-item rows as drawn custom text, without SelectionItem, like some R20 builds.</summary>
+    public bool CostItemListDrawnAsCustomText { get; set; }
     /// <summary>"% thuế GTGT" cells answer ValuePattern with the list's data value (KKKNT → "-2"); see <see cref="KeyedTaxRateCombo"/>.</summary>
     public bool TaxRateValueIsKey { get; set; }
     public bool TaxRateListOpensOnClick { get; set; }
@@ -491,11 +493,13 @@ internal sealed class GhostRow : StackPanel
 internal sealed class R20UnitCombo : ComboBox
 {
     private readonly FakeGrid grid;
+    private readonly bool textOnlyList;
     private bool openedOnce;
 
-    public R20UnitCombo(FakeGrid grid)
+    public R20UnitCombo(FakeGrid grid, bool textOnlyList = false)
     {
         this.grid = grid;
+        this.textOnlyList = textOnlyList;
         // R20's value list closes as soon as the voucher window loses activation (Alt key, foreground switch).
         Loaded += (_, _) =>
         {
@@ -521,6 +525,9 @@ internal sealed class R20UnitCombo : ComboBox
     }
 
     protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
+
+    protected override DependencyObject GetContainerForItemOverride()
+        => textOnlyList ? new DrawnCostItem() : base.GetContainerForItemOverride();
 
     private sealed class Peer(R20UnitCombo owner) : ComboBoxAutomationPeer(owner)
     {
@@ -595,6 +602,18 @@ internal sealed class R20UnitCombo : ComboBox
         void ISelectionItemProvider.AddToSelection() { }
         void ISelectionItemProvider.RemoveFromSelection() { }
         void ISelectionItemProvider.Select() { }
+    }
+
+    private sealed class DrawnCostItem : ComboBoxItem
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new DrawnCostItemPeer(this);
+    }
+
+    private sealed class DrawnCostItemPeer(DrawnCostItem owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Custom;
+        protected override string GetNameCore() => owner.Content is CostItemOption option ? option.Code : owner.Content?.ToString() ?? "";
+        protected override List<AutomationPeer> GetChildrenCore() => [];
     }
 }
 
@@ -683,7 +702,8 @@ internal sealed class GridRow : StackPanel
 
     private ComboBox CreateCombo(GridColumn column)
     {
-        var combo = column.Key == "cost_item" || grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid)
+        var combo = column.Key == "cost_item" || grid.R20UnitList && column.Key == "unit" ? new R20UnitCombo(grid,
+                textOnlyList: column.Key == "cost_item" && grid.CostItemListDrawnAsCustomText)
             : grid.TaxRateValueIsKey && column.Key == "tax_rate" ? new KeyedTaxRateCombo(grid.TaxRateListOpensOnClick,
                 grid.TaxRateListHiddenFromUia, grid.TaxRateListKeyFault, grid.TaxRateStatusStaleWhileOpen,
                 grid.TaxRateListTextAccessible, grid.TaxRateEditorOutsideCellTree) : new ComboBox();
