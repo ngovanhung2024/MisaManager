@@ -69,9 +69,14 @@ public sealed class PurchaseCostUpdater
             // which can map R20's custom-grid providers to the wrong cell even
             // while the visible row is already the requested invoice.
             list.Track(await input.DoubleClickGridRowAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token));
-            editorOpened = true;
 
             var voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
+            editorOpened = true;
+            await voucher.SelectTabAsync("invoice", token);
+            var openedNumber = (await voucher.ReadAsync("number", token))?.Trim() ?? "";
+            if (!string.Equals(openedNumber, number.Trim(), StringComparison.Ordinal))
+                throw new AutomationException("PURCHASE_IDENTITY_MISMATCH",
+                    $"Đã mở chứng từ nhưng số hóa đơn đọc được '{openedNumber}', cần '{number.Trim()}'.");
             await voucher.ClickAsync("edit", token: token);
             await voucher.SelectTabAsync("statistics", token);
             var detail = voucher.Grid("items");

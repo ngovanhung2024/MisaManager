@@ -117,6 +117,7 @@ public sealed partial class NativeInputService
         RequireWindow(window);
         return ProcessSnapshots(window.WindowHandle, window.ProcessId,
                 Live(automation.ConditionFactory.ByAutomationId(scopeId), window.ProcessId, enabled: false))
+            .Where(item => item.HasArea && !item.Offscreen)
             .Select(item => item.Element).ToArray();
     }
 
@@ -430,7 +431,7 @@ public sealed partial class NativeInputService
             var editorHandle = discardChanges ? (nint)root!.Properties.NativeWindowHandle.ValueOrDefault : nint.Zero;
             if (discardChanges && editorHandle == nint.Zero)
                 throw new AutomationException("DISCARD_OWNER_MISSING", "Cannot bind the discard prompt to the voucher editor.");
-            var target = Resolve(selector);
+            var target = ResolveInvokeTarget(selector);
             var targetHandle = WorkflowTargetHandle(target);
             if (!target.Patterns.Invoke.IsSupported)
                 throw new AutomationException("PATTERN_UNSUPPORTED", "Control không có InvokePattern.");

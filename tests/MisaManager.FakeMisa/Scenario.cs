@@ -187,6 +187,10 @@ public sealed record Scenario
     public bool IgnoreInvoiceFilterCommit { get; init; }
     /// <summary>R20 can expose register cells as custom providers, so the row must be selected with the mouse.</summary>
     public bool PurchaseListCellsUseCustomProvider { get; init; }
+    /// <summary>Some R20 builds expose the existing-voucher Sửa command as a Custom provider.</summary>
+    public bool PurchaseEditUsesCustomProvider { get; init; }
+    /// <summary>The register consumes the double-click without opening an existing purchase voucher.</summary>
+    public bool PurchaseRowOpenIgnored { get; init; }
 
     [JsonIgnore] public string ListScreen => Purchase ? "purchase_list" : "sales_list";
     [JsonIgnore] public string VoucherScreen => Purchase ? "purchase_voucher" : "sales_voucher";

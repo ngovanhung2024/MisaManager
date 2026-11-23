@@ -113,6 +113,7 @@ public sealed class MainWindow : Window, IGridSource
         };
         list.RowDoubleClicked += (_, row) =>
         {
+            if (scenario.PurchaseRowOpenIgnored) return;
             var filtered = FilteredVouchers();
             if (row >= 0 && row < filtered.Count) OpenExistingVoucher(filtered[row]);
         };

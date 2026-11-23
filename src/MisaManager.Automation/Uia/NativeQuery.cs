@@ -351,6 +351,21 @@ public sealed partial class NativeInputService
 
     private AutomationElement Resolve(NativeSelector selector) => ResolveMany([selector])[0];
 
+    private AutomationElement ResolveInvokeTarget(NativeSelector selector)
+    {
+        if (selector.ByLabel) return Resolve(selector);
+        if (root is null || identity is null) throw new AutomationException("NOT_CONNECTED", "Chưa chọn cửa sổ MISA.");
+        var candidates = Snapshots(root, Live(SelectorCondition(selector), identity.ProcessId, enabled: false, onscreen: false))
+            .Where(item => Matches(item, selector) && item.HasArea && !item.Offscreen)
+            .Select(item => item.Element)
+            .Where(element => element.Patterns.Invoke.IsSupported)
+            .ToArray();
+        if (candidates.Length == 1) return candidates[0];
+        if (candidates.Length > 1)
+            throw new AutomationException("TARGET_AMBIGUOUS", $"Cần đúng một native command: {selector.AutomationId}/{selector.Name}.");
+        return Resolve(selector);
+    }
+
     // One UIA search for a whole field group, with per-selector uniqueness.
     private AutomationElement[] ResolveMany(IReadOnlyList<NativeSelector> selectors)
     {

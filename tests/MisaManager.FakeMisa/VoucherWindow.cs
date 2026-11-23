@@ -130,7 +130,9 @@ public sealed class VoucherWindow : Window, IGridSource
         {
             var element = caption == "Sửa" ? "edit" : profile.Caption(screen, "save") == caption ? "save"
                 : profile.Caption(screen, "close") == caption ? "close" : null;
-            var button = Ui.Button(caption, enabled, element is null || element == "edit" ? "" : profile.Id(screen, element));
+            var button = caption == "Sửa" && scenario.PurchaseEditUsesCustomProvider
+                ? Ui.CustomButton(caption, enabled, element is null || element == "edit" ? "" : profile.Id(screen, element))
+                : Ui.Button(caption, enabled, element is null || element == "edit" ? "" : profile.Id(screen, element));
             if (action is not null) button.Click += (_, _) => action();
             if (editOnly) readOnlyCommands.Add(button);
             toolbar.Children.Add(button);
