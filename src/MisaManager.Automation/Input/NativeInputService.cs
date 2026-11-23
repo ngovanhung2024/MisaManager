@@ -243,6 +243,59 @@ public sealed partial class NativeInputService : IAsyncDisposable
             return acknowledged;
         }, token, maySendInput: true);
 
+    /// <summary>Clicks a profile-declared Yes/No button only when the owned MISA dialog contains its profile marker.</summary>
+    public Task<bool> ClickOwnedMessageBoxButtonAsync(WindowIdentity window, NativeSelector buttonSelector,
+        string messageMarker, CancellationToken token)
+        => dispatcher.RunAsync(() =>
+        {
+            if (string.IsNullOrWhiteSpace(messageMarker)) return false;
+            RequireWindow(window);
+            var editorHandle = root is null ? nint.Zero : KeyboardHandle(root);
+            if (editorHandle == nint.Zero) return false;
+            for (var attempt = 0; attempt < 30; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                var dialogs = ProcessSnapshots(window.WindowHandle, window.ProcessId,
+                        Live(automation.ConditionFactory.ByControlType(ControlType.Window), window.ProcessId,
+                            enabled: false, onscreen: true))
+                    .Where(item => item.HasArea && item.NativeWindowHandle != nint.Zero
+                        && OwnedBy(item.NativeWindowHandle, editorHandle)
+                        && string.Equals(item.Name.Trim(), "MISA SME", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                foreach (var dialog in dialogs)
+                {
+                    var labels = Snapshots(dialog.Element, Live(automation.ConditionFactory.ByControlType(ControlType.Text),
+                            window.ProcessId, enabled: false, onscreen: true))
+                        .Select(item => item.Name)
+                        .Where(text => !string.IsNullOrWhiteSpace(text));
+                    if (!labels.Any(text => text.Contains(messageMarker, StringComparison.OrdinalIgnoreCase))) continue;
+                    var buttons = Snapshots(dialog.Element, Live(SelectorCondition(buttonSelector), window.ProcessId,
+                            enabled: true, onscreen: true))
+                        .Where(item => Matches(item, buttonSelector) && item.HasArea)
+                        .ToArray();
+                    if (buttons.Length != 1)
+                        throw new AutomationException("TARGET_AMBIGUOUS",
+                            $"Cần đúng một nút xác nhận trong cảnh báo '{messageMarker}'.");
+                    var bounds = buttons[0].Bounds;
+                    try
+                    {
+                        MarkWorkflowInput();
+                        NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
+                            window.WindowHandle, window.ProcessId, dialog.NativeWindowHandle);
+                        epoch++;
+                        return true;
+                    }
+                    catch (Exception error)
+                    {
+                        throw new AutomationException("INPUT_UNCERTAIN",
+                            "Không xác nhận được nút Yes của cảnh báo ghi sổ; không bấm lại.", true, error);
+                    }
+                }
+                Thread.Sleep(50);
+            }
+            return false;
+        }, token, maySendInput: true);
+
     private static string ClassName(nint handle)
     {
         var buffer = new StringBuilder(256);

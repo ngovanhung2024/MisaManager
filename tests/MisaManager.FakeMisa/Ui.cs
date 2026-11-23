@@ -71,6 +71,13 @@ internal static class Ui
             MinWidth = 40, Width = width, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent
         }.Id(automationId);
 
+    public static Button DynamicButton(string caption, bool enabled = true, string automationId = "", double width = double.NaN)
+        => new DynamicCommandButton
+        {
+            Content = caption, IsEnabled = enabled, Margin = new Thickness(1), Padding = new Thickness(6, 2, 6, 2),
+            MinWidth = 40, Width = width, Background = Brushes.Transparent, BorderBrush = Brushes.Transparent
+        }.Id(automationId);
+
     private sealed class CustomCommandButton : Button
     {
         protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
@@ -78,6 +85,16 @@ internal static class Ui
         private sealed class Peer(CustomCommandButton owner) : ButtonAutomationPeer(owner)
         {
             protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Custom;
+        }
+    }
+
+    private sealed class DynamicCommandButton : Button
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new Peer(this);
+
+        private sealed class Peer(DynamicCommandButton owner) : ButtonAutomationPeer(owner)
+        {
+            protected override string GetNameCore() => owner.Content?.ToString() ?? "";
         }
     }
 

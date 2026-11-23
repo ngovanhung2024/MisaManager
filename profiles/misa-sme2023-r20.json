@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-purchase-editor-command-20261123",
+  "revision": "r20-purchase-posting-sequence-20261123",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",
@@ -93,6 +93,7 @@
       "tabs": { "receipt": "Phiếu nhập", "expense_receipt": "Chứng từ ghi nợ", "invoice": "Hóa đơn", "items": "1. Hàng tiền", "tax": "2. Thuế", "statistics": "4. Thống kê" },
       "elements": {
         "save": { "name": "Cất", "controlType": "Button" },
+        "post": { "name": "Ghi sổ", "controlType": "Button", "description": "Ghi sổ lại chứng từ sau khi Bỏ ghi và gán khoản mục CP" },
         "edit": { "name": "Sửa", "required": false, "description": "Bật chế độ sửa chứng từ mua hàng đã có trong MISA; R20 có thể expose command này như Button hoặc Custom" },
         "unpost": { "name": "Bỏ ghi", "controlType": "Button", "required": false, "description": "Chỉ hiện (bật) sau khi Cất xong: bằng chứng chứng từ đã ghi sổ" },
         "close": { "name": "Đóng", "controlType": "Button" },
@@ -183,6 +184,13 @@
         "no": { "automationId": "btnNo", "controlType": "Button" },
         "yes": { "automationId": "btnYes", "controlType": "Button", "required": false, "description": "Có: MISA dồn chênh lệch thuế (≤ 1 đồng) vào dòng đầu" }
       }
+    },
+    "purchase_posting_warning": {
+      "title": "Cảnh báo thiếu khoản mục khi ghi sổ",
+      "elements": {
+        "yes": { "name": "Yes", "controlType": "Button" }
+      },
+      "settings": { "messageContains": "TK 154 chi tiết theo" }
     }
   }
 }

@@ -34,7 +34,7 @@ public sealed class WorkflowProfile
     private static readonly string[] PurchaseRequiredFields = ["customer", "customer_name", "customer_tax", "voucher_date", "posted_date",
         "issued_date", "number", "voucher_number", "subtotal", "tax_total", "grand_total"];
     private static readonly string[] PurchaseRequiredColumns = [.. RequiredColumns, "stock", "credit_account"];
-    private static readonly string[] NonFieldElements = ["save", "close", "unpost", "voucher_type"];
+    private static readonly string[] NonFieldElements = ["save", "post", "close", "unpost", "voucher_type"];
 
     private readonly ProfileDocument document;
     private WorkflowProfile? expenseVariant;

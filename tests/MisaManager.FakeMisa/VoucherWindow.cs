@@ -63,6 +63,7 @@ public sealed class VoucherWindow : Window, IGridSource
     private readonly SavedVoucher? existingVoucher;
     private bool dirty;
     private bool saved;
+    private bool unposted;
     private bool busyAfterQuantityClickShown;
     private bool mainCoveredVoucher;
 
@@ -128,12 +129,19 @@ public sealed class VoucherWindow : Window, IGridSource
         var toolbar = new WrapPanel { Background = Brushes.White };
         Button Command(string caption, bool enabled, Action? action = null, bool editOnly = false)
         {
-            var element = caption == "Sửa" ? "edit" : profile.Caption(screen, "save") == caption ? "save"
+            var element = caption == "Sửa" ? "edit" : caption is "Ghi sổ" or "Bỏ ghi" ? "post" : profile.Caption(screen, "save") == caption ? "save"
                 : profile.Caption(screen, "close") == caption ? "close" : null;
-            var button = caption == "Sửa" && scenario.PurchaseEditUsesCustomProvider
+            var button = caption is "Ghi sổ" or "Bỏ ghi" ? Ui.DynamicButton(caption, enabled,
+                    element is null || element == "edit" ? "" : profile.Id(screen, element))
+                : caption == "Sửa" && scenario.PurchaseEditUsesCustomProvider
                 ? Ui.CustomButton(caption, enabled, element is null || element == "edit" ? "" : profile.Id(screen, element))
                 : Ui.Button(caption, enabled, element is null || element == "edit" ? "" : profile.Id(screen, element));
             if (action is not null) button.Click += (_, _) => action();
+            else if (caption is "Ghi sổ" or "Bỏ ghi") button.Click += (_, _) =>
+            {
+                if (string.Equals(button.Content?.ToString(), "Bỏ ghi", StringComparison.Ordinal)) Unpost();
+                else Save();
+            };
             if (editOnly) readOnlyCommands.Add(button);
             toolbar.Children.Add(button);
             return button;
@@ -145,6 +153,11 @@ public sealed class VoucherWindow : Window, IGridSource
         Command("Nạp", false); Command("Tiện ích", true); Command("Mẫu", true); Command("In", false);
         Command("Gửi email, Zalo", false); Command("Giúp", true);
         Command(profile.Caption(screen, "close"), true, CloseVoucher);
+        if (existingVoucher is not null)
+        {
+            post.Content = "Bỏ ghi";
+            post.IsEnabled = true;
+        }
         DockPanel.SetDock(toolbar, Dock.Top);
         root.Children.Add(toolbar);
 
@@ -831,7 +844,8 @@ public sealed class VoucherWindow : Window, IGridSource
 
     private void BeginEdit()
     {
-        if (!saved) return;
+        if (!saved && !unposted) return;
+        unposted = false;
         saved = false;
         dirty = false;
         if (edit is not null) edit.IsEnabled = false;
@@ -839,6 +853,17 @@ public sealed class VoucherWindow : Window, IGridSource
         foreach (var (box, _) in bound) box.IsReadOnly = false;
         grid.Refresh(force: true);
         FakeLog.Write("Sửa chứng từ đã có");
+    }
+
+    private void Unpost()
+    {
+        if (!saved) return;
+        saved = false;
+        unposted = true;
+        dirty = false;
+        post.Content = "Ghi sổ";
+        post.IsEnabled = true;
+        FakeLog.Write("Bỏ ghi chứng từ đã có");
     }
 
     private void Save()
@@ -902,6 +927,7 @@ public sealed class VoucherWindow : Window, IGridSource
             header["customer_tax"], header["posted_date"], header["voucher_date"], header["issued_date"], header["payment"],
             savedLines, amount, tax, amount + tax, purchase ? (expense ? "expense" : "stock") : ""));
         saved = true;
+        unposted = false;
         UserMouse.Saved = true;
         dirty = false;
         main.RefreshList();
