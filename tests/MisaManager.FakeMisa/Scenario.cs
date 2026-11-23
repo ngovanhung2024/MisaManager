@@ -189,6 +189,8 @@ public sealed record Scenario
     public bool PurchaseListCellsUseCustomProvider { get; init; }
     /// <summary>Some R20 builds expose the existing-voucher Sửa command as a Custom provider.</summary>
     public bool PurchaseEditUsesCustomProvider { get; init; }
+    /// <summary>The existing voucher opens with Sửa disabled and requires Bỏ ghi first.</summary>
+    public bool PurchaseEditInitiallyDisabled { get; init; }
     /// <summary>The register consumes the double-click without opening an existing purchase voucher.</summary>
     public bool PurchaseRowOpenIgnored { get; init; }
 

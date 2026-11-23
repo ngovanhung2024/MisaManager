@@ -13,7 +13,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             [new FakeLine("VT0005", "Xăng E10 RON 95 Múc 3", "Lít", "632", "", 24.95m, 20_040, 500_000, "KCT", 0,
                 CostItem: "")], 500_000, 0, 500_000, "expense");
         var scenario = new FakeScenario(Purchase: true, SaveClosesEditor: false, ExistingVouchers: [existing],
-            PurchaseListCellsUseCustomProvider: true, PurchaseEditUsesCustomProvider: true);
+            PurchaseListCellsUseCustomProvider: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
@@ -27,6 +27,9 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             Assert.Empty(result.Failed);
             Assert.Empty(result.Failed);
             Assert.Equal("CPBH.XANG", Assert.Single(misa.State().Vouchers).Lines[0].CostItem);
+            var eventsPath = Path.Combine(misa.Root, "fake-events.log");
+            var events = File.Exists(eventsPath) ? File.ReadAllText(eventsPath) : "";
+            Assert.DoesNotContain("Bỏ ghi chứng từ đã có", events, StringComparison.Ordinal);
         }, scenario);
     }
 
@@ -65,7 +68,8 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             [new FakeLine("VT0005", "Xăng E10 RON 95 Múc 3", "Lít", "154", "", 24.95m, 20_040, 500_000, "KCT", 0,
                 CostItem: "")], 500_000, 0, 500_000, "expense");
         var scenario = new FakeScenario(Purchase: true, SaveClosesEditor: false, ExistingVouchers: [existing],
-            PurchaseListCellsUseCustomProvider: true, PurchaseEditUsesCustomProvider: true);
+            PurchaseListCellsUseCustomProvider: true, PurchaseEditUsesCustomProvider: true,
+            PurchaseEditInitiallyDisabled: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");

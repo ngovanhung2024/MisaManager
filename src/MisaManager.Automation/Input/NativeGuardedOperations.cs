@@ -499,12 +499,12 @@ public sealed partial class NativeInputService
         => dispatcher.RunAsync(() =>
         {
             if (!ScopeReady(Capture())) return false;
-            var condition = selector.AutomationId.Length > 0
-                ? automation.ConditionFactory.ByAutomationId(selector.AutomationId)
-                : automation.ConditionFactory.ByName(selector.Name);
-            var commands = Snapshots(root!, Live(condition.And(automation.ConditionFactory.ByControlType(ControlType.Button)),
-                identity!.ProcessId, enabled: false)).ToArray();
-            return commands.Length == 1 && commands[0].Enabled;
+            try
+            {
+                var target = ResolveInvokeTarget(selector);
+                return TrySnapshot(target)?.Enabled ?? target.Properties.IsEnabled.ValueOrDefault;
+            }
+            catch (AutomationException error) when (error.Code is "TARGET_NOT_FOUND" or "TARGET_AMBIGUOUS") { return false; }
         }, token);
 
     public Task<Readback> ReadCellAsync(NativeFrame frame, NativeCell cell, CancellationToken token, bool waitForCode = false)

@@ -77,7 +77,9 @@ public sealed class PurchaseCostUpdater
             if (!string.Equals(openedNumber, number.Trim(), StringComparison.Ordinal))
                 throw new AutomationException("PURCHASE_IDENTITY_MISMATCH",
                     $"Đã mở chứng từ nhưng số hóa đơn đọc được '{openedNumber}', cần '{number.Trim()}'.");
-            if (voucherProfile.Elements.ContainsKey("unpost"))
+            var editEnabled = voucherProfile.Elements.ContainsKey("edit")
+                && await input.CommandEnabledNowAsync(voucherProfile.Element("edit").Selector, token);
+            if (!editEnabled && voucherProfile.Elements.ContainsKey("unpost"))
             {
                 await voucher.ClickAsync("unpost", token: token);
                 if (!await input.CommandEnabledNowAsync(voucherProfile.Element("post").Selector, token))

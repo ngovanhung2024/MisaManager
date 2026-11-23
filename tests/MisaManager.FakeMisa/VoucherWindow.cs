@@ -147,7 +147,7 @@ public sealed class VoucherWindow : Window, IGridSource
             return button;
         }
         Command("Trước", false); Command("Sau", false);
-        Command("Thêm", false, editOnly: true); edit = Command("Sửa", existingVoucher is not null, BeginEdit, editOnly: true); Command("Sửa nhanh", false);
+        Command("Thêm", false, editOnly: true); edit = Command("Sửa", existingVoucher is not null && !scenario.PurchaseEditInitiallyDisabled, BeginEdit, editOnly: true); Command("Sửa nhanh", false);
         save = Command(profile.Caption(screen, "save"), existingVoucher is null, Save);
         Command("Xóa", false); Command("Hoãn", true); post = Command("Ghi sổ", false); Command("Lập phiếu xuất", false);
         Command("Nạp", false); Command("Tiện ích", true); Command("Mẫu", true); Command("In", false);
@@ -155,7 +155,7 @@ public sealed class VoucherWindow : Window, IGridSource
         Command(profile.Caption(screen, "close"), true, CloseVoucher);
         if (existingVoucher is not null)
         {
-            post.Content = "Bỏ ghi";
+            post.Content = scenario.PurchaseEditInitiallyDisabled ? "Bỏ ghi" : "Ghi sổ";
             post.IsEnabled = true;
         }
         DockPanel.SetDock(toolbar, Dock.Top);
@@ -863,6 +863,7 @@ public sealed class VoucherWindow : Window, IGridSource
         dirty = false;
         post.Content = "Ghi sổ";
         post.IsEnabled = true;
+        if (edit is not null) edit.IsEnabled = true;
         FakeLog.Write("Bỏ ghi chứng từ đã có");
     }
 
