@@ -114,10 +114,9 @@ public sealed class PurchaseCostUpdater
                     warning.Setting("messageContains", ""), token);
             var savedState = await NativeWait.UntilAsync(async () =>
             {
-                var frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
-                if (frame is not null) return await ShowsSavedAsync(voucherProfile, token);
-                // A null bind can mean either a temporarily disabled editor or a closed one. Read existence only
-                // in that branch so the normal saved-state path does not scan the entire process twice per poll.
+                // Match the normal invoice workflow: the lightweight Bỏ ghi/Cất probe comes before rebinding the
+                // editor. MISA can expose Bỏ ghi while the editor provider is still settling after Cất.
+                if (await ShowsSavedAsync(voucherProfile, token)) return true;
                 return !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
             }, ready: savedEditor => savedEditor, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
                 timeoutMilliseconds: 15000, returnLastMismatch: true);
