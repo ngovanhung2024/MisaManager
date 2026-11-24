@@ -114,13 +114,11 @@ public sealed class NativeDispatcher : IDisposable
             throw new AutomationException("NATIVE_ELEMENT_UNAVAILABLE",
                 "Native element disappeared during readback; fresh readback is required." + Where(error), false, error);
         }
-        catch (Exception error) when (error is TimeoutException or OperationCanceledException
-            || error is COMException { HResult: unchecked((int)0x80131505) })
+        catch (Exception error) when (error is OperationCanceledException || IsProviderTimeout(error))
         {
             // A completed read timeout is safe to observe again; a write or still-running
             // provider call must retain the interruption/uncertainty path below.
-            if (!maySendInput && (error is TimeoutException
-                    || error is COMException { HResult: unchecked((int)0x80131505) }) && completion.Task.IsFaulted
+            if (!maySendInput && IsProviderTimeout(error) && completion.Task.IsFaulted
                 && !token.IsCancellationRequested)
                 throw new AutomationException("NATIVE_READ_TIMEOUT", "Native read timed out after the provider returned; fresh readback is required.", false, error);
             // Only an in-flight native call can outlive its caller. Queued/finished work is safe to cancel.
@@ -134,6 +132,11 @@ public sealed class NativeDispatcher : IDisposable
                 maySendInput && Volatile.Read(ref started) != 0, error);
         }
     }
+
+    private static bool IsProviderTimeout(Exception error)
+        => error is TimeoutException
+            or COMException { HResult: unchecked((int)0x80131505) or unchecked((int)0x800705B4) }
+            or System.ComponentModel.Win32Exception { NativeErrorCode: 1460 or unchecked((int)0x800705B4) };
 
     // First MisaManager frame of a provider failure, e.g. " [NativeTableTraversal.cs:372 TryCustomDataRowCount]".
     internal static string Where(Exception error)

@@ -6,6 +6,51 @@ namespace MisaManager.Integration.Tests;
 public sealed class PurchaseCostUpdaterTests : UiTest
 {
     [Fact]
+    public async Task WindowsProviderTimeoutIsReportedAsAReadFailure()
+    {
+        using var dispatcher = new NativeDispatcher();
+        var token = TestContext.Current.CancellationToken;
+        var providerError = new System.ComponentModel.Win32Exception(unchecked((int)0x800705B4));
+        var error = await Assert.ThrowsAsync<AutomationException>(() => dispatcher.RunAsync<bool>(() => throw providerError, token));
+        Assert.Equal("NATIVE_READ_TIMEOUT", error.Code);
+        Assert.False(error.InputMayHaveBeenSent);
+        Assert.Same(providerError, error.InnerException);
+        Assert.True(await dispatcher.RunAsync(() => true, token));
+    }
+
+    [Fact]
+    public Task PurchaseSaveWaitsWhenMisaIsBusy()
+    {
+        var existing = new FakeVoucher("MH00228", "14383", "C26MPD", "NCC_PBH", Invoices.Supplier.Name,
+            Invoices.Supplier.TaxCode, "09/03/2026", "09/03/2026", "09/03/2026", InvoiceKinds.PurchasePayment,
+            [new FakeLine("VT00003", "Xăng Ron 95-III", "Lít", "632", "", 25, 20_000, 500_000, "KCT", 0)],
+            500_000, 0, 500_000, "expense");
+        var scenario = new FakeScenario(Purchase: true, SaveClosesEditor: false, ExistingVouchers: [existing],
+            PurchaseListCellsUseCustomProvider: true, SaveBusyMilliseconds: 4500);
+        return WithFakeAsync(async (misa, harness, token) =>
+        {
+            var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
+            var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "14383", Invoices.Supplier, Invoices.LocThuy,
+                Invoices.Line(0, "VT00003", "Xăng Ron 95-III", "Lít", 25, 20_000, "KCT"));
+            var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
+            var assigned = new List<InvoiceIdentity>();
+            var result = await updater.UpdateAsync([invoice], rule, token, onAssigned: saved =>
+            {
+                assigned.Add(saved.Identity);
+                return Task.CompletedTask;
+            });
+
+            Assert.True(result.Failed.Count == 0, string.Join(" | ", result.Failed));
+            Assert.Equal(1, result.Updated);
+            Assert.Equal(invoice.Identity, Assert.Single(assigned));
+            Assert.Equal("CPBH.XANG", Assert.Single(misa.State().Vouchers).Lines[0].CostItem);
+            var events = File.ReadAllLines(Path.Combine(misa.Root, "fake-events.log"));
+            Assert.Single(events, line => line.Contains("Cất (saved=", StringComparison.Ordinal));
+            Assert.Single(events, line => line.Contains("Đóng (dirty=False, saved=True)", StringComparison.Ordinal));
+        }, scenario);
+    }
+
+    [Fact]
     public Task EmptyPurchaseRegisterSkipsMissingInvoiceAndContinues()
     {
         var existing = new FakeVoucher("MH00429", "441", "C26MLV", "NCC_PBH", Invoices.Supplier.Name,

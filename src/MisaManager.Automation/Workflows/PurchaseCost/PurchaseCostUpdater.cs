@@ -185,23 +185,34 @@ public sealed class PurchaseCostUpdater
                     && !string.Equals(row.GetValueOrDefault("cost_item")?.Trim(), CostItem, StringComparison.Ordinal)))
                 throw new AutomationException("COST_ITEM_READBACK_MISMATCH", $"MISA chưa đọc lại đủ khoản mục '{CostItem}'.");
 
-            saveAttempted = true;
             var editorHandle = await input.BoundScopeHandleAsync(token);
+            saveAttempted = true;
             RecordTrace($"invoice:{number}:save", "input", "Bấm Cất.");
-            await voucher.ClickAsync("save", leavesScope: true, token: token);
+            await input.SendWorkflowCommandAsync(voucher.Frame, voucherProfile.Element("save").Selector, token);
             var warningAnswered = false;
+            async Task<bool> AnswerWarningAsync()
+            {
+                if (warningAnswered || await input.AnswerCostItemPromptAsync(editorHandle, token) is not { } warning) return false;
+                warningAnswered = true;
+                RecordTrace($"invoice:{number}:save.warning", "readback", $"Đã trả lời cảnh báo: {warning.Text}");
+                return true;
+            }
             await NativeWait.UntilAsync(async () =>
             {
                 // Use the same owned-dialog probe as invoice entry. When no prompt is present it only checks native windows.
-                if (!warningAnswered && await input.AnswerCostItemPromptAsync(editorHandle, token) is { } warning)
+                if (await AnswerWarningAsync()) return false;
+                try
                 {
-                    warningAnswered = true;
-                    RecordTrace($"invoice:{number}:save.warning", "readback", $"Đã trả lời cảnh báo: {warning.Text}");
-                    return false;
+                    var bound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
+                    if (bound is not null) return await ShowsSavedAsync(token);
+                    return closed = !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
                 }
-                var bound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
-                if (bound is not null) return await ShowsSavedAsync(token);
-                return closed = !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
+                catch (AutomationException error) when (error.Code == "DIALOG_REQUIRES_ATTENTION" && !warningAnswered)
+                {
+                    // MISA can show the warning after the first probe, while the saved-state guard runs.
+                    if (await AnswerWarningAsync()) return false;
+                    throw;
+                }
             }, ready => ready, "SAVE_UNCERTAIN", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
                 timeoutMilliseconds: 15000);
             RecordTrace($"invoice:{number}:save", "readback", closed ? "Editor đã tự đóng sau Cất." : "Đã xác nhận trạng thái đã Cất.");

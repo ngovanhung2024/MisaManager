@@ -34,7 +34,7 @@ public sealed partial class NativeInputService
     public long ValueInputSequence => WorkflowInputSequence - Interlocked.Read(ref tabInputSequence);
 
     public Task<bool> WorkflowScopeExistsAsync(WindowIdentity window, string scopeId, CancellationToken token)
-        => dispatcher.RunAsync(() => WorkflowScopes(window, scopeId).Length != 0, token);
+        => dispatcher.RunAsync(() => BoundScope(window, scopeId) is not null || WorkflowScopes(window, scopeId).Length != 0, token);
 
     public Task<NativeFrame?> TryBindWorkflowScopeAsync(WindowIdentity window, string scopeId, string? expectedTitle,
         CancellationToken token, bool waitForEnabled = false)
@@ -422,6 +422,14 @@ public sealed partial class NativeInputService
 
     public Task<Readback> InvokeWorkflowAsync(NativeFrame frame, NativeSelector selector, CancellationToken token,
         bool leavesScope = false, bool discardChanges = false)
+        => InvokeWorkflowCoreAsync(frame, selector, token, leavesScope, discardChanges, deferReadback: false);
+
+    // Cất can immediately block UIA. Keep the bound editor and let the save proof poll it after SendInput returns.
+    internal Task SendWorkflowCommandAsync(NativeFrame frame, NativeSelector selector, CancellationToken token)
+        => InvokeWorkflowCoreAsync(frame, selector, token, leavesScope: false, discardChanges: false, deferReadback: true);
+
+    private Task<Readback> InvokeWorkflowCoreAsync(NativeFrame frame, NativeSelector selector, CancellationToken token,
+        bool leavesScope, bool discardChanges, bool deferReadback)
         => dispatcher.RunAsync(() =>
         {
             RecordInput();
@@ -442,13 +450,13 @@ public sealed partial class NativeInputService
                 var bounds = target.BoundingRectangle;
                 if (bounds.Width <= 0 || bounds.Height <= 0)
                     throw new AutomationException("BOUNDS_UNREADABLE", "Control không có bounds để click native.");
-            // Modal catalog buttons are owned by MISA's host but their child
-            // HWND can steal activation from the dialog. Use the host root for
-            // the OK command, matching the direct native-invoke path.
-            var clickHandle = selector.AutomationId == "btnOK" ? nint.Zero : targetHandle;
-            NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                identity!.WindowHandle, identity.ProcessId, clickHandle);
+                // A catalog button's child HWND can steal activation from the dialog.
+                var clickHandle = selector.AutomationId == "btnOK" ? nint.Zero : targetHandle;
+                NativeKeyboard.Click(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
+                    identity!.WindowHandle, identity.ProcessId, clickHandle);
                 epoch++;
+                if (deferReadback)
+                    return new Readback("sent_unverified", null, "Win32.SendInput", DateTimeOffset.UtcNow, null, frame);
                 // Closing a voucher/dialog invalidates its UIA root before readback can run.
                 if (leavesScope)
                 {
