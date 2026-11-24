@@ -59,6 +59,15 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public ICommand AddCommand { get; }
     public ICommand ResumeCommand { get; }
     public bool IsRunning => running;
+    private bool purchaseCostMode;
+    private bool purchaseCostBusy;
+
+    internal void SetPurchaseCostMode(bool active, bool busy = false)
+    {
+        purchaseCostMode = active;
+        purchaseCostBusy = busy;
+        NotifyWorkflowChanged();
+    }
     public WorkflowContext? CurrentContext => services.Workflow.Current;
     public string Status
     {
@@ -131,6 +140,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public async Task<string?> ReleaseCheckpointForUpdateAsync()
     {
         if (running) return "Đang chạy Thêm vào MISA. Bấm Dừng ngay, chờ dừng hẳn rồi mới cập nhật.";
+        if (purchaseCostBusy) return "Chờ thao tác Gán CP xăng hoàn tất rồi cập nhật.";
         batchStopped = false;
         if (services.Workflow.Current is not { } old) { NotifyWorkflowChanged(); return null; }
         var abandoned = await services.AbandonStoppedSessionAsync();
@@ -170,6 +180,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     /// </summary>
     public void RefreshHolds()
     {
+        if (purchaseCostMode) { holds.Clear(); return; }
         var catalog = services.ItemCatalog;
         holds = invoiceQueue.Select(invoice => (invoice.Fingerprint, Issues: CatalogHold.Issues(invoice, catalog)))
             .Where(entry => entry.Issues.Count > 0)
@@ -206,7 +217,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
 
     public void SetChecked(string fingerprint, bool value)
     {
-        if (value && holds.ContainsKey(fingerprint)) { CheckedChanged?.Invoke(this, EventArgs.Empty); return; }
+        if (value && !purchaseCostMode && holds.ContainsKey(fingerprint)) { CheckedChanged?.Invoke(this, EventArgs.Empty); return; }
         if (value ? checkedFingerprints.Add(fingerprint) : checkedFingerprints.Remove(fingerprint))
             CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -214,7 +225,7 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     public void SetCheckedMany(IEnumerable<string> fingerprints)
     {
         checkedFingerprints.Clear();
-        checkedFingerprints.UnionWith(fingerprints.Where(fingerprint => !holds.ContainsKey(fingerprint)));
+        checkedFingerprints.UnionWith(fingerprints.Where(fingerprint => purchaseCostMode || !holds.ContainsKey(fingerprint)));
         CheckedChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -306,9 +317,9 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     }
     public string PerformanceInvoice => performanceInvoice ?? "Chưa có hóa đơn đang chạy";
     public bool HasPerformanceData => PerformanceEntries.Count > 0 || performanceStartedAt is not null;
-    public bool CanEditSource => !running;
-    public bool CanStart => !running;
-    public bool CanResume => !running && (batchStopped || services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused);
+    public bool CanEditSource => !running && !purchaseCostBusy;
+    public bool CanStart => CanEditSource && !purchaseCostMode;
+    public bool CanResume => CanStart && (batchStopped || services.Workflow.Current?.Snapshot.Status == WorkflowStatus.Paused);
     public MisaConnection Connection => connection;
 
     public void RefreshPerformance()
@@ -985,6 +996,14 @@ public sealed class WorkflowViewModel : INotifyPropertyChanged
     {
         get
         {
+            if (purchaseCostMode)
+            {
+                if (purchaseCostBusy) return new(ToolStateKind.Entering, "Đang xử lý CP xăng");
+                if (connection == MisaConnection.Connected) return new(ToolStateKind.Ready, "Sẵn sàng gán");
+                return connection == MisaConnection.Lost
+                    ? new(ToolStateKind.Disconnected, ToolState.LabelOf(ToolStateKind.Disconnected), connectionDetail)
+                    : new(ToolStateKind.Connecting, ToolState.LabelOf(ToolStateKind.Connecting));
+            }
             var current = services.Workflow.Current;
             var bound = current is not null && (SelectedInvoice is null || current.Invoice.Fingerprint == SelectedInvoice.Fingerprint)
                 ? current : null;

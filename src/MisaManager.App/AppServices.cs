@@ -42,6 +42,9 @@ public sealed partial class AppServices : IAsyncDisposable
     // Outside generation folders so an update or restart keeps the imported invoice list.
     public ImportSessionStore ImportSessions { get; }
     public ImportSessionStore PurchaseImportSessions { get; }
+    public ImportSessionStore PurchaseCostSessions { get; }
+    private readonly JsonStateStore purchaseCostState;
+    private const string PurchaseCostHistoryPath = "purchase-cost-history.json";
 
     public PostedInvoiceStore PostedFor(InvoiceDocument invoice) => invoice.IsPurchase() ? PostedPurchases : PostedInvoices;
     public bool IsPosted(InvoiceDocument invoice) => PostedFor(invoice).Contains(invoice);
@@ -50,24 +53,27 @@ public sealed partial class AppServices : IAsyncDisposable
     private static string DataRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         ProductIdentity.TechnicalName);
     private string ModePath => Path.Combine(companyFolder, "mode.txt");
+    private const string PurchaseCostModeName = "PurchaseCost";
+    public bool IsPurchaseCostMode => ReadMode() == PurchaseCostModeName;
 
-    /// <summary>Bán hàng or Mua hàng, as last chosen in the tool.</summary>
-    public VoucherKind Mode
+    /// <summary>Which type of voucher the last chosen mode uses.</summary>
+    public VoucherKind Mode => ReadMode() is nameof(VoucherKind.Purchase) or PurchaseCostModeName
+        ? VoucherKind.Purchase : VoucherKind.Sales;
+
+    private string ReadMode()
     {
-        get
+        try { return File.Exists(ModePath) ? File.ReadAllText(ModePath).Trim() : ""; }
+        catch (IOException) { return ""; }
+    }
+
+    public void SetMode(VoucherKind mode, bool purchaseCost)
+    {
+        try
         {
-            try { return File.Exists(ModePath) && File.ReadAllText(ModePath).Trim() == nameof(VoucherKind.Purchase) ? VoucherKind.Purchase : VoucherKind.Sales; }
-            catch (IOException) { return VoucherKind.Sales; }
+            Directory.CreateDirectory(companyFolder);
+            File.WriteAllText(ModePath, purchaseCost ? PurchaseCostModeName : mode.ToString());
         }
-        set
-        {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(ModePath)!);
-                File.WriteAllText(ModePath, value.ToString());
-            }
-            catch (IOException) { }
-        }
+        catch (IOException) { }
     }
     public string LogRoot { get; }
 
@@ -145,6 +151,8 @@ public sealed partial class AppServices : IAsyncDisposable
         OpeningStock = LoadOpeningStock(companyFolder);
         ImportSessions = new(Path.Combine(companyFolder, "import"));
         PurchaseImportSessions = new(Path.Combine(companyFolder, "import-purchase"));
+        PurchaseCostSessions = new(Path.Combine(companyFolder, "import-purchase-cost"));
+        purchaseCostState = new(companyFolder);
         Generations = new GenerationStore();
         var appVersion = typeof(AppServices).Assembly.GetName().Version?.ToString() ?? "0.0.0";
         var active = Generations.EnsureActive(appVersion);
@@ -395,15 +403,27 @@ public sealed partial class AppServices : IAsyncDisposable
         finally { workflowGate.Release(); }
     }
 
+    public async Task<Dictionary<string, DateTimeOffset>> ReadPurchaseCostHistoryAsync(CancellationToken token = default)
+        => await purchaseCostState.ReadAsync<Dictionary<string, DateTimeOffset>>("purchase-cost-history", PurchaseCostHistoryPath, token) ?? [];
+
     public async Task<PurchaseCostUpdateResult> UpdatePurchaseCostsAsync(IReadOnlyList<InvoiceDocument> invoices,
-        CancellationToken token = default, Action<string>? progress = null)
+        CancellationToken token = default, Action<string>? progress = null, Func<InvoiceDocument, DateTimeOffset, Task>? assigned = null)
     {
         await workflowGate.WaitAsync(token);
         try
         {
             await EnsureInitializedAsync(token);
             var rule = Company.FuelRule() ?? throw new InvalidOperationException("Công ty đang chọn chưa có quy tắc xăng dầu.");
-            return await PurchaseCostUpdater.UpdateAsync(invoices, rule, token, progress);
+            var history = await ReadPurchaseCostHistoryAsync(token);
+            return await PurchaseCostUpdater.UpdateAsync(
+                invoices.Where(invoice => !history.ContainsKey(invoice.Identity.ToString())).ToArray(), rule, token, progress,
+                async invoice =>
+                {
+                    var at = DateTimeOffset.UtcNow;
+                    history[invoice.Identity.ToString()] = at;
+                    await purchaseCostState.WriteAsync("purchase-cost-history", PurchaseCostHistoryPath, history);
+                    if (assigned is not null) await assigned(invoice, at);
+                });
         }
         finally { workflowGate.Release(); }
     }

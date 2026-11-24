@@ -15,19 +15,35 @@ public sealed class PurchaseCostUpdaterTests : UiTest
         var other = existing with { VoucherNumber = "MH00428", InvoiceNumber = "205" };
         var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [other, existing], InitialInvoiceFilter: "205",
             PurchaseFilterRevertsOnRefocus: true, PurchaseFilterCommitDelayMilliseconds: 300,
-            PurchaseListCellsUseCustomProvider: true);
+            PurchaseListCellsUseCustomProvider: true, PurchaseRowBoundsLostAfterRead: true, SaveClosesEditor: false);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
             var invoice = Invoices.BuildPurchaseFor(TempDirectory(misa), "441", Invoices.Supplier, Invoices.LocThuy,
                 Invoices.Line(0, "VT0005", "Xăng E10 RON 95 Múc 3", "Lít", 24.95m, 20_040, "KCT"));
+            var next = Invoices.BuildPurchaseFor(TempDirectory(misa), "205", Invoices.Supplier, Invoices.LocThuy,
+                Invoices.Line(0, "VT0005", "Xăng E10 RON 95 Múc 3", "Lít", 24.95m, 20_040, "KCT"));
             var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
 
-            var result = await updater.UpdateAsync([invoice], rule, token);
+            var assigned = new List<InvoiceIdentity>();
+            var result = await updater.UpdateAsync([invoice, next], rule, token, onAssigned: saved =>
+            {
+                assigned.Add(saved.Identity);
+                return Task.CompletedTask;
+            });
 
-            Assert.Equal((1, 1), (result.Requested, result.Updated));
-            Assert.Empty(result.Failed);
-            Assert.Equal("CPBH.XANG", Assert.Single(misa.State().Vouchers, voucher => voucher.InvoiceNumber == "441").Lines[0].CostItem);
+            Assert.True(result.Failed.Count == 0, string.Join(" | ", result.Failed));
+            Assert.Equal((2, 2), (result.Requested, result.Updated));
+            Assert.Equal(new[] { invoice.Identity, next.Identity }, assigned);
+            var changed = misa.State().Vouchers;
+            Assert.Equal(new[] { "205", "441" }, changed.Select(voucher => voucher.InvoiceNumber).Order(StringComparer.Ordinal));
+            Assert.All(changed, voucher => Assert.Equal("CPBH.XANG", voucher.Lines[0].CostItem));
+            var events = File.ReadAllText(Path.Combine(misa.Root, "fake-events.log"));
+            Assert.Contains("register invoice cell read", events, StringComparison.Ordinal);
+            var opened441 = events.IndexOf("open existing voucher 441", StringComparison.Ordinal);
+            var closed441 = events.IndexOf("Đóng (dirty=False, saved=True)", StringComparison.Ordinal);
+            var opened205 = events.IndexOf("open existing voucher 205", StringComparison.Ordinal);
+            Assert.True(opened441 >= 0 && opened441 < closed441 && closed441 < opened205, events);
         }, scenario);
     }
 
@@ -163,6 +179,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             Assert.Contains("Cất (saved=False", events, StringComparison.Ordinal);
             Assert.Contains("prompt: TK 154 thiếu Khoản mục chi phí", events, StringComparison.Ordinal);
             Assert.Contains("prompt: Khoản mục chi phí → Yes", events, StringComparison.Ordinal);
+            Assert.Contains("Đóng bị nuốt", events, StringComparison.Ordinal);
         }, scenario);
     }
 

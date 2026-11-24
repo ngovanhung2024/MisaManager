@@ -83,7 +83,8 @@ public sealed partial class NativeInputService
             GuardWorkflow(frame, forInput: true);
             var grid = ResolveGrid(gridId);
             var wanted = expected.Trim();
-            CustomRow? match = null;
+            var gridHandle = KeyboardHandle(grid);
+            (int X, int Y, string Source)? match = null;
             var observedRowCounts = new List<int>();
             var observedValues = new List<string>();
             // MISA redraws the filtered register asynchronously. Keep polling the
@@ -105,7 +106,7 @@ public sealed partial class NativeInputService
                     observedValues.Add(actual);
                     if (string.Equals(actual, wanted, StringComparison.Ordinal))
                     {
-                        match = target;
+                        match = (read.X, read.Y, read.Source);
                         break;
                     }
                 }
@@ -118,17 +119,18 @@ public sealed partial class NativeInputService
                     $"Đã lọc '{wanted}' nhưng ô {column} vẫn đọc được '{last}' sau khi chờ grid redraw "
                     + $"(số dòng: {string.Join(",", observedRowCounts.Distinct())}; giá trị đã thấy: {string.Join(",", observedValues.Distinct())}).");
             }
-            var bounds = match.Element.BoundingRectangle;
-            if (bounds.Width <= 0 || bounds.Height <= 0)
-                throw new AutomationException("BOUNDS_UNREADABLE", "Dòng hóa đơn không có bounds để double-click.");
+            // The row provider can lose its live bounds after a redraw. Open at the point that was
+            // verified inside the invoice cell, using the stable grid HWND to guard the click.
+            GuardWorkflow(frame, forInput: true);
+            var (x, y, source) = match.Value;
+            token.ThrowIfCancellationRequested();
             try
             {
                 MarkWorkflowInput();
-                NativeKeyboard.DoubleClick(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2,
-                    identity!.WindowHandle, identity.ProcessId, KeyboardHandle(match.Element));
+                NativeKeyboard.DoubleClick(x, y, identity!.WindowHandle, identity.ProcessId, gridHandle);
                 epoch++;
                 return new Readback("sent_unverified", wanted, "Win32.DoubleClick", DateTimeOffset.UtcNow,
-                    "Đã mở dòng; chờ editor MISA xuất hiện.", Capture());
+                    $"Ô tại ({x}, {y}) đọc được '{wanted}' qua {source}; chờ editor MISA xuất hiện.", Capture());
             }
             catch (Exception error)
             {
@@ -136,7 +138,7 @@ public sealed partial class NativeInputService
             }
         }, token, maySendInput: true);
 
-    private (string Value, string Source) ReadGridCellAtPoint(AutomationElement row, CustomColumn column,
+    private (string Value, string Source, int X, int Y) ReadGridCellAtPoint(AutomationElement row, CustomColumn column,
         CancellationToken token)
     {
         var rowBounds = row.BoundingRectangle;
@@ -158,7 +160,7 @@ public sealed partial class NativeInputService
                 {
                     seen.Add($"{candidate.ControlType} '{candidate.Properties.Name.ValueOrDefault}' [{candidate.BoundingRectangle.X},{candidate.BoundingRectangle.Y} {candidate.BoundingRectangle.Width}x{candidate.BoundingRectangle.Height}]");
                     var read = ReadPointText(candidate);
-                    if (!string.IsNullOrWhiteSpace(read.Value)) return read;
+                    if (!string.IsNullOrWhiteSpace(read.Value)) return (read.Value, read.Source, x, y);
                     last = read;
                 }
                 catch (Exception error) when (error is AutomationException or COMException || Vanished(error)) { }

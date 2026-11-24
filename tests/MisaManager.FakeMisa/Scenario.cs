@@ -197,6 +197,8 @@ public sealed record Scenario
     public bool PurchaseFilterRevertsOnRefocus { get; init; }
     /// <summary>Delays applying a committed register filter while the old rows remain visible.</summary>
     public int PurchaseFilterCommitDelayMilliseconds { get; init; }
+    /// <summary>The row reports empty bounds after reading the invoice cell.</summary>
+    public bool PurchaseRowBoundsLostAfterRead { get; init; }
     /// <summary>The register consumes the double-click without opening an existing purchase voucher.</summary>
     public bool PurchaseRowOpenIgnored { get; init; }
     /// <summary>The CPBH list draws visible rows as custom text without exposing ListItem/SelectionItem through UIA.</summary>

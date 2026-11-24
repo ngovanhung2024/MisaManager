@@ -116,6 +116,9 @@
           <RadioButton x:Name="PurchaseMode" GroupName="VoucherMode" Content="Mua hàng" Style="{StaticResource ModeButton}"
                        Checked="Mode_Checked" IsEnabled="{Binding CanEditSource}" AutomationProperties.Name="Chế độ Mua hàng"
                        ToolTip="Hóa đơn mua vào (zip HTML tải từ cổng thuế) → Mua hàng trong nước nhập kho (Kho KHH, TK 1561, TK 331). Dịch vụ không nhập."/>
+          <RadioButton x:Name="PurchaseCostMode" GroupName="VoucherMode" Content="Gán CP xăng" Style="{StaticResource ModeButton}"
+                       Checked="Mode_Checked" IsEnabled="{Binding CanEditSource}" Visibility="Collapsed"
+                       AutomationProperties.Name="Chế độ Gán CPBH.XANG"/>
         </StackPanel>
       </Border>
       <!-- Công ty: each company has its own catalogs, invoice lists and rules; switching reopens the tool -->
@@ -165,6 +168,8 @@
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Button x:Name="AddButton" Style="{StaticResource PrimaryButton}" Content="Thêm vào MISA" Command="{Binding AddCommand}" IsEnabled="{Binding CanStart}"
               ToolTip="Chạy lần lượt các hóa đơn đã tick (theo thứ tự danh sách); chưa tick hóa đơn nào thì chạy từ hóa đơn đang chọn. Khớp thì Cất, lệch thì Bỏ, số đã tồn tại thì bỏ qua rồi sang hóa đơn tiếp theo."/>
+      <Button x:Name="StartPurchaseCostButton" Style="{StaticResource PrimaryButton}" Content="Bắt đầu gán" Click="StartPurchaseCost_Click"
+              Visibility="Collapsed" IsEnabled="False" ToolTip="Gán CPBH.XANG cho các hóa đơn xăng đã tick"/>
       <Button x:Name="ReconcileButton" Grid.Column="1" Style="{StaticResource MiniButton}" Content="Đối chiếu hóa đơn" Margin="4,0,0,0" Click="Reconcile_Click"
               ToolTip="Đối chiếu hóa đơn hiện tại với chứng từ đang mở trong MISA"/>
       <Button x:Name="StopButton" Grid.Column="2" Style="{StaticResource WarnButton}" Content="Dừng ngay" Margin="4,0,0,0" Click="StopNow_Click" IsEnabled="False"
@@ -176,7 +181,7 @@
           <MenuItem x:Name="OpenInvoicesItem" Header="Mở Excel hóa đơn…" Click="ChooseWorkbook_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập"/>
           <MenuItem x:Name="FuelCostMenuItem" Header="Gán CPBH.XANG cho hóa đơn xăng…" Click="FuelCost_Click" IsEnabled="{Binding CanEditSource}"
-                    ToolTip="Nạp ZIP hóa đơn mua vào, lọc các hóa đơn chỉ có xăng/nhớt, rồi lần lượt gán khoản mục CPBH.XANG trong tab 3. Thống kê"/>
+                    ToolTip="Mở chế độ chọn hóa đơn xăng/nhớt để gán khoản mục CPBH.XANG"/>
           <MenuItem x:Name="ExportPendingHtmlItem" Header="Xuất hóa đơn chưa nhập ra ZIP…" Click="ExportPendingHtml_Click" IsEnabled="{Binding CanEditSource}"
                     ToolTip="Chọn zip HTML gốc để lọc các hóa đơn còn lại trong danh sách rồi lưu thành một zip mới"/>
           <MenuItem x:Name="CatalogMenuItem" Header="Nạp mã hàng…" Click="ChooseCatalog_Click" IsEnabled="{Binding CanEditSource}"
@@ -265,7 +270,7 @@
               <WrapPanel>
                 <Button Style="{StaticResource MiniButton}" Content="Chọn tất cả" Click="CheckAll_Click" ToolTip="Tick mọi hóa đơn đủ dữ liệu"/>
                 <Button Style="{StaticResource MiniButton}" Content="Bỏ chọn" Click="UncheckAll_Click" ToolTip="Bỏ tick tất cả"/>
-                <Button Style="{StaticResource MiniButton}" Content="Chọn chưa nhập" Click="CheckPending_Click" ToolTip="Tick các hóa đơn chưa Cất và chưa có trong MISA"/>
+                <Button x:Name="CheckPendingButton" Style="{StaticResource MiniButton}" Content="Chọn chưa nhập" Click="CheckPending_Click"/>
               </WrapPanel>
             </DockPanel>
             <ListBox x:Name="InvoiceList" MaxHeight="198" Margin="0,2,0,0" IsEnabled="{Binding CanEditSource}" SelectionChanged="InvoiceList_SelectionChanged"

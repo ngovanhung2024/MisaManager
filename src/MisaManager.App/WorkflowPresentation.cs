@@ -151,11 +151,12 @@ public partial class MainWindow
         if (workflow is null) return;
         var canResume = workflow.CanResume;
         ResumeButton.Visibility = canResume ? Visibility.Visible : Visibility.Collapsed;
-        StopButton.Visibility = canResume ? Visibility.Collapsed : Visibility.Visible;
+        StopButton.Visibility = canResume || fuelCostMode ? Visibility.Collapsed : Visibility.Visible;
         StopButton.IsEnabled = workflow.IsRunning && !workflow.IsStopping;
         StopButton.Content = workflow.IsStopping ? "Đang dừng…" : "Dừng ngay";
-        ReconcileButton.IsEnabled = !workflow.IsRunning;
-        var current = workflow.CurrentContext;
+        ReconcileButton.IsEnabled = workflow.CanEditSource;
+        ReconcileButton.Visibility = fuelCostMode ? Visibility.Collapsed : Visibility.Visible;
+        var current = fuelCostMode ? null : workflow.CurrentContext;
         var invoice = workflow.SelectedInvoice
             ?? (current is not null && !WorkflowRunner.IsTerminal(current.Snapshot.Status) ? current.Invoice : null);
         var bound = current?.Invoice.Fingerprint == invoice?.Fingerprint ? current : null;
@@ -225,7 +226,8 @@ public partial class MainWindow
         if (active is not null && active.Key != scrolledActiveKey) EntryList.ScrollIntoView(active);
         scrolledActiveKey = active?.Key;
         var activeLabel = activeRow?.Children?.FirstOrDefault(child => child.IsActive) ?? activeRow;
-        ActivityLabel.Text = activity == "reconcile" ? "Đang đọc lại toàn bộ thông tin từ MISA..."
+        ActivityLabel.Text = fuelCostMode ? purchaseCostHistory.ContainsKey(invoice.Identity.ToString()) ? "Đã gán CPBH.XANG" : "Chưa gán CPBH.XANG"
+            : activity == "reconcile" ? "Đang đọc lại toàn bộ thông tin từ MISA..."
             : activity == "save" ? "Đang Cất và xác minh kết quả..."
             : activity == "discard" ? "Đang đóng bỏ và xác minh kết quả..."
             : activeLabel is not null ? $"Đang nhập: {activeLabel.Label} · {activeLabel.Expected}"

@@ -85,7 +85,6 @@ public partial class MainWindow : Window
     private bool switchingMode;
     private bool exportingPendingHtml;
     private bool fuelCostMode;
-    private IReadOnlyList<InvoiceDocument> loadedFuelCostInvoices = [];
 
     public MainWindow()
     {
@@ -142,13 +141,24 @@ public partial class MainWindow : Window
         {
             var workArea = SystemParameters.WorkArea;
             PositionRail(workArea);
-            mode = ((App)Application.Current).Services.Mode;
-            ShowCompanies();
-            ApplyMode();
-            RefreshCatalogLabel();
-            RefreshPartyLabel();
-            await workflow.RestoreAsync();
-            await RestoreImportSessionAsync();
+            var services = ((App)Application.Current).Services;
+            mode = services.Mode;
+            fuelCostMode = services.IsPurchaseCostMode && services.Company.FuelRule() is not null;
+            workflow.SetPurchaseCostMode(fuelCostMode, busy: fuelCostMode);
+            try
+            {
+                ShowCompanies();
+                ApplyMode();
+                RefreshCatalogLabel();
+                RefreshPartyLabel();
+                await workflow.RestoreAsync();
+                await RestoreImportSessionAsync();
+            }
+            finally
+            {
+                workflow.SetPurchaseCostMode(fuelCostMode);
+                RefreshChecked();
+            }
             _ = UpdatePrompt.CheckAsync(this, ((App)Application.Current).Services.Updates, interactive: false, status => StatusLabel.Text = status,
                 workflow.ReleaseCheckpointForUpdateAsync);
         }
@@ -224,6 +234,8 @@ public partial class MainWindow : Window
 
     private async void ChooseWorkbook_Click(object sender, RoutedEventArgs e)
     {
+        if (!workflow.CanEditSource) return;
+        if (fuelCostMode) { await ChoosePurchaseCostSourceAsync(); return; }
         var dialog = Purchase
             ? new OpenFileDialog { Filter = "Hóa đơn mua vào (*.zip;*.html;*.xlsx)|*.zip;*.html;*.htm;*.xlsx", CheckFileExists = true, Multiselect = false,
                 Title = "Bước 1/2: Chọn file zip hóa đơn mua vào (các file HTML tải từ cổng thuế) hoặc file Excel đã chuyển đổi" }
@@ -260,74 +272,9 @@ public partial class MainWindow : Window
         await OpenWorkbookAsync(workbookPath);
     }
 
-    private async void FuelCost_Click(object sender, RoutedEventArgs e)
-    {
-        if (fuelCostMode || importModel.IsBusy || workflow.IsRunning) return;
-        if (!Purchase || ((App)Application.Current).Services.Company.FuelRule() is null)
-        {
-            StatusLabel.Text = "Chức năng CP xăng chỉ khả dụng khi đang chọn công ty có quy tắc xăng dầu.";
-            return;
-        }
-        var dialog = new OpenFileDialog
-        {
-            Filter = "Hóa đơn mua vào (*.zip;*.html)|*.zip;*.html;*.htm",
-            CheckFileExists = true,
-            Multiselect = false,
-            Title = "Chọn ZIP hóa đơn mua vào để lọc hóa đơn chỉ có xăng/nhớt"
-        };
-        if (dialog.ShowDialog(this) != true) return;
-        try
-        {
-            var workbookPath = dialog.FileName;
-            if (!workbookPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
-            {
-                if (await ConvertArchiveAsync(workbookPath, purchase: true) is not { } converted) return;
-                workbookPath = converted;
-            }
-            await OpenWorkbookAsync(workbookPath, forFuelCost: true);
-            var targets = loadedFuelCostInvoices;
-            if (targets.Count == 0)
-            {
-                StatusLabel.Text = "Không tìm thấy hóa đơn chỉ có xăng/nhớt trong ZIP.";
-                return;
-            }
-            var services = ((App)Application.Current).Services;
-            var result = await services.UpdatePurchaseCostsAsync(targets,
-                progress: message => Dispatcher.Invoke(() => StatusLabel.Text = message));
-            if (result.Failed.Count > 0)
-            {
-                var message = "Gán CPBH.XANG thất bại: " + result.Failed[0];
-                var evidence = ((App)Application.Current).Services.PurchaseCostErrorDetails(
-                    string.Join(Environment.NewLine, result.Failed));
-                Workflow_ErrorRaised(this, new WorkflowErrorEventArgs(message,
-                    evidence, DateTimeOffset.Now));
-            }
-            StatusLabel.Text = result.Failed.Count == 0
-                ? $"Đã gán CPBH.XANG cho {result.Updated:N0}/{result.Requested:N0} hóa đơn xăng."
-                : $"Đã dừng ở hóa đơn lỗi sau khi gán {result.Updated:N0}/{result.Requested:N0}: {string.Join("; ", result.Failed.Take(1))}";
-        }
-        catch (Exception error)
-        {
-            fuelCostMode = false;
-            Workflow_ErrorRaised(this, new WorkflowErrorEventArgs(
-                "Gán CPBH.XANG thất bại: " + error.Message, error.ToString(), DateTimeOffset.Now));
-            StatusLabel.Text = "Không cập nhật được CPBH.XANG: " + error.Message;
-        }
-        finally
-        {
-            fuelCostMode = false;
-            // CPBH.XANG uses its own updater, so refresh the shared connection badge
-            // after it exits instead of leaving the startup "Đang kết nối…" state.
-            try { await workflow.ProbeConnectionAsync(); }
-            catch (Exception error) { StatusLabel.Text = "Không kiểm tra lại được kết nối MISA: " + error.Message; }
-        }
-    }
-
     /// <summary>Reads the workbook, lets the user pick the sheet when there are several, then imports it like any invoice file.</summary>
-    private async Task OpenWorkbookAsync(string workbookPath, bool forFuelCost = false)
+    private async Task OpenWorkbookAsync(string workbookPath)
     {
-        fuelCostMode = forFuelCost;
-        loadedFuelCostInvoices = [];
         var work = BeginImport();
         ResetMapping();
         updatingSheet = true;
@@ -413,34 +360,8 @@ public partial class MainWindow : Window
     private async void Mode_Checked(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded || switchingMode) return;
-        var next = PurchaseMode.IsChecked == true ? VoucherKind.Purchase : VoucherKind.Sales;
-        if (next == mode) return;
-        if (!workflow.CanEditSource)
-        {
-            ApplyMode();
-            return;
-        }
-        try
-        {
-            CancelImport();
-            importModel.Reset();
-            ClearImportResult();
-            workflow.SetCheckedMany([]);
-            ResetMapping();
-            updatingSheet = true;
-            SheetChoice.ItemsSource = null;
-            updatingSheet = false;
-            mode = next;
-            ((App)Application.Current).Services.Mode = next;
-            ApplyMode();
-            RefreshPartyLabel();
-            await RestoreImportSessionAsync();
-            if (invoices.Count == 0)
-                StatusLabel.Text = Purchase
-                    ? "Chế độ Mua hàng: bấm ••• → Mở hóa đơn mua vào và chọn file zip HTML tải từ cổng thuế."
-                    : "Chế độ Bán hàng: bấm ••• → Mở Excel hóa đơn.";
-        }
-        catch (Exception error) { StatusLabel.Text = "Không chuyển được chế độ: " + error.Message; }
+        var cost = PurchaseCostMode.IsChecked == true;
+        await SwitchModeAsync(cost || PurchaseMode.IsChecked == true ? VoucherKind.Purchase : VoucherKind.Sales, cost);
     }
 
     /// <summary>Shows the current mode on the switch, menu and labels.</summary>
@@ -450,23 +371,33 @@ public partial class MainWindow : Window
         try
         {
             SalesMode.IsChecked = !Purchase;
-            PurchaseMode.IsChecked = Purchase;
+            PurchaseMode.IsChecked = Purchase && !fuelCostMode;
+            PurchaseCostMode.IsChecked = fuelCostMode;
         }
         finally { switchingMode = false; }
         importModel.Purchase = Purchase;
         var fuel = ((App)Application.Current).Services.Company.FuelRule();
-        ModeHint.Text = !Purchase ? "Hóa đơn bán ra → Chứng từ bán hàng"
+        PurchaseCostMode.Visibility = fuel is not null ? Visibility.Visible : Visibility.Collapsed;
+        ModeHint.Text = fuelCostMode ? "Gán CPBH.XANG cho hóa đơn xăng/nhớt"
+            : !Purchase ? "Hóa đơn bán ra → Chứng từ bán hàng"
             : fuel is null ? "Hóa đơn mua vào → Mua hàng nhập kho (KHH · 1561 · 331)"
             : $"Chỉ nhập xăng dầu: dầu diesel → {fuel.Stock} · {fuel.StockAccount}, xăng/nhớt → không qua kho · {fuel.ExpenseAccount}";
-        OpenInvoicesItem.Header = Purchase ? "Mở hóa đơn mua vào (zip HTML)…" : "Mở Excel hóa đơn…";
-        OpenInvoicesItem.ToolTip = Purchase
+        OpenInvoicesItem.Header = fuelCostMode ? "Mở danh sách hóa đơn xăng…" : Purchase ? "Mở hóa đơn mua vào (zip HTML)…" : "Mở Excel hóa đơn…";
+        OpenInvoicesItem.ToolTip = fuelCostMode ? "Mở ZIP, HTML hoặc Excel hóa đơn mua vào và lọc các hóa đơn chỉ có xăng/nhớt." : Purchase
             ? "Chọn file zip các hóa đơn HTML tải từ cổng thuế (tool chuyển sang Excel, sắp xếp từ đầu năm), rồi file Mua hàng hóa, dịch vụ đã ghi sổ xuất từ MISA"
             : "Chọn file Excel hóa đơn, rồi file danh sách bán hàng đã ghi sổ xuất từ MISA: danh sách chỉ hiện hóa đơn chưa nhập";
         ExportPendingHtmlItem.Header = Purchase ? "Xuất hóa đơn mua vào chưa nhập ra ZIP…" : "Xuất hóa đơn bán ra chưa nhập ra ZIP…";
         ExportPendingHtmlItem.ToolTip = "Chọn zip HTML gốc để lọc toàn bộ hóa đơn còn lại trong danh sách (không cần tick) rồi lưu thành một zip mới";
-        FuelCostMenuItem.Visibility = Purchase && fuel is not null ? Visibility.Visible : Visibility.Collapsed;
-        ServicesTab.Visibility = Purchase ? Visibility.Visible : Visibility.Collapsed;
-        if (!Purchase && ServicesTab.IsSelected) WorkspaceTabs.SelectedIndex = 0;
+        ExportPendingHtmlItem.Visibility = fuelCostMode ? Visibility.Collapsed : Visibility.Visible;
+        FuelCostMenuItem.Visibility = Purchase && !fuelCostMode && fuel is not null ? Visibility.Visible : Visibility.Collapsed;
+        ServicesTab.Visibility = Purchase && !fuelCostMode ? Visibility.Visible : Visibility.Collapsed;
+        if ((!Purchase || fuelCostMode) && ServicesTab.IsSelected) WorkspaceTabs.SelectedIndex = 0;
+        AddButton.Visibility = fuelCostMode ? Visibility.Collapsed : Visibility.Visible;
+        StartPurchaseCostButton.Visibility = fuelCostMode ? Visibility.Visible : Visibility.Collapsed;
+        CheckPendingButton.Content = fuelCostMode ? "Chọn chưa gán" : "Chọn chưa nhập";
+        CheckPendingButton.ToolTip = fuelCostMode ? "Tick các hóa đơn xăng/nhớt chưa gán CPBH.XANG"
+            : "Tick các hóa đơn chưa nhập MISA theo lịch sử của tool và danh sách ghi sổ đã nạp";
+        RefreshChecked();
         if (invoices.Count == 0)
         {
             WorkbookLabel.Text = Purchase ? "Chưa chọn hóa đơn mua vào" : "Chưa chọn file Excel hóa đơn";
@@ -913,15 +844,20 @@ public partial class MainWindow : Window
     {
         foreach (var row in invoices) row.RefreshChecked();
         CheckedCounter.Text = $"Đã chọn {workflow.CheckedCount:N0}/{invoices.Count:N0}";
+        StartPurchaseCostButton.IsEnabled = fuelCostMode && workflow.CanEditSource && workflow.CheckedCount > 0 && !importModel.IsBusy;
     }
 
     private void CheckAll_Click(object sender, RoutedEventArgs e)
-        => workflow.SetCheckedMany(invoices.Where(row => !row.Invoice.IsBlocked && !workflow.IsHeld(row.Invoice)).Select(row => row.Invoice.Fingerprint));
+        => workflow.SetCheckedMany(invoices.Where(row => row.CanCheck && (fuelCostMode || !row.Invoice.IsBlocked))
+            .Select(row => row.Invoice.Fingerprint));
 
     private void UncheckAll_Click(object sender, RoutedEventArgs e) => workflow.SetCheckedMany([]);
 
     private void CheckPending_Click(object sender, RoutedEventArgs e)
-        => workflow.SetCheckedMany(workflow.PendingInvoices.Select(invoice => invoice.Fingerprint));
+    {
+        if (fuelCostMode) CheckAll_Click(sender, e);
+        else workflow.SetCheckedMany(workflow.PendingInvoices.Select(invoice => invoice.Fingerprint));
+    }
 
     private InvoiceRow? contextRow;
 
@@ -938,7 +874,7 @@ public partial class MainWindow : Window
 
     private void InvoiceList_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        if (contextRow is not { } row || workflow.IsRunning) { e.Handled = true; return; }
+        if (fuelCostMode || contextRow is not { } row || workflow.IsRunning) { e.Handled = true; return; }
         var canMark = workflow.CanMarkSaved(row.Invoice);
         MarkSavedItem.IsEnabled = canMark;
         MarkSavedItem.ToolTip = canMark
@@ -1067,7 +1003,7 @@ public partial class MainWindow : Window
     }
 
     private void ShowIssues(InvoiceDocument invoice)
-        => SetVisibleIssues(invoice.Issues.Concat(workflow.HoldIssues(invoice)).Concat(workflow.UnfinishedIssues(invoice)));
+        => SetVisibleIssues(fuelCostMode ? invoice.Issues : invoice.Issues.Concat(workflow.HoldIssues(invoice)).Concat(workflow.UnfinishedIssues(invoice)));
 
     private void SetVisibleIssues(IEnumerable<ImportIssue> issues)
     {
@@ -1169,17 +1105,10 @@ public partial class MainWindow : Window
                 .ToImmutableDictionary(row => row.Key, row => row.SelectedColumn!.Value, StringComparer.Ordinal) : null;
             var imported = await importModel.ImportAsync(sheet, columnMap, work.Token);
             if (!IsCurrent(work)) return;
-            if (fuelCostMode)
-            {
-                var rule = ((App)Application.Current).Services.Company.FuelRule()
-                    ?? throw new InvalidOperationException("Công ty đang chọn chưa có quy tắc xăng dầu.");
-                ShowImported(imported, null);
-                loadedFuelCostInvoices = imported.Invoices.Where(invoice => FuelPurchases.IsGasolineOnly(invoice, rule)).ToArray();
-                StatusLabel.Text = $"Đã lọc {loadedFuelCostInvoices.Count:N0} hóa đơn chỉ có xăng/nhớt từ ZIP.";
-                return;
-            }
             var summary = ShowImported(imported, null);
-            SaveImportSession(source.FilePath, sheet, imported);
+            if (fuelCostMode)
+                await ImportSessions.SaveAsync(source.FilePath, sheet, imported, CheckedFingerprints(), work.Token);
+            else SaveImportSession(source.FilePath, sheet, imported);
             if (imported.Issues.Any(issue => issue.Code is "COLUMN_MISSING" or "TOTAL_MEANING_REQUIRED" or "COLUMN_AMBIGUOUS"))
             {
                 MappingExpander.IsExpanded = true;
@@ -1199,8 +1128,11 @@ public partial class MainWindow : Window
     private string ShowImported(ImportResult imported, IReadOnlyList<string>? ticked)
     {
         var posted = PostedStore;
-        var (pending, hidden) = posted.WithoutPosted(imported);
-        ShowServices(imported.Services ?? []);
+        var (pending, hidden) = fuelCostMode
+            ? (imported with { Invoices = imported.Invoices.Where(invoice => FuelPurchases.IsGasolineOnly(invoice,
+                ((App)Application.Current).Services.Company.FuelRule())).ToArray(), Services = [] }, 0)
+            : posted.WithoutPosted(imported);
+        ShowServices(pending.Services ?? []);
         shown = pending;
         // MISA numbers vouchers in entry order, so enter oldest first: issued date, then invoice number.
         var ordered = pending.Invoices
@@ -1209,9 +1141,11 @@ public partial class MainWindow : Window
             .ThenBy(invoice => invoice.Identity.Number, StringComparer.Ordinal)
             .ToArray();
         invoices.Clear();
-        foreach (var invoice in ordered) invoices.Add(new(invoice, workflow));
+        foreach (var invoice in ordered) invoices.Add(new(invoice, workflow, fuelCostMode ? purchaseCostHistory : null));
         workflow.InvoiceQueue = ordered;
-        if (ticked is not null) workflow.SetCheckedMany(ticked);
+        if (ticked is not null) workflow.SetCheckedMany(fuelCostMode
+            ? invoices.Where(row => row.CanCheck && ticked.Contains(row.Invoice.Fingerprint)).Select(row => row.Invoice.Fingerprint)
+            : ticked);
         else workflow.KeepCheckedIn(ordered.Select(invoice => invoice.Fingerprint).ToHashSet(StringComparer.Ordinal));
         RefreshChecked();
         if (invoices.Count > 0) InvoiceList.SelectedIndex = 0;
@@ -1220,6 +1154,7 @@ public partial class MainWindow : Window
         RefreshPartyLabel();
         RefreshRunSummary();
         ShowWorkbookIssues();
+        if (fuelCostMode) return $"{ordered.Length:N0} hóa đơn xăng/nhớt · {invoices.Count(row => !row.CanCheck):N0} đã gán";
         var blocked = ordered.Count(invoice => invoice.IsBlocked);
         var held = ordered.Count(workflow.IsHeld);
         return $"{ordered.Length:N0} hóa đơn chưa nhập"
@@ -1231,7 +1166,8 @@ public partial class MainWindow : Window
             + (held > 0 ? $" · {held:N0} hóa đơn tạm hoãn (mặt hàng trùng tên nhiều mã)" : "");
     }
 
-    private ImportSessionStore ImportSessions => Purchase ? ((App)Application.Current).Services.PurchaseImportSessions
+    private ImportSessionStore ImportSessions => fuelCostMode ? ((App)Application.Current).Services.PurchaseCostSessions
+        : Purchase ? ((App)Application.Current).Services.PurchaseImportSessions
         : ((App)Application.Current).Services.ImportSessions;
 
     private sealed record ServiceRow(string Title, string Subtitle, string Reason, string Items);
@@ -1256,11 +1192,13 @@ public partial class MainWindow : Window
         catch (Exception error) { StatusLabel.Text = "Không lưu được danh sách hóa đơn để mở lại lần sau: " + error.Message; }
     }
 
+    private IEnumerable<string> CheckedFingerprints() => workflow.InvoiceQueue.Select(invoice => invoice.Fingerprint).Where(workflow.IsChecked);
+
     // Ticks change as invoices are saved during a run; keep them for the next start.
     private async void SaveTicks()
     {
         if (invoices.Count == 0) return;
-        try { await ImportSessions.SaveCheckedAsync(workflow.InvoiceQueue.Select(invoice => invoice.Fingerprint).Where(workflow.IsChecked)); }
+        try { await ImportSessions.SaveCheckedAsync(CheckedFingerprints()); }
         catch (Exception error) { System.Diagnostics.Trace.TraceWarning("Saving ticks failed: {0}", error.Message); }
     }
 
@@ -1268,13 +1206,21 @@ public partial class MainWindow : Window
     private async Task RestoreImportSessionAsync()
     {
         if (invoices.Count > 0 || importModel.IsBusy) return;
-        var saved = await ImportSessions.LoadAsync();
+        var services = ((App)Application.Current).Services;
+        var sessions = ImportSessions;
+        if (fuelCostMode) purchaseCostHistory = await services.ReadPurchaseCostHistoryAsync();
+        var saved = await sessions.LoadAsync();
+        var seedCostList = fuelCostMode && saved is null;
+        if (seedCostList && await services.PurchaseImportSessions.LoadAsync() is { } purchase)
+            saved = purchase with { Checked = [] };
         if (saved is not { Result.Invoices.Count: > 0 } || invoices.Count > 0 || importModel.IsBusy) return;
         importModel.Restore(saved.Result);
         WorkbookLabel.Text = Path.GetFileName(saved.FilePath);
         WorkbookLabel.ToolTip = $"{saved.FilePath} · trang tính {saved.Sheet} (khôi phục từ lần nhập trước)";
         var summary = ShowImported(saved.Result, saved.Checked);
         StatusLabel.Text = $"Đã khôi phục từ {Path.GetFileName(saved.FilePath)} (lần nhập trước): {summary}.";
+        if (seedCostList && invoices.Count > 0)
+            await sessions.SaveAsync(saved.FilePath, saved.Sheet, saved.Result, CheckedFingerprints());
     }
 
     private CancellationTokenSource BeginImport()
@@ -1291,7 +1237,7 @@ public partial class MainWindow : Window
             InvoiceList.MaxHeight = 4 * (first.ActualHeight + first.Margin.Top + first.Margin.Bottom) + 2;
         }, DispatcherPriority.Loaded);
     private bool IsCurrent(CancellationTokenSource work) => importModel.IsCurrent(work);
-    private void EndImport(CancellationTokenSource work) => importModel.EndWork(work);
+    private void EndImport(CancellationTokenSource work) { importModel.EndWork(work); RefreshChecked(); }
 
     private void ClearImportResult()
     {
@@ -1393,7 +1339,7 @@ public partial class MainWindow : Window
     // Works without any Excel loaded: the voucher open in MISA is always read; the Excel side is the invoice with its number.
     private async void Reconcile_Click(object sender, RoutedEventArgs e)
     {
-        if (workflow.IsRunning) return;
+        if (!workflow.CanEditSource || fuelCostMode) return;
         if (workflow.SelectedInvoice is null && workflow.CurrentContext is { } current && !WorkflowRunner.IsTerminal(current.Snapshot.Status))
             workflow.SelectedInvoice = current.Invoice;
         try
@@ -1450,7 +1396,7 @@ public partial class MainWindow : Window
         if (workflow.IsRunning) editorOpen = null;
         UpdateComparisonPopup();
         // Probes share the single UIA thread with data entry, so they only run while idle and never overlap.
-        if (workflow.IsRunning || probeBusy || importModel.IsBusy) return;
+        if (!workflow.CanEditSource || probeBusy || importModel.IsBusy) return;
         var now = DateTimeOffset.UtcNow;
         probeBusy = true;
         try
@@ -1568,6 +1514,7 @@ public partial class MainWindow : Window
 
     private bool IsComparisonBound()
     {
+        if (fuelCostMode) return false;
         var current = workflow.CurrentContext;
         var invoice = workflow.SelectedInvoice ?? current?.Invoice;
         return current is not null && invoice is not null && current.Invoice.Fingerprint == invoice.Fingerprint;
@@ -1580,6 +1527,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateComparisonPopup()
     {
+        if (fuelCostMode) { CloseComparisonWindow(); return; }
         var current = workflow.CurrentContext;
         var state = workflow.State;
         var bound = IsComparisonBound() && current is not null;
@@ -1772,6 +1720,7 @@ public partial class MainWindow : Window
             WorkbookLabel.ToolTip = null;
             services.ImportSessions.Clear();
             services.PurchaseImportSessions.Clear();
+            services.PurchaseCostSessions.Clear();
             await services.Drafts.ClearAsync();
             var removedItems = await Task.Run(services.ItemCatalog.Clear);
             await Task.Run(services.PartyCatalog.Clear);
@@ -1807,7 +1756,7 @@ public partial class MainWindow : Window
     {
         var services = ((App)Application.Current).Services;
         var posted = services.PostedInvoices.Count == 0 ? "" : $" · {services.PostedInvoices.Count:N0} HĐ đã ghi sổ";
-        MarkLoaded(OpenInvoicesItem, "Mở Excel hóa đơn…",
+        MarkLoaded(OpenInvoicesItem, fuelCostMode ? "Mở danh sách hóa đơn xăng…" : Purchase ? "Mở hóa đơn mua vào (zip HTML)…" : "Mở Excel hóa đơn…",
             invoices.Count == 0 ? null : $"{invoices.Count:N0} hóa đơn · {WorkbookLabel.Text}{posted}");
         var catalog = services.ItemCatalog;
         MarkLoaded(CatalogMenuItem, "Nạp mã hàng…",
@@ -1906,15 +1855,19 @@ public partial class MainWindow : Window
             PropertyChanged?.Invoke(this, new(nameof(CheckTip)));
         }
         /// <summary>Held invoices (duplicate item names in the catalog) cannot be ticked.</summary>
-        public bool CanCheck => !selection.IsHeld(Invoice);
-        public string CheckTip => selection.HoldIssues(Invoice) is { Count: > 0 } issues
+        public bool CanCheck => costHistory is not null ? !costHistory.ContainsKey(Invoice.Identity.ToString()) : !selection.IsHeld(Invoice);
+        public string CheckTip => costHistory is not null
+            ? costHistory.TryGetValue(Invoice.Identity.ToString(), out var at) ? $"Đã gán CPBH.XANG lúc {at.ToLocalTime():dd/MM/yyyy HH:mm:ss}" : "Tick để gán CPBH.XANG"
+            : selection.HoldIssues(Invoice) is { Count: > 0 } issues
             ? string.Join(Environment.NewLine, issues.Select(issue => issue.Message))
             : "Tick để đưa hóa đơn này vào danh sách chạy";
         public InvoiceDocument Invoice { get; }
-        public InvoiceRow(InvoiceDocument invoice, WorkflowViewModel selection)
+        private readonly IReadOnlyDictionary<string, DateTimeOffset>? costHistory;
+        public InvoiceRow(InvoiceDocument invoice, WorkflowViewModel selection, IReadOnlyDictionary<string, DateTimeOffset>? costHistory = null)
         {
             Invoice = invoice;
             this.selection = selection;
+            this.costHistory = costHistory;
         }
         public string DisplayIdentity => (Invoice.Identity.Series.Length == 0 ? "HĐ " : Invoice.Identity.Series + " ")
             + $"{Invoice.Identity.Number} · {Invoice.Partner().Name}";
@@ -1927,6 +1880,7 @@ public partial class MainWindow : Window
         {
             get
             {
+                if (costHistory is not null) return CanCheck ? "Chưa gán" : "Đã gán";
                 // MISA's register outranks an earlier failed/discarded run; a tool Cất keeps its own label.
                 if (IsPosted && LatestRun()?.Snapshot.Status != WorkflowStatus.Saved) return RunOutcome.PostedLabel;
                 if (Invoice.IsBlocked) return "Thiếu dữ liệu";
@@ -1941,6 +1895,7 @@ public partial class MainWindow : Window
         {
             get
             {
+                if (costHistory is not null) return CanCheck ? "ready" : "saved";
                 if (IsPosted) return "saved";
                 if (Invoice.IsBlocked || selection.IsHeld(Invoice)) return "attention";
                 var snapshot = LatestRun()?.Snapshot;

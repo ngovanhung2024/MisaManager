@@ -131,6 +131,7 @@ public sealed class FakeGrid : Border
     public bool ShowFilters { get; set; }
     /// <summary>Leaves visible register cells focusable but exposes them as custom providers, like the failing R20 grid.</summary>
     public bool CellsUseCustomProvider { get; set; }
+    public bool RowBoundsLostAfterInvoiceRead { get; set; }
     /// <summary>The register filter restores its previous text when the editor is focused a second time.</summary>
     public bool FilterRevertsOnRefocus { get; set; }
     public string FilterInitialText { get; set; } = "";
@@ -656,6 +657,7 @@ internal sealed class R20UnitCombo : ComboBox
 
 internal sealed class GridRow : StackPanel
 {
+    private bool loseBoundsOnce;
     private const string NewRowPrompt = "Bấm vào đây để thêm mới";
     private readonly FakeGrid grid;
     private readonly IReadOnlyList<GridColumn> columns;
@@ -837,7 +839,15 @@ internal sealed class GridRow : StackPanel
                 : base.GetAutomationControlTypeCore();
 
         protected override string GetNameCore()
-            => grid.CellsUseCustomProvider && row.Index is not null ? Cell.Text : base.GetNameCore();
+        {
+            if (!grid.CellsUseCustomProvider || row.Index is null) return base.GetNameCore();
+            if (grid.RowBoundsLostAfterInvoiceRead && Equals(Cell.Tag, "number"))
+            {
+                row.loseBoundsOnce = true;
+                FakeLog.Write("register invoice cell read");
+            }
+            return Cell.Text;
+        }
     }
 
     private sealed class RowPeer(GridRow owner) : FrameworkElementAutomationPeer(owner)
@@ -846,7 +856,12 @@ internal sealed class GridRow : StackPanel
         protected override string GetClassNameCore() => "UltraGridRow";
         protected override string GetNameCore() => owner.Index is null ? "Template Add Row" : "Row " + (owner.Index + 1);
         protected override System.Windows.Rect GetBoundingRectangleCore()
-            => owner.Stale ? throw new ElementNotAvailableException() : base.GetBoundingRectangleCore();
+        {
+            if (owner.Stale) throw new ElementNotAvailableException();
+            if (!owner.loseBoundsOnce) return base.GetBoundingRectangleCore();
+            owner.loseBoundsOnce = false;
+            return System.Windows.Rect.Empty;
+        }
         protected override List<AutomationPeer> GetChildrenCore()
             => owner.Stale ? throw new ElementNotAvailableException()
                 : [.. owner.Cells.Select(UIElementAutomationPeer.CreatePeerForElement).Where(peer => peer is not null).Cast<AutomationPeer>()];

@@ -53,7 +53,8 @@ public sealed class PurchaseCostUpdater
     }
 
     public async Task<PurchaseCostUpdateResult> UpdateAsync(IReadOnlyList<InvoiceDocument> invoices,
-        FuelPurchaseCompany rule, CancellationToken token = default, Action<string>? progress = null)
+        FuelPurchaseCompany rule, CancellationToken token = default, Action<string>? progress = null,
+        Func<InvoiceDocument, Task>? onAssigned = null)
     {
         ResetTrace();
         RecordTrace("batch", "started", $"Nhận {invoices.Count} hóa đơn nguồn; bắt đầu lọc hóa đơn chỉ có xăng/nhớt.");
@@ -70,7 +71,8 @@ public sealed class PurchaseCostUpdater
             {
                 RecordTrace($"invoice:{invoice.Identity.Number}", "started", "Bắt đầu cập nhật CPBH.XANG.");
                 progress?.Invoke("Đang cập nhật CPBH.XANG cho hóa đơn " + invoice.Identity.Number + "...");
-                await UpdateOneAsync(invoice.Identity.Number, token);
+                await UpdateOneAsync(invoice.Identity.Number, token,
+                    onAssigned is null ? null : () => onAssigned(invoice), checkForOpenVoucher: updated == 0);
                 updated++;
                 RecordTrace($"invoice:{invoice.Identity.Number}", "completed", "Đã gán CPBH.XANG, Cất và đóng chứng từ.");
             }
@@ -90,7 +92,7 @@ public sealed class PurchaseCostUpdater
         return new(targets.Length, updated, failed);
     }
 
-    private async Task UpdateOneAsync(string number, CancellationToken token)
+    private async Task UpdateOneAsync(string number, CancellationToken token, Func<Task>? onAssigned, bool checkForOpenVoucher)
     {
         RecordTrace($"invoice:{number}:session", "started", "Tìm cửa sổ MISA theo profile mua hàng.");
         var window = await FindSessionAsync(token);
@@ -100,17 +102,18 @@ public sealed class PurchaseCostUpdater
         var voucherProfile = profile.Screen(WorkflowProfile.PurchaseVoucher);
         var editorOpened = false;
         var saveAttempted = false;
-        var saved = false;
         var closed = false;
         try
         {
+            if (checkForOpenVoucher && await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+                throw new AutomationException("EDITOR_STILL_OPEN", "Đóng chứng từ mua hàng đang mở trước khi lọc số hóa đơn.");
             RecordTrace($"invoice:{number}:list", "started", "Mở danh sách Mua hàng hóa, dịch vụ.");
             var list = await MisaScreen.OpenAsync(input, window, listProfile, token, profile.Culture);
             RecordTrace($"invoice:{number}:list", "readback", "Danh sách chứng từ đã mở.");
             var listGrid = list.Grid("vouchers");
             var filter = await input.WriteGridFilterAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token);
             list.Track(filter);
-            RecordTrace($"invoice:{number}:filter", "readback",
+            RecordTrace($"invoice:{number}:filter", filter.Status,
                 $"Đã xóa/gõ/Enter ô '{listGrid.Column("number")}'. value='{filter.Value}', source='{filter.Source}', reason='{filter.Reason ?? ""}'.");
             // DoubleClickGridRowAsync performs the authoritative row readback
             // against the filtered column. Avoid a second generic table read,
@@ -172,41 +175,45 @@ public sealed class PurchaseCostUpdater
                 throw new AutomationException("COST_ITEM_READBACK_MISMATCH", $"MISA chưa đọc lại đủ khoản mục '{CostItem}'.");
 
             saveAttempted = true;
+            var editorHandle = await input.BoundScopeHandleAsync(token);
             RecordTrace($"invoice:{number}:save", "input", "Bấm Cất.");
-            await voucher.ClickAsync("save", token: token);
-            if (profile.Screens.TryGetValue("purchase_posting_warning", out var warning))
+            await voucher.ClickAsync("save", leavesScope: true, token: token);
+            var warningAnswered = false;
+            await NativeWait.UntilAsync(async () =>
             {
-                RecordTrace($"invoice:{number}:save.warning", "started", "Chờ cảnh báo thiếu khoản mục và trả lời Yes nếu xuất hiện.");
-                await input.ClickOwnedMessageBoxButtonAsync(window, warning.Element("yes").Selector,
-                    warning.Setting("messageContains", ""), token);
-                RecordTrace($"invoice:{number}:save.warning", "readback", "Đã xử lý cảnh báo ghi sổ.");
-            }
-            var savedState = await NativeWait.UntilAsync(async () =>
+                // Use the same owned-dialog probe as invoice entry. When no prompt is present it only checks native windows.
+                if (!warningAnswered && await input.AnswerCostItemPromptAsync(editorHandle, token) is { } warning)
+                {
+                    warningAnswered = true;
+                    RecordTrace($"invoice:{number}:save.warning", "readback", $"Đã trả lời cảnh báo: {warning.Text}");
+                    return false;
+                }
+                var bound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
+                if (bound is not null) return await ShowsSavedAsync(token);
+                return closed = !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
+            }, ready => ready, "SAVE_UNCERTAIN", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
+                timeoutMilliseconds: 15000);
+            RecordTrace($"invoice:{number}:save", "readback", closed ? "Editor đã tự đóng sau Cất." : "Đã xác nhận trạng thái đã Cất.");
+            Exception? closeError = null;
+            try
             {
-                // Match the normal invoice workflow: the lightweight Bỏ ghi/Cất probe comes before rebinding the
-                // editor. MISA can expose Bỏ ghi while the editor provider is still settling after Cất.
-                if (await ShowsSavedAsync(voucherProfile, token)) return true;
-                return !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
-            }, ready: savedEditor => savedEditor, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
-                timeoutMilliseconds: 15000, returnLastMismatch: true);
-            if (!savedState)
-            {
-                closed = !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
-                RecordTrace($"invoice:{number}:save", "failed", $"Không xác nhận được Cất; editorClosed={closed}.");
-                return;
-            }
-            saved = true;
-            RecordTrace($"invoice:{number}:save", "readback", "Đã xác nhận trạng thái đã Cất qua Bỏ ghi/Cất.");
-            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
-            {
+                if (!closed) await CloseSavedVoucherAsync(window, voucherProfile, number, token);
                 closed = true;
-                RecordTrace($"invoice:{number}:close", "readback", "Editor đã tự đóng sau Cất.");
-                return;
+                RecordTrace($"invoice:{number}:close", "readback", "Đã xác nhận editor biến mất trước khi chuyển hóa đơn.");
             }
-            RecordTrace($"invoice:{number}:close", "input", "Bắt đầu đóng editor đã Cất.");
-            await CloseSavedVoucherAsync(window, voucherProfile, token);
-            closed = true;
-            RecordTrace($"invoice:{number}:close", "readback", "Đã xác nhận editor biến mất trước khi chuyển hóa đơn.");
+            catch (Exception error)
+            {
+                closeError = error;
+                throw;
+            }
+            finally
+            {
+                try { if (onAssigned is not null) await onAssigned(); }
+                catch (Exception error) when (closeError is not null)
+                {
+                    RecordTrace($"invoice:{number}:history", "failed", "Không lưu được lịch sử gán sau khi MISA đã Cất.", error);
+                }
+            }
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -224,7 +231,7 @@ public sealed class PurchaseCostUpdater
                 {
                     var frame = await input.CaptureAsync(token);
                     await input.InvokeWorkflowAsync(frame, voucherProfile.Element("close").Selector, token,
-                        leavesScope: true, discardChanges: !saved);
+                        leavesScope: true, discardChanges: true);
                     closed = true;
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
@@ -235,33 +242,11 @@ public sealed class PurchaseCostUpdater
         }
     }
 
-    private async Task CloseSavedVoucherAsync(WindowIdentity window, ScreenProfile voucherProfile, CancellationToken token)
+    private async Task CloseSavedVoucherAsync(WindowIdentity window, ScreenProfile voucherProfile, string number, CancellationToken token)
     {
+        var frame = await input.CaptureAsync(token);
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
-            {
-                RecordTrace("close", "readback", "Editor không còn tồn tại khi bắt đầu đóng.");
-                return;
-            }
-            NativeFrame? frame;
-            try
-            {
-                // The normal invoice flow invokes Đóng on the already bound editor. Do not reopen the screen with
-                // OpenAsync(waitForEnabled:true), which waits through the whole R20 redraw before sending the click.
-                frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token);
-            }
-            catch (AutomationException error) when (error.Code == "SCOPE_DISABLED" && attempt == 0)
-            {
-                RecordTrace("close", "wait", "Editor đang disabled, chờ MISA bật lại trước khi bấm Đóng.", error);
-                await Task.Delay(100, token);
-                continue;
-            }
-            if (frame is null)
-            {
-                RecordTrace("close", "readback", "Không còn scope editor sau khi bind.");
-                return;
-            }
             RecordTrace("close", "input", $"Bấm Đóng, lần thử {attempt + 1}.");
             await input.InvokeWorkflowAsync(frame, voucherProfile.Element("close").Selector, token, leavesScope: true);
             try
@@ -275,23 +260,30 @@ public sealed class PurchaseCostUpdater
             catch (AutomationException error) when (error.Code == "PURCHASE_CLOSE_PENDING" && attempt == 0)
             {
                 // Same saved-state guard as the normal sales workflow: retry Đóng only after reading the editor again.
-                var rebound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token);
-                var saved = rebound is not null && await ShowsSavedAsync(voucherProfile, token);
+                var voucher = await MisaScreen.TryOpenAsync(input, window, voucherProfile, token, profile.Culture);
+                if (voucher is null) return;
+                await voucher.SelectTabAsync("invoice", token);
+                var actual = (await voucher.ReadAsync("number", token))?.Trim();
+                var saved = actual == number.Trim() && await ShowsSavedAsync(token);
                 RecordTrace("close", saved ? "retry" : "failed",
                     $"Lần đóng đầu chưa làm scope biến mất; savedReadback={saved}.", error);
                 if (!saved) throw;
+                frame = voucher.Frame;
             }
         }
         throw new AutomationException("PURCHASE_CLOSE_PENDING", "Hóa đơn mua hàng chưa đóng sau khi Cất.");
     }
 
-    private async Task<bool> ShowsSavedAsync(ScreenProfile voucherProfile, CancellationToken token)
+    private async Task<bool> ShowsSavedAsync(CancellationToken token)
     {
-        if (voucherProfile.Elements.ContainsKey("unpost")
-            && await input.CommandEnabledNowAsync(voucherProfile.Element("unpost").Selector, token))
+        if (profile.UnpostVoucher is { } unpost && await input.CommandEnabledNowAsync(unpost, token))
             return true;
-        return voucherProfile.Elements.ContainsKey("save")
-            && !await input.CommandEnabledNowAsync(voucherProfile.Element("save").Selector, token);
+        try
+        {
+            await input.RequireDisabledCommandAsync(await input.CaptureAsync(token), profile.SaveVoucher, token);
+            return true;
+        }
+        catch (AutomationException error) when (error.Code == "COMMAND_STATE_MISMATCH") { return false; }
     }
 
     private async Task<WindowIdentity> FindSessionAsync(CancellationToken token)
