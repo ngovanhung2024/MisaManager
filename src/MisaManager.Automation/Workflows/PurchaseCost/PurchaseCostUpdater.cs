@@ -108,7 +108,7 @@ public sealed class PurchaseCostUpdater
                 throw new AutomationException("COST_ITEM_READBACK_MISMATCH", $"MISA chưa đọc lại đủ khoản mục '{CostItem}'.");
 
             saveAttempted = true;
-            await voucher.ClickAsync("post", token: token);
+            await voucher.ClickAsync("save", token: token);
             if (profile.Screens.TryGetValue("purchase_posting_warning", out var warning))
                 await input.ClickOwnedMessageBoxButtonAsync(window, warning.Element("yes").Selector,
                     warning.Setting("messageContains", ""), token);
@@ -117,7 +117,7 @@ public sealed class PurchaseCostUpdater
                 if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return false;
                 var frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
                 return frame is not null && await input.CommandEnabledNowAsync(voucherProfile.Element("edit").Selector, token);
-            }, ready: savedEditor => savedEditor, "PURCHASE_POST_PENDING", "Chưa xác nhận được Ghi sổ hóa đơn mua hàng.", token,
+            }, ready: savedEditor => savedEditor, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
                 timeoutMilliseconds: 15000, returnLastMismatch: true);
             if (!remains)
             {

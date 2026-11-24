@@ -108,7 +108,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
     }
 
     [Fact]
-    public Task ExistingGasolineVoucherPostsAfterYesWarning()
+    public Task ExistingGasolineVoucherSavesAfterYesWarning()
     {
         var existing = new FakeVoucher("MH00429", "15420", "C26MLV", "NCC_PBH", Invoices.Supplier.Name,
             Invoices.Supplier.TaxCode, "13/11/2026", "13/11/2026", "13/11/2026", InvoiceKinds.PurchasePayment,
@@ -133,6 +133,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             var events = File.Exists(eventsPath) ? File.ReadAllText(eventsPath) : "";
             Assert.Contains("Bỏ ghi chứng từ đã có", events, StringComparison.Ordinal);
             Assert.Contains("Sửa chứng từ đã có", events, StringComparison.Ordinal);
+            Assert.Contains("Cất (saved=False", events, StringComparison.Ordinal);
             Assert.Contains("prompt: TK 154 thiếu Khoản mục chi phí", events, StringComparison.Ordinal);
             Assert.Contains("prompt: Khoản mục chi phí → Yes", events, StringComparison.Ordinal);
         }, scenario);
