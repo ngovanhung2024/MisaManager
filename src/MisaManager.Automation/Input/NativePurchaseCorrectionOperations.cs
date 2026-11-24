@@ -85,10 +85,11 @@ public sealed partial class NativeInputService
             var wanted = expected.Trim();
             CustomRow? match = null;
             var observedRowCounts = new List<int>();
+            var observedValues = new List<string>();
             // MISA redraws the filtered register asynchronously. Keep polling the
             // rows only. The visible row cells are selected with the mouse because
             // R20 can expose them outside the row's UIA subtree.
-            for (var attempt = 0; attempt < 40 && match is null; attempt++)
+            for (var attempt = 0; attempt < 200 && match is null; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 var layout = ReadCustomGridLayout(grid, token, dataRowsOnly: true, allowEmpty: true, mapCells: false);
@@ -98,16 +99,23 @@ public sealed partial class NativeInputService
                     var target = layout.Rows[0];
                     var targetColumn = layout.Columns[FindCustomColumn(layout.Columns, column)];
                     var read = ReadGridCellByMouse(target.Element, targetColumn, token);
-                    if (!string.Equals(read.Value.Trim(), wanted, StringComparison.Ordinal))
-                        throw new AutomationException("PURCHASE_NOT_FOUND",
-                            $"Đã chọn dòng bằng chuột nhưng ô {column} hiện '{read.Value.Trim()}', cần '{wanted}'.");
-                    match = target;
-                    break;
+                    var actual = read.Value.Trim();
+                    observedValues.Add(actual);
+                    if (string.Equals(actual, wanted, StringComparison.Ordinal))
+                    {
+                        match = target;
+                        break;
+                    }
                 }
-                Thread.Sleep(50);
+                if (match is null) Thread.Sleep(50);
             }
             if (match is null)
-                throw new AutomationException("TARGET_NOT_FOUND", $"Không thấy duy nhất dòng có {column} = '{wanted}' (số dòng đọc được: {string.Join(",", observedRowCounts.Distinct())}).");
+            {
+                var last = observedValues.Count == 0 ? "" : observedValues[^1];
+                throw new AutomationException("PURCHASE_NOT_FOUND",
+                    $"Đã lọc '{wanted}' nhưng ô {column} vẫn đọc được '{last}' sau khi chờ grid redraw "
+                    + $"(số dòng: {string.Join(",", observedRowCounts.Distinct())}; giá trị đã thấy: {string.Join(",", observedValues.Distinct())}).");
+            }
             var bounds = match.Element.BoundingRectangle;
             if (bounds.Width <= 0 || bounds.Height <= 0)
                 throw new AutomationException("BOUNDS_UNREADABLE", "Dòng hóa đơn không có bounds để double-click.");

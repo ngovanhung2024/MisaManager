@@ -14,7 +14,8 @@ public sealed class PurchaseCostUpdaterTests : UiTest
                 CostItem: "")], 500_000, 0, 500_000, "expense");
         var other = existing with { VoucherNumber = "MH00428", InvoiceNumber = "205" };
         var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [other, existing], InitialInvoiceFilter: "205",
-            PurchaseFilterRevertsOnRefocus: true, PurchaseListCellsUseCustomProvider: true);
+            PurchaseFilterRevertsOnRefocus: true, PurchaseFilterCommitDelayMilliseconds: 300,
+            PurchaseListCellsUseCustomProvider: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");

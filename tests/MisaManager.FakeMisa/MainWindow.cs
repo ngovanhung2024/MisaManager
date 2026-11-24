@@ -113,8 +113,19 @@ public sealed class MainWindow : Window, IGridSource
         {
             if (filter.Key != "number") return;
             if (scenario.IgnoreInvoiceFilterCommit) return;
-            invoiceFilter = filter.Text.Trim();
-            list.Refresh(force: true);
+            void ApplyFilter()
+            {
+                invoiceFilter = filter.Text.Trim();
+                list.Refresh(force: true);
+            }
+            if (scenario.PurchaseFilterCommitDelayMilliseconds <= 0) ApplyFilter();
+            else
+            {
+                var timer = new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromMilliseconds(scenario.PurchaseFilterCommitDelayMilliseconds) };
+                timer.Tick += (_, _) => { timer.Stop(); ApplyFilter(); };
+                timer.Start();
+            }
         };
         list.RowDoubleClicked += (_, row) =>
         {
