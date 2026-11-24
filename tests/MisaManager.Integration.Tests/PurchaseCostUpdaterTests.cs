@@ -6,15 +6,15 @@ namespace MisaManager.Integration.Tests;
 public sealed class PurchaseCostUpdaterTests : UiTest
 {
     [Fact]
-    public Task PurchaseFilterCommitsAfterSecondEnter()
+    public Task PurchaseFilterCommitsWithoutRefocusingEditor()
     {
         var existing = new FakeVoucher("MH00429", "441", "C26MLV", "NCC_PBH", Invoices.Supplier.Name,
             Invoices.Supplier.TaxCode, "03/01/2026", "03/01/2026", "03/01/2026", InvoiceKinds.PurchasePayment,
             [new FakeLine("VT0005", "Xăng E10 RON 95 Múc 3", "Lít", "632", "", 24.95m, 20_040, 500_000, "KCT", 0,
                 CostItem: "")], 500_000, 0, 500_000, "expense");
         var other = existing with { VoucherNumber = "MH00428", InvoiceNumber = "205" };
-        var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [other, existing],
-            PurchaseFilterRequiresSecondEnter: true, PurchaseListCellsUseCustomProvider: true);
+        var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [other, existing], InitialInvoiceFilter: "205",
+            PurchaseFilterRevertsOnRefocus: true, PurchaseListCellsUseCustomProvider: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");

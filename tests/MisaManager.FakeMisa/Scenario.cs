@@ -193,8 +193,8 @@ public sealed record Scenario
     public bool PurchaseEditInitiallyDisabled { get; init; }
     /// <summary>After Cất, keeps Sửa disabled while exposing Bỏ ghi, like the real purchase editor.</summary>
     public bool PurchaseEditRemainsDisabledAfterSave { get; init; }
-    /// <summary>The register filter needs a second Enter before it applies the typed value.</summary>
-    public bool PurchaseFilterRequiresSecondEnter { get; init; }
+    /// <summary>The register filter restores its previous text when the editor is focused a second time.</summary>
+    public bool PurchaseFilterRevertsOnRefocus { get; init; }
     /// <summary>The register consumes the double-click without opening an existing purchase voucher.</summary>
     public bool PurchaseRowOpenIgnored { get; init; }
     /// <summary>The CPBH list draws visible rows as custom text without exposing ListItem/SelectionItem through UIA.</summary>

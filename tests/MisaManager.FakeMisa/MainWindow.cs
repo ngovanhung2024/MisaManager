@@ -105,7 +105,8 @@ public sealed class MainWindow : Window, IGridSource
         list = new FakeGrid(profile.GridId(listScreen, "vouchers"), 420)
         {
             ShowFilters = true,
-            FilterRequiresSecondEnter = purchase && scenario.PurchaseFilterRequiresSecondEnter
+            FilterRevertsOnRefocus = purchase && scenario.PurchaseFilterRevertsOnRefocus,
+            FilterInitialText = scenario.InitialInvoiceFilter.Trim()
         };
         list.CellsUseCustomProvider = purchase && scenario.PurchaseListCellsUseCustomProvider;
         list.FilterCommitted += (_, filter) =>

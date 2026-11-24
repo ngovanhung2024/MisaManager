@@ -55,16 +55,10 @@ public sealed partial class NativeInputService
                 sent = true;
                 MarkWorkflowInput();
                 NativeKeyboard.ReplaceText(inputHandle, identity!.WindowHandle, identity.ProcessId, text, token);
-                // Infragistics' register filter keeps the typed text in the embedded editor until Enter reaches
-                // the owning ComboBox. Sending Enter to the child editor leaves the old filter (for example 205)
-                // active even though 441 was briefly visible while typing.
-                Commit(target, "Enter", token);
-                if (target.ControlType == ControlType.ComboBox)
-                {
-                    // R20 can redraw the register filter back to its previous value after the first Enter. A
-                    // second commit key is the same user action needed to publish the text already visible in the editor.
-                    Commit(target, "Enter", token, preferOwner: true);
-                }
+                // Keep the editor focused after typing. Re-resolving and clicking the grid cell here makes R20
+                // restore its previous filter (for example 205) before the Enter reaches the active editor.
+                MarkWorkflowInput();
+                NativeKeyboard.Press(inputHandle, identity!.WindowHandle, identity.ProcessId, "Enter", token);
                 epoch++;
                 return new Readback("sent_unverified", text, "UIA3.ValuePattern+Enter", DateTimeOffset.UtcNow,
                     "Đã lọc; sẽ xác minh bằng cách đọc lại dòng hóa đơn.", Capture());

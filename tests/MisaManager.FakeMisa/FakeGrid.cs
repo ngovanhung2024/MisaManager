@@ -131,8 +131,9 @@ public sealed class FakeGrid : Border
     public bool ShowFilters { get; set; }
     /// <summary>Leaves visible register cells focusable but exposes them as custom providers, like the failing R20 grid.</summary>
     public bool CellsUseCustomProvider { get; set; }
-    /// <summary>The register filter needs a second Enter before it applies the typed value.</summary>
-    public bool FilterRequiresSecondEnter { get; set; }
+    /// <summary>The register filter restores its previous text when the editor is focused a second time.</summary>
+    public bool FilterRevertsOnRefocus { get; set; }
+    public string FilterInitialText { get; set; } = "";
     /// <summary>
     /// R20 unit cells (report 0.2.172, HĐ 151/164): the "ĐVT" combo exposes an invokable "[Editor] dropdown button"; while
     /// its list is closed it still exposes the list's items, with bounds over the next grid row; the first opening of a
@@ -249,15 +250,21 @@ public sealed class FakeGrid : Border
         if (ShowFilters)
             foreach (var column in columns)
             {
-                var enterCount = 0;
-                Control filter = FilterRequiresSecondEnter
-                    ? new ComboBox { IsEditable = true, Width = column.Width, Height = RowHeight, Tag = column.Key, FontSize = 11 }
-                    : new TextBox { Width = column.Width, Height = RowHeight, Tag = column.Key, FontSize = 11 };
+                var committedText = column.Key == "number" ? FilterInitialText : "";
+                Control filter = FilterRevertsOnRefocus
+                    ? new ComboBox { IsEditable = true, Width = column.Width, Height = RowHeight, Tag = column.Key, FontSize = 11, Text = committedText }
+                    : new TextBox { Width = column.Width, Height = RowHeight, Tag = column.Key, FontSize = 11, Text = committedText };
+                filter.PreviewMouseLeftButtonDown += (_, _) =>
+                {
+                    if (!FilterRevertsOnRefocus || committedText.Length == 0) return;
+                    if (filter is ComboBox combo) combo.Text = committedText;
+                    else ((TextBox)filter).Text = committedText;
+                };
                 filter.PreviewKeyDown += (_, e) =>
                 {
                     if (e.Key is not (Key.Enter or Key.Tab)) return;
-                    if (FilterRequiresSecondEnter && ++enterCount < 2) return;
                     var text = filter is ComboBox combo ? combo.Text : ((TextBox)filter).Text;
+                    committedText = text;
                     FilterCommitted?.Invoke(this, (column.Key, text));
                     if (e.Key == Key.Enter) e.Handled = true;
                 };
