@@ -1496,17 +1496,17 @@ public sealed partial class NativeInputService
     }
 
     private void Commit(AutomationElement target, string key, CancellationToken token,
-        bool allowUnverifiedFocus = false)
+        bool allowUnverifiedFocus = false, bool preferOwner = false)
     {
         token.ThrowIfCancellationRequested();
-        var inputTarget = ResolveKeyboardTarget(target);
+        var inputTarget = preferOwner ? target : ResolveKeyboardTarget(target);
         if (target.ControlType == ControlType.ComboBox)
         {
             // R20 "Mẫu số HĐ"/loại chứng từ: the inner editor refuses focus (UIA SetFocus throws), so the combo keeps
             // keyboard focus and takes the commit key itself.
             if (!inputTarget.Equals(target) && !inputTarget.Properties.IsKeyboardFocusable.ValueOrDefault)
                 inputTarget = target;
-            FocusTarget(inputTarget, activateGridCell: true, token: token, verifyFocus: !allowUnverifiedFocus);
+            FocusTarget(inputTarget, activateGridCell: !preferOwner, token: token, verifyFocus: !allowUnverifiedFocus);
         }
         var inputHandle = KeyboardHandle(inputTarget);
         if (!allowUnverifiedFocus && !IsFocusedTarget(inputTarget, inputHandle))

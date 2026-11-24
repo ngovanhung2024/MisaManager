@@ -114,9 +114,11 @@ public sealed class PurchaseCostUpdater
                     warning.Setting("messageContains", ""), token);
             var savedState = await NativeWait.UntilAsync(async () =>
             {
-                if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return false;
                 var frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
-                return frame is not null && await ShowsSavedAsync(voucherProfile, token);
+                if (frame is not null) return await ShowsSavedAsync(voucherProfile, token);
+                // A null bind can mean either a temporarily disabled editor or a closed one. Read existence only
+                // in that branch so the normal saved-state path does not scan the entire process twice per poll.
+                return !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
             }, ready: savedEditor => savedEditor, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
                 timeoutMilliseconds: 15000, returnLastMismatch: true);
             if (!savedState)
