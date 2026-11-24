@@ -132,10 +132,7 @@ public sealed class PurchaseCostUpdater
                 closed = true;
                 return;
             }
-            voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
-            await voucher.ClickAsync("close", leavesScope: true, token: token);
-            await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
-                exists => !exists, "PURCHASE_CLOSE_PENDING", "Hóa đơn chưa đóng sau khi Cất.", token, timeoutMilliseconds: 15000);
+            await CloseSavedVoucherAsync(window, voucherProfile, token);
             closed = true;
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -147,7 +144,7 @@ public sealed class PurchaseCostUpdater
         }
         finally
         {
-            if (editorOpened && !closed && !(saveAttempted && !saved))
+            if (editorOpened && !closed && !saveAttempted)
             {
                 try
                 {
@@ -162,6 +159,30 @@ public sealed class PurchaseCostUpdater
                 }
             }
         }
+    }
+
+    private async Task CloseSavedVoucherAsync(WindowIdentity window, ScreenProfile voucherProfile, CancellationToken token)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return;
+            var voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
+            await voucher.ClickAsync("close", leavesScope: true, token: token);
+            try
+            {
+                await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
+                    exists => !exists, "PURCHASE_CLOSE_PENDING", "Hóa đơn chưa đóng sau khi Cất.", token,
+                    timeoutMilliseconds: 5000);
+                return;
+            }
+            catch (AutomationException error) when (error.Code == "PURCHASE_CLOSE_PENDING" && attempt == 0)
+            {
+                // Same saved-state guard as the normal sales workflow: retry Đóng only after reading the editor again.
+                var rebound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
+                if (rebound is null || !await ShowsSavedAsync(voucherProfile, token)) throw;
+            }
+        }
+        throw new AutomationException("PURCHASE_CLOSE_PENDING", "Hóa đơn mua hàng chưa đóng sau khi Cất.");
     }
 
     private async Task<bool> ShowsSavedAsync(ScreenProfile voucherProfile, CancellationToken token)
