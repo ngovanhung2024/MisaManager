@@ -21,7 +21,7 @@ public sealed partial class AppServices
         byte[]? Screenshot, IReadOnlyList<WorkflowStepTiming> Steps, WorkflowContext Context,
         ItemResolutionDiagnostic? ItemResolution);
     private sealed record StandaloneFailureCapture(string InvoiceNumber, string Message, DateTimeOffset At,
-        UiFailureSnapshot Ui, byte[]? Screenshot);
+        UiFailureSnapshot Ui, byte[]? Screenshot, IReadOnlyList<PurchaseCostTraceEntry> Trace);
 
     private static readonly JsonSerializerOptions ReportJson = new(ContractJson.Options) { WriteIndented = true };
     private readonly object reportGate = new();
@@ -94,7 +94,8 @@ public sealed partial class AppServices
             catch (OperationCanceledException) { break; }
         }
         lock (reportGate)
-            lastStandaloneFailure = new(invoiceNumber, error.Message, DateTimeOffset.UtcNow, ui, screenshot);
+            lastStandaloneFailure = new(invoiceNumber, error.Message, DateTimeOffset.UtcNow, ui, screenshot,
+                PurchaseCostUpdater.TraceSnapshot());
     }
 
     internal string PurchaseCostErrorDetails(string details)
@@ -107,7 +108,8 @@ public sealed partial class AppServices
             invoiceNumber = capture.InvoiceNumber,
             capturedAt = capture.At,
             error = capture.Message,
-            uiAtFailure = capture.Ui
+            uiAtFailure = capture.Ui,
+            trace = capture.Trace
         }, ReportJson);
         return details + Environment.NewLine + Environment.NewLine
             + "CHỨNG CỨ UIA CPBH.XANG TẠI THỜI ĐIỂM LỖI" + Environment.NewLine + evidence;
@@ -339,6 +341,7 @@ public sealed partial class AppServices
             if (standaloneFailure is not null)
             {
                 Text(zip, "purchase-cost-ui-at-failure.json", Clean(JsonSerializer.Serialize(standaloneFailure, ReportJson)));
+                Text(zip, "purchase-cost-trace.json", Clean(JsonSerializer.Serialize(standaloneFailure.Trace, ReportJson)));
                 if (standaloneFailure.Ui.NativeTree is { } nativeTree)
                     Text(zip, "purchase-cost-ui-tree.json", Clean(JsonSerializer.Serialize(nativeTree, ReportJson)));
                 if (standaloneFailure.Screenshot is { } shot) Bytes(zip, "purchase-cost-screen-at-failure.png", shot);
@@ -393,6 +396,7 @@ public sealed partial class AppServices
         | `ui-tree.json` | Cây UIA chính được tách riêng để AI dễ lọc: phần tử, cha, HWND, bounds, AutomationId, ControlType, Name, Value/Text, patterns, focus và giới hạn/trạng thái đầy đủ. |
         | `screen-at-failure.png` | Ảnh chụp toàn màn hình ngay lúc lỗi. |
         | `ui-now.json`, `screen-now.png` | Trạng thái hiện tại khi xuất báo cáo. |
+        | `purchase-cost-trace.json` | Timeline CPBH từ lúc bắt đầu tìm hóa đơn đến khi lỗi, gồm input, readback, nút lệnh, tab, Cất và Đóng. |
         | `screen-check.json` | Kết quả kiểm tra selector của profile (`profiles/misa-sme2023-r20.json`) trên các màn hình MISA đang mở: selector nào không tìm thấy/không duy nhất. |
         | `logs/` | Nhật ký checkpoint (JSONL) và crash log gần nhất. |
 
