@@ -50,8 +50,10 @@ public sealed class PurchaseCostUpdaterTests : UiTest
         }, scenario);
     }
 
-    [Fact]
-    public Task EmptyPurchaseRegisterSkipsMissingInvoiceAndContinues()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task EmptyPurchaseRegisterSkipsMissingInvoiceAndContinues(bool countViaItemStatus)
     {
         var existing = new FakeVoucher("MH00429", "441", "C26MLV", "NCC_PBH", Invoices.Supplier.Name,
             Invoices.Supplier.TaxCode, "03/01/2026", "03/01/2026", "03/01/2026", InvoiceKinds.PurchasePayment,
@@ -59,13 +61,14 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             500_000, 0, 500_000, "expense");
         var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [existing], InitialInvoiceFilter: "441",
             PurchaseListCellsUseCustomProvider: true, EmptyPurchaseRegisterExposesRow: true,
+            PurchaseListCountViaItemStatus: countViaItemStatus,
             PurchaseFilterRevertsOnRefocus: true, PurchaseFilterCommitDelayMilliseconds: 300);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
             InvoiceDocument Invoice(string number) => Invoices.BuildPurchaseFor(TempDirectory(misa), number, Invoices.Supplier,
                 Invoices.LocThuy, Invoices.Line(0, "VT0005", "Xăng RON 95 Mức 3", "Lít", 25, 20_000, "KCT"));
-            var missing = Invoice("120581");
+            var missing = Invoice(countViaItemStatus ? "149075" : "120581");
             var next = Invoice("441");
             var updater = new PurchaseCostUpdater(new MisaWindowDiscovery(), harness.Input, harness.PurchaseProfile);
             var assigned = new List<InvoiceIdentity>();
@@ -77,7 +80,10 @@ public sealed class PurchaseCostUpdaterTests : UiTest
 
             Assert.True(result.Failed.Count == 0, string.Join(" | ", result.Failed));
             Assert.Equal((2, 1), (result.Requested, result.Updated));
-            Assert.Equal("120581", Assert.Single(result.Skipped));
+            Assert.Equal(missing.Identity.Number, Assert.Single(result.Skipped));
+            var skipped = Assert.Single(updater.TraceSnapshot(), entry => entry.Outcome == "skipped");
+            Assert.Contains(countViaItemStatus ? "UIA3.ItemStatus.DataRowCount" : "UIA3.GridFooter", skipped.Details,
+                StringComparison.Ordinal);
             Assert.Equal(next.Identity, Assert.Single(assigned));
             var saved = Assert.Single(misa.State().Vouchers);
             Assert.Equal("441", saved.InvoiceNumber);
@@ -210,7 +216,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
             [new FakeLine("VT0005", "Xăng E10 RON 95 Múc 3", "Lít", "632", "", 24.95m, 20_040, 500_000, "KCT", 0,
                 CostItem: "")], 500_000, 0, 500_000, "expense");
         var scenario = new FakeScenario(Purchase: true, ExistingVouchers: [existing], InitialInvoiceFilter: "12671",
-            IgnoreInvoiceFilterCommit: true, PurchaseListCellsUseCustomProvider: true);
+            IgnoreInvoiceFilterCommit: true, PurchaseListCellsUseCustomProvider: true, PurchaseListCountViaItemStatus: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");

@@ -107,6 +107,7 @@ public sealed class MainWindow : Window, IGridSource
             ShowFilters = true,
             RowBoundsLostAfterInvoiceRead = purchase && scenario.PurchaseRowBoundsLostAfterRead,
             EmptyRegisterExposesRow = purchase && scenario.EmptyPurchaseRegisterExposesRow,
+            RegisterCountViaItemStatus = purchase && scenario.PurchaseListCountViaItemStatus,
             FilterRevertsOnRefocus = purchase && scenario.PurchaseFilterRevertsOnRefocus,
             FilterInitialText = scenario.InitialInvoiceFilter.Trim()
         };

@@ -97,9 +97,9 @@ public sealed partial class NativeInputService
                 token.ThrowIfCancellationRequested();
                 var layout = ReadCustomGridLayout(grid, token, dataRowsOnly: true, allowEmpty: true, mapCells: false);
                 observedRowCounts.Add(layout.Rows.Count);
-                if (layout.Rows.Count <= 1 && TryReadCustomFooterCount(grid) == 0)
+                if (layout.Rows.Count <= 1 && EmptyPurchaseRegisterProof(grid) is not null)
                 {
-                    // R20 exposes a blank row provider in an empty list. Wait for the footer to settle because
+                    // R20 exposes a blank row provider in an empty list. Wait for the count to settle because
                     // the next filter can initially still show the previous filter's zero count.
                     emptySince ??= Environment.TickCount64;
                     if (Environment.TickCount64 - emptySince.Value >= 1000)
@@ -109,9 +109,9 @@ public sealed partial class NativeInputService
                         var (text, filterSource) = ReadNativeText(filter);
                         if (!string.Equals(text.Trim(), wanted, StringComparison.Ordinal))
                             throw new AutomationException("INPUT_UNCERTAIN", $"Ô lọc '{column}' đọc được '{text}', cần '{wanted}'.", true);
-                        if (TryReadCustomFooterCount(grid) == 0)
-                            return new Readback(EmptyPurchaseRegister, text, filterSource + "+GridFooter", DateTimeOffset.UtcNow,
-                                "MISA báo Số dòng = 0 sau khi lọc.", Capture());
+                        if (EmptyPurchaseRegisterProof(grid) is { } proof)
+                            return new Readback(EmptyPurchaseRegister, text, filterSource + "+" + proof, DateTimeOffset.UtcNow,
+                                "MISA báo 0 dòng dữ liệu sau khi lọc.", Capture());
                     }
                     Thread.Sleep(50);
                     continue;
@@ -126,7 +126,7 @@ public sealed partial class NativeInputService
                     (string Value, string Source, int X, int Y) read;
                     try { read = ReadGridCellAtPoint(target.Element, targetColumn, token); }
                     catch (AutomationException error) when (error.Code is "GRID_CELL_READBACK" or "BOUNDS_UNREADABLE"
-                        && TryReadCustomFooterCount(grid) == 0)
+                        && EmptyPurchaseRegisterProof(grid) is not null)
                     {
                         continue;
                     }
@@ -165,6 +165,19 @@ public sealed partial class NativeInputService
                 throw new AutomationException("INPUT_UNCERTAIN", "Không xác nhận được double-click dòng hóa đơn.", true, error);
             }
         }, token, maySendInput: true);
+
+    private string? EmptyPurchaseRegisterProof(AutomationElement grid)
+    {
+        // R20's register may draw the row count without exposing a text label in UIA (report 0.2.261, HĐ 149075).
+        var regions = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.Tree),
+            identity!.ProcessId, enabled: false));
+        var counts = regions.Where(region => region.HasArea)
+            .Select(region => TryParseDataRowCount(TryLive(() => region.Element.Properties.ItemStatus.ValueOrDefault)))
+            .Where(count => count.HasValue).ToArray();
+        if (counts.Length > 0)
+            return counts.All(count => count == 0) ? "UIA3.ItemStatus.DataRowCount" : null;
+        return TryReadCustomFooterCount(grid) == 0 ? "UIA3.GridFooter" : null;
+    }
 
     private (string Value, string Source, int X, int Y) ReadGridCellAtPoint(AutomationElement row, CustomColumn column,
         CancellationToken token)

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "misa-sme2023-r20-enterprise",
-  "revision": "r20-purchase-cost-retry-save-readback-20261125",
+  "revision": "r20-purchase-cost-native-register-count-20261125",
   "versionTitle": "MISA SME 2023 R20 Enterprise",
   "status": "supported",
   "culture": "vi-VN",

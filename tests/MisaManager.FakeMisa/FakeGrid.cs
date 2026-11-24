@@ -133,6 +133,7 @@ public sealed class FakeGrid : Border
     public bool CellsUseCustomProvider { get; set; }
     public bool RowBoundsLostAfterInvoiceRead { get; set; }
     public bool EmptyRegisterExposesRow { get; set; }
+    public bool RegisterCountViaItemStatus { get; set; }
     /// <summary>The register filter restores its previous text when the editor is focused a second time.</summary>
     public bool FilterRevertsOnRefocus { get; set; }
     public string FilterInitialText { get; set; } = "";
@@ -305,7 +306,7 @@ public sealed class FakeGrid : Border
         var expected = source.RowCount + (ShowInsertionRow ? 1 : 0);
         if (expected != rows.Count || EmptyRegisterExposesRow && source.RowCount == 0) { Rebuild(); return; }
         foreach (var row in rows) row.Load(source, force);
-        footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
+        UpdateRowCount(source.RowCount);
     }
 
     private void Rebuild()
@@ -318,8 +319,17 @@ public sealed class FakeGrid : Border
         if (ShowInsertionRow) AddRow(null);
         foreach (var row in rows) row.Load(source, force: true);
         if (EmptyRegisterExposesRow && source.RowCount == 0) AddRow(0);
-        footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
         BuildShadow();
+        UpdateRowCount(source.RowCount);
+    }
+
+    private void UpdateRowCount(int count)
+    {
+        footer.Text = $"Số dòng = {count + FooterCountOffset}";
+        if (!RegisterCountViaItemStatus) return;
+        shadow.MinHeight = 1;
+        AutomationProperties.SetItemStatus(shadow,
+            $"DataRowCount^IG_TOKEN_SEPERATOR^{count}^IG_TOKEN_SEPERATOR^2^IG_TOKEN_DELIMETER^");
     }
 
     private void BuildShadow()
@@ -371,7 +381,8 @@ public sealed class FakeGrid : Border
             if (owner.ShowFilters)
                 foreach (var filter in owner.filterPanel.Children.OfType<UIElement>())
                     if (UIElementAutomationPeer.CreatePeerForElement(filter) is { } filterPeer) children.Add(filterPeer);
-            if (owner.shadow.Count > 0 && UIElementAutomationPeer.CreatePeerForElement(owner.shadow) is { } shadowPeer)
+            if ((owner.shadow.Count > 0 || owner.RegisterCountViaItemStatus)
+                && UIElementAutomationPeer.CreatePeerForElement(owner.shadow) is { } shadowPeer)
                 children.Add(shadowPeer);
             // Before the real rows, so a reader taking the first match would bind the copy.
             if (owner.ghost is { } ghostRow && UIElementAutomationPeer.CreatePeerForElement(ghostRow) is { } ghostPeer)
@@ -379,7 +390,8 @@ public sealed class FakeGrid : Border
             if (!owner.RowsHidden)
                 foreach (var row in owner.Rows)
                     if (UIElementAutomationPeer.CreatePeerForElement(row) is { } peer) children.Add(peer);
-            if (!owner.FooterOutside && UIElementAutomationPeer.CreatePeerForElement(owner.Footer) is { } footerPeer) children.Add(footerPeer);
+            if (!owner.FooterOutside && !owner.RegisterCountViaItemStatus
+                && UIElementAutomationPeer.CreatePeerForElement(owner.Footer) is { } footerPeer) children.Add(footerPeer);
             return children;
         }
         public override object? GetPattern(PatternInterface patternInterface) => null;
