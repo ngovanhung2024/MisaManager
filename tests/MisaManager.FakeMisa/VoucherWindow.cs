@@ -981,7 +981,7 @@ public sealed class VoucherWindow : Window, IGridSource
         }
         if (scenario.SaveClosesEditor) { Close(); return; }
         save.IsEnabled = scenario.SaveKeepsCatEnabled;
-        if (edit is not null) edit.IsEnabled = true;
+        if (edit is not null) edit.IsEnabled = !scenario.PurchaseEditRemainsDisabledAfterSave;
         // R20 turns "Ghi sổ" into an enabled "Bỏ ghi" once the voucher is saved and posted.
         post.Content = profile.Caption(screen, "unpost");
         post.IsEnabled = true;

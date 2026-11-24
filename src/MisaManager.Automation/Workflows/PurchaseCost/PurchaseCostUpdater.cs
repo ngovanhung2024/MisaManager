@@ -112,24 +112,29 @@ public sealed class PurchaseCostUpdater
             if (profile.Screens.TryGetValue("purchase_posting_warning", out var warning))
                 await input.ClickOwnedMessageBoxButtonAsync(window, warning.Element("yes").Selector,
                     warning.Setting("messageContains", ""), token);
-            var remains = await NativeWait.UntilAsync(async () =>
+            var savedState = await NativeWait.UntilAsync(async () =>
             {
                 if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return false;
                 var frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
-                return frame is not null && await input.CommandEnabledNowAsync(voucherProfile.Element("edit").Selector, token);
+                return frame is not null && await ShowsSavedAsync(voucherProfile, token);
             }, ready: savedEditor => savedEditor, "PURCHASE_SAVE_PENDING", "Chưa xác nhận được Cất hóa đơn mua hàng.", token,
                 timeoutMilliseconds: 15000, returnLastMismatch: true);
-            if (!remains)
+            if (!savedState)
             {
                 closed = !await input.WorkflowScopeExistsAsync(window, profile.EditorId, token);
                 return;
             }
             saved = true;
+            if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token))
+            {
+                closed = true;
+                return;
+            }
             voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
             await voucher.ClickAsync("close", leavesScope: true, token: token);
-            closed = true;
             await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
                 exists => !exists, "PURCHASE_CLOSE_PENDING", "Hóa đơn chưa đóng sau khi Cất.", token, timeoutMilliseconds: 15000);
+            closed = true;
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -155,6 +160,15 @@ public sealed class PurchaseCostUpdater
                 }
             }
         }
+    }
+
+    private async Task<bool> ShowsSavedAsync(ScreenProfile voucherProfile, CancellationToken token)
+    {
+        if (voucherProfile.Elements.ContainsKey("unpost")
+            && await input.CommandEnabledNowAsync(voucherProfile.Element("unpost").Selector, token))
+            return true;
+        return voucherProfile.Elements.ContainsKey("save")
+            && !await input.CommandEnabledNowAsync(voucherProfile.Element("save").Selector, token);
     }
 
     private async Task<WindowIdentity> FindSessionAsync(CancellationToken token)

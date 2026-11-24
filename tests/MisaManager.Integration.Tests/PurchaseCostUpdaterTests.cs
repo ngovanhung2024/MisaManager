@@ -116,7 +116,7 @@ public sealed class PurchaseCostUpdaterTests : UiTest
                 CostItem: "")], 500_000, 0, 500_000, "expense");
         var scenario = new FakeScenario(Purchase: true, SaveClosesEditor: false, ExistingVouchers: [existing],
             PurchaseListCellsUseCustomProvider: true, PurchaseEditUsesCustomProvider: true,
-            PurchaseEditInitiallyDisabled: true);
+            PurchaseEditInitiallyDisabled: true, PurchaseEditRemainsDisabledAfterSave: true);
         return WithFakeAsync(async (misa, harness, token) =>
         {
             var rule = new FuelPurchaseCompany(Invoices.LocThuy.TaxCode, Invoices.LocThuy.Name, "KHH", "1561", "6421");
