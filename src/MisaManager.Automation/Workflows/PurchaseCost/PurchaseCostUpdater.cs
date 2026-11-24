@@ -165,8 +165,20 @@ public sealed class PurchaseCostUpdater
         for (var attempt = 0; attempt < 2; attempt++)
         {
             if (!await input.WorkflowScopeExistsAsync(window, profile.EditorId, token)) return;
-            var voucher = await MisaScreen.OpenAsync(input, window, voucherProfile, token, profile.Culture);
-            await voucher.ClickAsync("close", leavesScope: true, token: token);
+            NativeFrame? frame;
+            try
+            {
+                // The normal invoice flow invokes Đóng on the already bound editor. Do not reopen the screen with
+                // OpenAsync(waitForEnabled:true), which waits through the whole R20 redraw before sending the click.
+                frame = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token);
+            }
+            catch (AutomationException error) when (error.Code == "SCOPE_DISABLED" && attempt == 0)
+            {
+                await Task.Delay(100, token);
+                continue;
+            }
+            if (frame is null) return;
+            await input.InvokeWorkflowAsync(frame, voucherProfile.Element("close").Selector, token, leavesScope: true);
             try
             {
                 await NativeWait.UntilAsync(() => input.WorkflowScopeExistsAsync(window, profile.EditorId, token),
@@ -177,7 +189,7 @@ public sealed class PurchaseCostUpdater
             catch (AutomationException error) when (error.Code == "PURCHASE_CLOSE_PENDING" && attempt == 0)
             {
                 // Same saved-state guard as the normal sales workflow: retry Đóng only after reading the editor again.
-                var rebound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token, waitForEnabled: true);
+                var rebound = await input.TryBindWorkflowScopeAsync(window, profile.EditorId, null, token);
                 if (rebound is null || !await ShowsSavedAsync(voucherProfile, token)) throw;
             }
         }
