@@ -145,7 +145,13 @@ internal static class NativeKeyboard
             throw new AutomationException("FOCUS_LOST", "Phím Shift/Ctrl/Alt/Windows đang được giữ; không gõ.");
         token.ThrowIfCancellationRequested();
         DesktopSession.ThrowIfUnavailable();
-        var inputs = new List<NativeInput> { Key(0x11), Key(0x41), Key(0x41, true), Key(0x11, true) };
+        // Match a user replacing the filter with the keyboard: select all, delete the old value, then type each
+        // character. ValuePattern.SetValue is deliberately not used for this R20 editor.
+        var inputs = new List<NativeInput>
+        {
+            Key(0x11), Key(0x41), Key(0x41, true), Key(0x11, true),
+            Key(0x2E), Key(0x2E, true)
+        };
         foreach (var character in text)
         {
             inputs.Add(new() { Type = 1, Data = new() { Keyboard = new() { Scan = character, Flags = 4 } } });
