@@ -2,7 +2,7 @@ using MisaManager.Core;
 
 namespace MisaManager.Automation;
 
-public sealed record PurchaseCostUpdateResult(int Requested, int Updated, IReadOnlyList<string> Failed);
+public sealed record PurchaseCostUpdateResult(int Requested, int Updated, IReadOnlyList<string> Failed, IReadOnlyList<string> Skipped);
 public sealed record PurchaseCostTraceEntry(DateTimeOffset At, long ElapsedMilliseconds, string Step,
     string Outcome, string Details, string? Exception = null);
 
@@ -63,6 +63,7 @@ public sealed class PurchaseCostUpdater
             .DistinctBy(invoice => invoice.InvoiceId).ToArray();
         RecordTrace("batch.targets", "readback", $"Có {targets.Length} hóa đơn mục tiêu: {string.Join(", ", targets.Select(invoice => invoice.Identity.Number))}.");
         var failed = new List<string>();
+        var skipped = new List<string>();
         var updated = 0;
         foreach (var invoice in targets)
         {
@@ -71,8 +72,13 @@ public sealed class PurchaseCostUpdater
             {
                 RecordTrace($"invoice:{invoice.Identity.Number}", "started", "Bắt đầu cập nhật CPBH.XANG.");
                 progress?.Invoke("Đang cập nhật CPBH.XANG cho hóa đơn " + invoice.Identity.Number + "...");
-                await UpdateOneAsync(invoice.Identity.Number, token,
-                    onAssigned is null ? null : () => onAssigned(invoice), checkForOpenVoucher: updated == 0);
+                var assigned = await UpdateOneAsync(invoice.Identity.Number, token,
+                    onAssigned is null ? null : () => onAssigned(invoice), checkForOpenVoucher: updated == 0 && skipped.Count == 0);
+                if (!assigned)
+                {
+                    skipped.Add(invoice.Identity.Number);
+                    continue;
+                }
                 updated++;
                 RecordTrace($"invoice:{invoice.Identity.Number}", "completed", "Đã gán CPBH.XANG, Cất và đóng chứng từ.");
             }
@@ -88,11 +94,11 @@ public sealed class PurchaseCostUpdater
             }
         }
         RecordTrace("batch", failed.Count == 0 ? "completed" : "failed",
-            $"Kết thúc CPBH.XANG: cập nhật {updated}/{targets.Length}; lỗi {failed.Count}.");
-        return new(targets.Length, updated, failed);
+            $"Kết thúc CPBH.XANG: cập nhật {updated}/{targets.Length}, bỏ qua {skipped.Count}, lỗi {failed.Count}.");
+        return new(targets.Length, updated, failed, skipped);
     }
 
-    private async Task UpdateOneAsync(string number, CancellationToken token, Func<Task>? onAssigned, bool checkForOpenVoucher)
+    private async Task<bool> UpdateOneAsync(string number, CancellationToken token, Func<Task>? onAssigned, bool checkForOpenVoucher)
     {
         RecordTrace($"invoice:{number}:session", "started", "Tìm cửa sổ MISA theo profile mua hàng.");
         var window = await FindSessionAsync(token);
@@ -121,6 +127,11 @@ public sealed class PurchaseCostUpdater
             // while the visible row is already the requested invoice.
             var selected = await input.DoubleClickGridRowAsync(list.Frame, listGrid.Profile.AutomationId, listGrid.Column("number"), number, token);
             list.Track(selected);
+            if (selected.Status == NativeInputService.EmptyPurchaseRegister)
+            {
+                RecordTrace($"invoice:{number}:row", "skipped", $"{selected.Reason} Số lọc='{selected.Value}', nguồn='{selected.Source}'.");
+                return false;
+            }
             RecordTrace($"invoice:{number}:row", "readback",
                 $"Đã chọn dòng bằng chuột. value='{selected.Value}', source='{selected.Source}', reason='{selected.Reason ?? ""}'.");
 
@@ -214,6 +225,7 @@ public sealed class PurchaseCostUpdater
                     RecordTrace($"invoice:{number}:history", "failed", "Không lưu được lịch sử gán sau khi MISA đã Cất.", error);
                 }
             }
+            return true;
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {

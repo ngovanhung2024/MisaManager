@@ -103,17 +103,18 @@ public partial class MainWindow
                     presentationInitialized = false;
                     RefreshWorkflowPanel();
                 }).Task);
+            var skipped = result.Skipped.Count == 0 ? "" : $" Bỏ qua {result.Skipped.Count:N0} hóa đơn chưa tìm thấy trong MISA.";
             if (result.Failed.Count > 0)
             {
                 var message = "Gán CPBH.XANG thất bại: " + result.Failed[0];
                 Workflow_ErrorRaised(this, new WorkflowErrorEventArgs(message,
                     services.PurchaseCostErrorDetails(string.Join(Environment.NewLine, result.Failed)), DateTimeOffset.Now));
-                StatusLabel.Text = $"Đã dừng sau khi xử lý {result.Updated:N0}/{result.Requested:N0} hóa đơn: {result.Failed[0]}";
+                StatusLabel.Text = $"Đã gán {result.Updated:N0}/{result.Requested:N0} hóa đơn.{skipped} Đã dừng tại {result.Failed[0]}";
             }
             else
             {
                 outcome = "Hoàn tất";
-                StatusLabel.Text = $"Đã gán CPBH.XANG cho {result.Updated:N0} hóa đơn.";
+                StatusLabel.Text = $"Đã gán CPBH.XANG cho {result.Updated:N0} hóa đơn.{skipped}";
             }
             await ImportSessions.SaveCheckedAsync(CheckedFingerprints());
         }

@@ -132,6 +132,7 @@ public sealed class FakeGrid : Border
     /// <summary>Leaves visible register cells focusable but exposes them as custom providers, like the failing R20 grid.</summary>
     public bool CellsUseCustomProvider { get; set; }
     public bool RowBoundsLostAfterInvoiceRead { get; set; }
+    public bool EmptyRegisterExposesRow { get; set; }
     /// <summary>The register filter restores its previous text when the editor is focused a second time.</summary>
     public bool FilterRevertsOnRefocus { get; set; }
     public string FilterInitialText { get; set; } = "";
@@ -302,7 +303,7 @@ public sealed class FakeGrid : Border
     {
         if (source is null) return;
         var expected = source.RowCount + (ShowInsertionRow ? 1 : 0);
-        if (expected != rows.Count) { Rebuild(); return; }
+        if (expected != rows.Count || EmptyRegisterExposesRow && source.RowCount == 0) { Rebuild(); return; }
         foreach (var row in rows) row.Load(source, force);
         footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
     }
@@ -316,6 +317,7 @@ public sealed class FakeGrid : Border
         for (var index = 0; index < source.RowCount; index++) AddRow(index);
         if (ShowInsertionRow) AddRow(null);
         foreach (var row in rows) row.Load(source, force: true);
+        if (EmptyRegisterExposesRow && source.RowCount == 0) AddRow(0);
         footer.Text = $"Số dòng = {source.RowCount + FooterCountOffset}";
         BuildShadow();
     }

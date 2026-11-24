@@ -7,6 +7,8 @@ namespace MisaManager.Automation;
 
 public sealed partial class NativeInputService
 {
+    internal const string EmptyPurchaseRegister = "empty_purchase_register";
+
     /// <summary>Writes a register filter editor below a grid column header and commits it with Enter.</summary>
     public Task<Readback> WriteGridFilterAsync(NativeFrame frame, string gridId, string column, string text,
         CancellationToken token)
@@ -15,31 +17,7 @@ public sealed partial class NativeInputService
             RecordInput();
             GuardWorkflow(frame, forInput: true);
             var grid = ResolveGrid(gridId);
-            var headers = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(FlaUI.Core.Definitions.ControlType.HeaderItem),
-                    identity!.ProcessId, enabled: false, onscreen: false))
-                .Where(item => item.HasArea && string.Equals(item.Name, column, StringComparison.Ordinal))
-                .ToArray();
-            if (headers.Length != 1)
-                throw new AutomationException("GRID_COLUMN_AMBIGUOUS", $"Không xác định duy nhất cột lọc '{column}'.");
-            var header = headers[0].Bounds;
-            var candidates = Snapshots(grid, Live(AnyControlType(FlaUI.Core.Definitions.ControlType.ComboBox,
-                    FlaUI.Core.Definitions.ControlType.Edit), identity!.ProcessId, enabled: false, onscreen: false))
-                .Where(item => item.HasArea && item.Bounds.Top >= header.Bottom - 2)
-                .ToArray();
-            var centered = candidates.Where(item =>
-            {
-                var center = item.Bounds.Left + item.Bounds.Width / 2;
-                return center >= header.Left - 2 && center <= header.Right + 2;
-            }).ToArray();
-            var editors = (centered.Length > 0 ? centered : candidates)
-                // R20 exposes the register filter as a ComboBox with an embedded
-                // Edit. Use the parent when available so Enter reaches the grid
-                // filter, rather than only the child editor.
-                .OrderByDescending(item => item.ControlType == FlaUI.Core.Definitions.ControlType.ComboBox)
-                .ThenBy(item => item.Bounds.Top).ToArray();
-            if (editors.Length == 0)
-                throw new AutomationException("TARGET_NOT_FOUND", $"Chưa thấy ô lọc dưới cột '{column}'.");
-            var target = editors[0].Element;
+            var target = ResolveRegisterFilter(grid, column);
             var sent = false;
             try
             {
@@ -65,7 +43,7 @@ public sealed partial class NativeInputService
                 MarkWorkflowInput();
                 NativeKeyboard.Press(inputHandle, identity!.WindowHandle, identity.ProcessId, "Enter", token);
                 epoch++;
-                return new Readback("sent_unverified", text, "UIA3.ValuePattern+Enter", DateTimeOffset.UtcNow,
+                return new Readback("sent_unverified", text, "Win32.SendInput+Enter", DateTimeOffset.UtcNow,
                     "Đã lọc; sẽ xác minh bằng cách đọc lại dòng hóa đơn.", Capture());
             }
             catch (Exception error)
@@ -74,7 +52,30 @@ public sealed partial class NativeInputService
             }
         }, token, maySendInput: true);
 
-    /// <summary>Finds a visible register row by a column value and double-clicks that row.</summary>
+    private AutomationElement ResolveRegisterFilter(AutomationElement grid, string column)
+    {
+        var headers = Snapshots(grid, Live(automation.ConditionFactory.ByControlType(ControlType.HeaderItem),
+                identity!.ProcessId, enabled: false, onscreen: false))
+            .Where(item => item.HasArea && string.Equals(item.Name, column, StringComparison.Ordinal)).ToArray();
+        if (headers.Length != 1)
+            throw new AutomationException("GRID_COLUMN_AMBIGUOUS", $"Không xác định duy nhất cột lọc '{column}'.");
+        var header = headers[0].Bounds;
+        var candidates = Snapshots(grid, Live(AnyControlType(ControlType.ComboBox, ControlType.Edit),
+                identity.ProcessId, enabled: false, onscreen: false))
+            .Where(item => item.HasArea && item.Bounds.Top >= header.Bottom - 2).ToArray();
+        var centered = candidates.Where(item =>
+        {
+            var center = item.Bounds.Left + item.Bounds.Width / 2;
+            return center >= header.Left - 2 && center <= header.Right + 2;
+        }).ToArray();
+        // Prefer the ComboBox owning the filter so Enter reaches the grid.
+        var editor = (centered.Length > 0 ? centered : candidates)
+            .OrderByDescending(item => item.ControlType == ControlType.ComboBox)
+            .ThenBy(item => item.Bounds.Top).FirstOrDefault();
+        return editor?.Element ?? throw new AutomationException("TARGET_NOT_FOUND", $"Chưa thấy ô lọc dưới cột '{column}'.");
+    }
+
+    /// <summary>Opens the verified row, or reports a confirmed empty register without clicking it.</summary>
     public Task<Readback> DoubleClickGridRowAsync(NativeFrame frame, string gridId, string column, string expected,
         CancellationToken token)
         => dispatcher.RunAsync(() =>
@@ -87,6 +88,7 @@ public sealed partial class NativeInputService
             (int X, int Y, string Source)? match = null;
             var observedRowCounts = new List<int>();
             var observedValues = new List<string>();
+            long? emptySince = null;
             // MISA redraws the filtered register asynchronously. Keep polling the
             // rows only. The visible row cells are selected with the mouse because
             // R20 can expose them outside the row's UIA subtree.
@@ -95,13 +97,39 @@ public sealed partial class NativeInputService
                 token.ThrowIfCancellationRequested();
                 var layout = ReadCustomGridLayout(grid, token, dataRowsOnly: true, allowEmpty: true, mapCells: false);
                 observedRowCounts.Add(layout.Rows.Count);
+                if (layout.Rows.Count <= 1 && TryReadCustomFooterCount(grid) == 0)
+                {
+                    // R20 exposes a blank row provider in an empty list. Wait for the footer to settle because
+                    // the next filter can initially still show the previous filter's zero count.
+                    emptySince ??= Environment.TickCount64;
+                    if (Environment.TickCount64 - emptySince.Value >= 1000)
+                    {
+                        GuardWorkflow(frame);
+                        var filter = ResolveKeyboardTarget(ResolveRegisterFilter(grid, column));
+                        var (text, filterSource) = ReadNativeText(filter);
+                        if (!string.Equals(text.Trim(), wanted, StringComparison.Ordinal))
+                            throw new AutomationException("INPUT_UNCERTAIN", $"Ô lọc '{column}' đọc được '{text}', cần '{wanted}'.", true);
+                        if (TryReadCustomFooterCount(grid) == 0)
+                            return new Readback(EmptyPurchaseRegister, text, filterSource + "+GridFooter", DateTimeOffset.UtcNow,
+                                "MISA báo Số dòng = 0 sau khi lọc.", Capture());
+                    }
+                    Thread.Sleep(50);
+                    continue;
+                }
+                emptySince = null;
                 if (layout.Rows.Count == 1)
                 {
                     var target = layout.Rows[0];
                     // Read the filtered row through the existing custom-grid cell reader. Selecting the row here
                     // moves the mouse away from the Số hóa đơn filter and can make R20 restore the old filter.
                     var targetColumn = layout.Columns[FindCustomColumn(layout.Columns, column)];
-                    var read = ReadGridCellAtPoint(target.Element, targetColumn, token);
+                    (string Value, string Source, int X, int Y) read;
+                    try { read = ReadGridCellAtPoint(target.Element, targetColumn, token); }
+                    catch (AutomationException error) when (error.Code is "GRID_CELL_READBACK" or "BOUNDS_UNREADABLE"
+                        && TryReadCustomFooterCount(grid) == 0)
+                    {
+                        continue;
+                    }
                     var actual = read.Value.Trim();
                     observedValues.Add(actual);
                     if (string.Equals(actual, wanted, StringComparison.Ordinal))
