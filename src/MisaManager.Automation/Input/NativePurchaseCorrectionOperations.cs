@@ -97,8 +97,10 @@ public sealed partial class NativeInputService
                 if (layout.Rows.Count == 1)
                 {
                     var target = layout.Rows[0];
+                    // Read the filtered row through the existing custom-grid cell reader. Selecting the row here
+                    // moves the mouse away from the Số hóa đơn filter and can make R20 restore the old filter.
                     var targetColumn = layout.Columns[FindCustomColumn(layout.Columns, column)];
-                    var read = ReadGridCellByMouse(target.Element, targetColumn, token);
+                    var read = ReadGridCellAtPoint(target.Element, targetColumn, token);
                     var actual = read.Value.Trim();
                     observedValues.Add(actual);
                     if (string.Equals(actual, wanted, StringComparison.Ordinal))
@@ -134,33 +136,23 @@ public sealed partial class NativeInputService
             }
         }, token, maySendInput: true);
 
-    private (string Value, string Source) ReadGridCellByMouse(AutomationElement row, CustomColumn column,
+    private (string Value, string Source) ReadGridCellAtPoint(AutomationElement row, CustomColumn column,
         CancellationToken token)
     {
         var rowBounds = row.BoundingRectangle;
         if (rowBounds.Width <= 0 || rowBounds.Height <= 0 || column.Right <= column.Left)
-            throw new AutomationException("BOUNDS_UNREADABLE", "Dòng hoặc cột hóa đơn không có bounds để chọn bằng chuột.");
+            throw new AutomationException("BOUNDS_UNREADABLE", "Dòng hoặc cột hóa đơn không có bounds để đọc.");
         var x = (int)Math.Round((column.Left + column.Right) / 2d);
         var y = (int)Math.Round((double)rowBounds.Top + rowBounds.Height / 2d);
         if (x < rowBounds.Left || x >= rowBounds.Right)
             throw new AutomationException("BOUNDS_UNREADABLE", $"Cột '{column.Name}' nằm ngoài dòng hóa đơn.");
-        try
-        {
-            MarkWorkflowInput();
-            NativeKeyboard.Click(x, y, identity!.WindowHandle, identity.ProcessId, KeyboardHandle(row));
-            epoch++;
-        }
-        catch (Exception error)
-        {
-            throw new AutomationException("INPUT_UNCERTAIN", $"Không chọn được ô '{column.Name}' bằng chuột.", true, error);
-        }
 
         (string Value, string Source) last = ("", "none");
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var attempt = 0; attempt < 20; attempt++)
         {
             token.ThrowIfCancellationRequested();
-            foreach (var candidate in PointCandidates(x, y))
+            foreach (var candidate in PointCandidates())
             {
                 try
                 {
@@ -174,14 +166,14 @@ public sealed partial class NativeInputService
             Thread.Sleep(50);
         }
         throw new AutomationException("GRID_CELL_READBACK",
-            $"Đã click ô '{column.Name}' nhưng chưa đọc lại được giá trị native (đọc được '{last.Value}'). Ứng viên: {string.Join(" | ", seen.Take(8))}.");
+            $"Đã đọc ô '{column.Name}' nhưng chưa có giá trị native (đọc được '{last.Value}'). Ứng viên: {string.Join(" | ", seen.Take(8))}.");
 
-        AutomationElement[] PointCandidates(int pointX, int pointY)
+        AutomationElement[] PointCandidates()
         {
             var condition = Live(AnyControlType(ControlType.Edit, ControlType.ComboBox, ControlType.Text,
                 ControlType.Custom), identity!.ProcessId, enabled: false, onscreen: false);
             var found = ProcessSnapshots(identity.WindowHandle, identity.ProcessId, condition)
-                .Where(item => item.HasArea && item.Bounds.Contains(pointX, pointY)
+                .Where(item => item.HasArea && item.Bounds.Contains(x, y)
                     && item.Bounds.Top <= rowBounds.Bottom && item.Bounds.Bottom >= rowBounds.Top)
                 .OrderBy(item => item.Bounds.Width * item.Bounds.Height)
                 .Select(item => item.Element)
@@ -189,7 +181,7 @@ public sealed partial class NativeInputService
             var focused = automation.FocusedElement();
             if (focused is not null && TrySnapshot(focused) is { } focusedSnapshot
                 && focusedSnapshot.ProcessId == identity.ProcessId
-                && focusedSnapshot.HasArea && focusedSnapshot.Bounds.Contains(pointX, pointY)
+                && focusedSnapshot.HasArea && focusedSnapshot.Bounds.Contains(x, y)
                 && focusedSnapshot.Bounds.Top <= rowBounds.Bottom && focusedSnapshot.Bounds.Bottom >= rowBounds.Top)
                 found.Insert(0, focused);
             return found.Distinct().ToArray();
