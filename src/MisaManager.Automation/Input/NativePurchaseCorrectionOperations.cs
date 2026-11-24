@@ -59,6 +59,11 @@ public sealed partial class NativeInputService
                 // restore its previous filter (for example 205) before the Enter reaches the active editor.
                 MarkWorkflowInput();
                 NativeKeyboard.Press(inputHandle, identity!.WindowHandle, identity.ProcessId, "Enter", token);
+                // Some R20 builds repaint the filter editor once after the first commit. The second Enter is sent
+                // to the same still-focused editor, without clicking or resolving the cell again.
+                Thread.Sleep(50);
+                MarkWorkflowInput();
+                NativeKeyboard.Press(inputHandle, identity!.WindowHandle, identity.ProcessId, "Enter", token);
                 epoch++;
                 return new Readback("sent_unverified", text, "UIA3.ValuePattern+Enter", DateTimeOffset.UtcNow,
                     "Đã lọc; sẽ xác minh bằng cách đọc lại dòng hóa đơn.", Capture());
